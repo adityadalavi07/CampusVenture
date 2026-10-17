@@ -3,7 +3,7 @@ import { useRouter } from "@tanstack/react-router";
 import { Dialog, DialogContent, DialogTitle, DialogDescription } from "@/components/ui/dialog";
 import { useAuth, type RegisteredAccount } from "@/lib/auth-context";
 import type { Role } from "@/lib/demo-data";
-import { searchUniversities, isUGCApproved, type University } from "@/lib/universities";
+import { searchUniversities, isUGCApproved, isUniversityEmail, type University } from "@/lib/universities";
 import { toast } from "sonner";
 
 // SVG path definitions from prototype
@@ -68,57 +68,6 @@ const EMAILPH: Record<Role, string> = {
 };
 
 const emailOk = (e: string) => /^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/.test(e);
-
-export const isUniversityEmail = (email: string): boolean => {
-  const clean = email.trim().toLowerCase();
-  if (!emailOk(clean)) return false;
-  const parts = clean.split("@");
-  if (parts.length !== 2) return false;
-  const domain = parts[1];
-
-  // Common public commercial domains not allowed for student registration
-  const blocked = [
-    "gmail.com",
-    "googlemail.com",
-    "yahoo.com",
-    "yahoo.co.in",
-    "yahoo.in",
-    "outlook.com",
-    "hotmail.com",
-    "live.com",
-    "msn.com",
-    "icloud.com",
-    "me.com",
-    "rediffmail.com",
-    "rediff.com",
-    "protonmail.com",
-    "proton.me",
-    "zoho.com",
-    "zohomail.in",
-    "aol.com",
-    "mail.com",
-    "gmx.com",
-    "yandex.com",
-  ];
-
-  if (blocked.includes(domain)) return false;
-
-  // Must match recognized academic or university domains
-  return (
-    domain.endsWith(".ac.in") ||
-    domain.endsWith(".edu.in") ||
-    domain.endsWith(".edu") ||
-    domain.endsWith(".res.in") ||
-    domain.endsWith(".ernet.in") ||
-    domain.endsWith(".ac.uk") ||
-    domain.endsWith(".ac") ||
-    domain.includes("sguk.ac.in") ||
-    domain.includes("sgu.ac.in") ||
-    domain.includes(".univ.") ||
-    domain.includes(".college") ||
-    domain.includes(".institute")
-  );
-};
 const pwOk = (p: string) => p.length >= 8 && /\d/.test(p) && /[A-Za-z]/.test(p);
 const mask = (e: string) => {
   if (!e || !e.includes("@")) return e;

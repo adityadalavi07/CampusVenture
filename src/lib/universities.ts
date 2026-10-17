@@ -922,3 +922,56 @@ export function isUGCApproved(name: string): boolean {
     return false;
   });
 }
+
+/**
+ * Validates if an email belongs to an official academic / university domain.
+ * Disallows common personal free email providers (Gmail, Yahoo, Outlook, etc.).
+ */
+export function isUniversityEmail(email: string): boolean {
+  const clean = email.trim().toLowerCase();
+  if (!clean || !/^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/.test(clean)) return false;
+  const parts = clean.split("@");
+  if (parts.length !== 2) return false;
+  const domain = parts[1];
+
+  const blocked = [
+    "gmail.com",
+    "googlemail.com",
+    "yahoo.com",
+    "yahoo.co.in",
+    "yahoo.in",
+    "outlook.com",
+    "hotmail.com",
+    "live.com",
+    "msn.com",
+    "icloud.com",
+    "me.com",
+    "rediffmail.com",
+    "rediff.com",
+    "protonmail.com",
+    "proton.me",
+    "zoho.com",
+    "zohomail.in",
+    "aol.com",
+    "mail.com",
+    "gmx.com",
+    "yandex.com",
+  ];
+
+  if (blocked.includes(domain)) return false;
+
+  return (
+    domain.endsWith(".ac.in") ||
+    domain.endsWith(".edu.in") ||
+    domain.endsWith(".edu") ||
+    domain.endsWith(".res.in") ||
+    domain.endsWith(".ernet.in") ||
+    domain.endsWith(".ac.uk") ||
+    domain.endsWith(".ac") ||
+    domain.includes("sguk.ac.in") ||
+    domain.includes("sgu.ac.in") ||
+    domain.includes(".univ.") ||
+    domain.includes(".college") ||
+    domain.includes(".institute")
+  );
+}
