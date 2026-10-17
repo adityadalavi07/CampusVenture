@@ -109,11 +109,11 @@ function Landing() {
               </Button>
             ) : (
               <>
-                <Button variant="ghost" size="sm" onClick={() => openAuthModal()}>
+                <Button variant="ghost" size="sm" onClick={() => openAuthModal(undefined, "signin")}>
                   <LogIn className="size-3.5 mr-1" />
                   Sign In
                 </Button>
-                <Button size="sm" onClick={() => openAuthModal()}>
+                <Button size="sm" onClick={() => openAuthModal(undefined, "register")}>
                   Get Started
                 </Button>
               </>

@@ -20,6 +20,16 @@ export interface AuthUser {
   isDemo?: boolean;
 }
 
+export interface RegisteredAccount {
+  id: string;
+  email: string;
+  password: string;
+  name: string;
+  role: Role;
+  org: string;
+  createdAt: string;
+}
+
 export const ROLE_PROFILES: Record<Role, { name: string; email: string; org: string }> = {
   student: {
     name: "Aayush Patil",
@@ -38,7 +48,38 @@ export const ROLE_PROFILES: Record<Role, { name: string; email: string; org: str
   },
 };
 
+export const DEFAULT_ACCOUNTS: RegisteredAccount[] = [
+  {
+    id: "usr-student-seed",
+    name: "Aayush Patil",
+    email: "aayush@coep.ac.in",
+    password: "Password123",
+    role: "student",
+    org: "COEP Technological University",
+    createdAt: "2026-01-01T00:00:00.000Z",
+  },
+  {
+    id: "usr-investor-seed",
+    name: "Anaya Krishnan",
+    email: "anaya@northbridge.vc",
+    password: "Password123",
+    role: "investor",
+    org: "Northbridge Seed",
+    createdAt: "2026-01-01T00:00:00.000Z",
+  },
+  {
+    id: "usr-university-seed",
+    name: "COEP Innovation Cell",
+    email: "innovation@coep.ac.in",
+    password: "Password123",
+    role: "university",
+    org: "COEP Technological University",
+    createdAt: "2026-01-01T00:00:00.000Z",
+  },
+];
+
 const AUTH_STORAGE_KEY = "campusventure.auth.user.v1";
+const REGISTERED_USERS_KEY = "campusventure.auth.registered_users.v1";
 
 interface AuthContextType {
   user: AuthUser | null;
@@ -47,21 +88,24 @@ interface AuthContextType {
   dbStatus: ConnectionStatus | null;
   isAuthModalOpen: boolean;
   authModalDefaultRole: Role | undefined;
-  openAuthModal: (defaultRole?: Role) => void;
+  authModalDefaultMode: "signin" | "register" | undefined;
+  openAuthModal: (defaultRole?: Role, defaultMode?: "signin" | "register") => void;
   closeAuthModal: () => void;
-  signIn: (email: string, password: string) => Promise<{ success: boolean; error?: string }>;
+  signIn: (email: string, password: string, role?: Role) => Promise<{ success: boolean; error?: string; user?: AuthUser }>;
   signUp: (data: {
     email: string;
     password: string;
     role: Role;
     name: string;
     org: string;
-  }) => Promise<{ success: boolean; error?: string }>;
+  }) => Promise<{ success: boolean; error?: string; user?: AuthUser }>;
   loginAsRole: (role: Role) => void;
   switchRole: (role: Role) => void;
   signOut: () => Promise<void>;
   refreshDbStatus: () => Promise<ConnectionStatus>;
   hasRole: (requiredRole: Role) => boolean;
+  registeredUsers: RegisteredAccount[];
+  isEmailRegistered: (email: string) => boolean;
 }
 
 const AuthContext = createContext<AuthContextType | null>(null);
@@ -111,15 +155,46 @@ function extractUserData(supabaseUser: {
   };
 }
 
+function loadRegisteredUsers(): RegisteredAccount[] {
+  if (typeof window === "undefined") return DEFAULT_ACCOUNTS;
+  try {
+    const raw = window.localStorage.getItem(REGISTERED_USERS_KEY);
+    if (!raw) {
+      window.localStorage.setItem(REGISTERED_USERS_KEY, JSON.stringify(DEFAULT_ACCOUNTS));
+      return DEFAULT_ACCOUNTS;
+    }
+    const parsed = JSON.parse(raw) as RegisteredAccount[];
+    if (Array.isArray(parsed) && parsed.length > 0) {
+      return parsed;
+    }
+    window.localStorage.setItem(REGISTERED_USERS_KEY, JSON.stringify(DEFAULT_ACCOUNTS));
+    return DEFAULT_ACCOUNTS;
+  } catch {
+    return DEFAULT_ACCOUNTS;
+  }
+}
+
+function saveRegisteredUsers(users: RegisteredAccount[]): void {
+  if (typeof window === "undefined") return;
+  try {
+    window.localStorage.setItem(REGISTERED_USERS_KEY, JSON.stringify(users));
+  } catch {
+    /* ignore storage errors */
+  }
+}
+
 export function AuthProvider({ children }: { children: ReactNode }) {
   const [user, setUser] = useState<AuthUser | null>(null);
   const [isLoading, setIsLoading] = useState(true);
   const [dbStatus, setDbStatus] = useState<ConnectionStatus | null>(null);
   const [isAuthModalOpen, setIsAuthModalOpen] = useState(false);
   const [authModalDefaultRole, setAuthModalDefaultRole] = useState<Role | undefined>(undefined);
+  const [authModalDefaultMode, setAuthModalDefaultMode] = useState<"signin" | "register" | undefined>(undefined);
+  const [registeredUsers, setRegisteredUsers] = useState<RegisteredAccount[]>([]);
 
-  const openAuthModal = useCallback((defaultRole?: Role) => {
+  const openAuthModal = useCallback((defaultRole?: Role, defaultMode: "signin" | "register" = "signin") => {
     setAuthModalDefaultRole(defaultRole);
+    setAuthModalDefaultMode(defaultMode);
     setIsAuthModalOpen(true);
   }, []);
 
@@ -133,9 +208,21 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     return status;
   }, []);
 
+  const isEmailRegistered = useCallback(
+    (email: string) => {
+      const clean = email.trim().toLowerCase();
+      return registeredUsers.some((u) => u.email.toLowerCase() === clean);
+    },
+    [registeredUsers]
+  );
+
   // Initialize auth & check DB connection on mount
   useEffect(() => {
     let mounted = true;
+
+    // Load registered accounts from persistent storage
+    const loadedAccounts = loadRegisteredUsers();
+    setRegisteredUsers(loadedAccounts);
 
     async function initialize() {
       try {
@@ -193,80 +280,99 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     };
   }, []);
 
-  // One-click quick login for any role
-  const loginAsRole = useCallback((role: Role) => {
-    const profile = ROLE_PROFILES[role];
-    const newUser: AuthUser = {
-      id: `usr-${role}-${Date.now().toString(36)}`,
-      email: profile.email,
-      name: profile.name,
-      role,
-      org: profile.org,
-      avatarInitials: getInitials(profile.name),
-      isDemo: true,
-    };
+  // Email + password sign in with role authorization check
+  const signIn = useCallback(
+    async (
+      email: string,
+      password: string,
+      expectedRole?: Role
+    ): Promise<{ success: boolean; error?: string; user?: AuthUser }> => {
+      const cleanEmail = email.trim().toLowerCase();
 
-    setUser(newUser);
-    try {
-      window.localStorage.setItem(AUTH_STORAGE_KEY, JSON.stringify(newUser));
-    } catch {
-      /* ignore */
-    }
+      // 1. Check local registered accounts first
+      const currentAccounts = loadRegisteredUsers();
+      const localAccount = currentAccounts.find(
+        (acc) => acc.email.toLowerCase() === cleanEmail
+      );
 
-    setIsAuthModalOpen(false);
-    toast.success(`Signed in as ${profile.name} (${role})`);
-  }, []);
+      if (localAccount) {
+        if (localAccount.password !== password) {
+          return { success: false, error: "Incorrect email or password." };
+        }
 
-  // Smooth role switching
-  const switchRole = useCallback(
-    (newRole: Role) => {
-      if (user) {
-        const updated: AuthUser = {
-          ...user,
-          role: newRole,
-          org: ROLE_PROFILES[newRole].org,
+        if (expectedRole && localAccount.role !== expectedRole) {
+          const roleLabels: Record<Role, string> = {
+            student: "Student",
+            university: "University",
+            investor: "Investor",
+          };
+          return {
+            success: false,
+            error: `This account is registered as ${roleLabels[localAccount.role]}, not ${roleLabels[expectedRole]}.`,
+          };
+        }
+
+        const authUser: AuthUser = {
+          id: localAccount.id,
+          email: localAccount.email,
+          name: localAccount.name,
+          role: localAccount.role,
+          org: localAccount.org,
+          avatarInitials: getInitials(localAccount.name),
+          isDemo: false,
         };
-        setUser(updated);
+
+        setUser(authUser);
         try {
-          window.localStorage.setItem(AUTH_STORAGE_KEY, JSON.stringify(updated));
+          window.localStorage.setItem(AUTH_STORAGE_KEY, JSON.stringify(authUser));
         } catch {
           /* ignore */
         }
-        toast.info(`Switched role to ${newRole}`);
-      } else {
-        loginAsRole(newRole);
-      }
-    },
-    [user, loginAsRole],
-  );
 
-  // Email + password sign in with Supabase
-  const signIn = useCallback(
-    async (email: string, password: string): Promise<{ success: boolean; error?: string }> => {
+        // Try Supabase in background if credentials match
+        supabase.auth.signInWithPassword({ email: cleanEmail, password }).catch(() => {});
+
+        setIsAuthModalOpen(false);
+        toast.success(`Welcome back, ${authUser.name}!`);
+        return { success: true, user: authUser };
+      }
+
+      // 2. Fallback to Supabase live auth
       try {
         const { data, error } = await supabase.auth.signInWithPassword({
-          email,
+          email: cleanEmail,
           password,
         });
 
         if (error) {
-          // If Supabase credentials fail, provide clear helpful message
-          return { success: false, error: error.message };
+          return { success: false, error: error.message || "Incorrect email or password." };
         }
 
         if (data.user) {
-          const authenticatedUser = extractUserData(data.user);
+          const authUser = extractUserData(data.user);
 
-          setUser(authenticatedUser);
+          if (expectedRole && authUser.role !== expectedRole) {
+            const roleLabels: Record<Role, string> = {
+              student: "Student",
+              university: "University",
+              investor: "Investor",
+            };
+            return {
+              success: false,
+              error: `This account is registered as ${roleLabels[authUser.role]}, not ${roleLabels[expectedRole]}.`,
+            };
+          }
+
+          setUser(authUser);
           try {
-            window.localStorage.setItem(AUTH_STORAGE_KEY, JSON.stringify(authenticatedUser));
+            window.localStorage.setItem(AUTH_STORAGE_KEY, JSON.stringify(authUser));
           } catch {
             /* ignore */
           }
 
           setIsAuthModalOpen(false);
-          toast.success(`Welcome back, ${authenticatedUser.name}!`);
-          return { success: true };
+          toast.success(`Welcome back, ${authUser.name}!`);
+          return { success: true, user: authUser };
         }
 
         return { success: false, error: "Authentication failed. No user returned." };
@@ -275,10 +381,10 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         return { success: false, error: message };
       }
     },
-    [],
+    []
   );
 
-  // Email + password sign up with Supabase
+  // Email + password sign up
   const signUp = useCallback(
     async ({
       email,
@@ -292,50 +398,66 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       role: Role;
       name: string;
       org: string;
-    }): Promise<{ success: boolean; error?: string }> => {
+    }): Promise<{ success: boolean; error?: string; user?: AuthUser }> => {
+      const cleanEmail = email.trim().toLowerCase();
+
+      // Check if already registered
+      const currentAccounts = loadRegisteredUsers();
+      if (currentAccounts.some((a) => a.email.toLowerCase() === cleanEmail)) {
+        return {
+          success: false,
+          error: "An account with this email already exists. Try signing in.",
+        };
+      }
+
+      // Create new account
+      const newAccount: RegisteredAccount = {
+        id: `usr-${role}-${Date.now().toString(36)}`,
+        email: cleanEmail,
+        password,
+        name: name.trim(),
+        role,
+        org: org.trim() || ROLE_PROFILES[role]?.org || "CampusVenture",
+        createdAt: new Date().toISOString(),
+      };
+
+      const updatedAccounts = [...currentAccounts, newAccount];
+      saveRegisteredUsers(updatedAccounts);
+      setRegisteredUsers(updatedAccounts);
+
+      const authUser: AuthUser = {
+        id: newAccount.id,
+        email: newAccount.email,
+        name: newAccount.name,
+        role: newAccount.role,
+        org: newAccount.org,
+        avatarInitials: getInitials(newAccount.name),
+        isDemo: false,
+      };
+
+      setUser(authUser);
       try {
-        const { data, error } = await supabase.auth.signUp({
-          email,
+        window.localStorage.setItem(AUTH_STORAGE_KEY, JSON.stringify(authUser));
+      } catch {
+        /* ignore */
+      }
+
+      // Also register on Supabase if connected
+      supabase.auth
+        .signUp({
+          email: cleanEmail,
           password,
           options: {
-            data: {
-              role,
-              name,
-              org,
-            },
+            data: { role, name: name.trim(), org: newAccount.org },
           },
-        });
+        })
+        .catch(() => {});
 
-        if (error) {
-          return { success: false, error: error.message };
-        }
-
-        if (data.user) {
-          const authenticatedUser = extractUserData({
-            id: data.user.id,
-            email: data.user.email || email,
-            user_metadata: { role, name, org },
-          });
-
-          setUser(authenticatedUser);
-          try {
-            window.localStorage.setItem(AUTH_STORAGE_KEY, JSON.stringify(authenticatedUser));
-          } catch {
-            /* ignore */
-          }
-
-          setIsAuthModalOpen(false);
-          toast.success(`Account created! Welcome, ${name}.`);
-          return { success: true };
-        }
-
-        return { success: true };
-      } catch (err) {
-        const message = err instanceof Error ? err.message : "Registration failed.";
-        return { success: false, error: message };
-      }
+      setIsAuthModalOpen(false);
+      toast.success(`Account created! Welcome aboard, ${authUser.name}.`);
+      return { success: true, user: authUser };
     },
-    [],
+    []
   );
 
   // Sign out
@@ -353,7 +475,53 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       /* ignore */
     }
 
-    toast.success("Signed out successfully");
+    toast.success("You have been logged out.");
+  }, []);
+
+  // Role switching
+  const switchRole = useCallback(
+    (newRole: Role) => {
+      if (user) {
+        const updated: AuthUser = {
+          ...user,
+          role: newRole,
+          org: ROLE_PROFILES[newRole].org,
+        };
+        setUser(updated);
+        try {
+          window.localStorage.setItem(AUTH_STORAGE_KEY, JSON.stringify(updated));
+        } catch {
+          /* ignore */
+        }
+        toast.info(`Switched role to ${newRole}`);
+      }
+    },
+    [user]
+  );
+
+  // Internal helper kept for backwards compatibility if needed
+  const loginAsRole = useCallback((role: Role) => {
+    const profile = ROLE_PROFILES[role];
+    const defaultAcc = DEFAULT_ACCOUNTS.find((a) => a.role === role);
+    const newUser: AuthUser = {
+      id: defaultAcc?.id || `usr-${role}-${Date.now().toString(36)}`,
+      email: defaultAcc?.email || profile.email,
+      name: defaultAcc?.name || profile.name,
+      role,
+      org: defaultAcc?.org || profile.org,
+      avatarInitials: getInitials(profile.name),
+      isDemo: true,
+    };
+
+    setUser(newUser);
+    try {
+      window.localStorage.setItem(AUTH_STORAGE_KEY, JSON.stringify(newUser));
+    } catch {
+      /* ignore */
+    }
+
+    setIsAuthModalOpen(false);
+    toast.success(`Signed in as ${profile.name} (${role})`);
   }, []);
 
   // Authorization helper
@@ -361,7 +529,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     (requiredRole: Role) => {
       return user?.role === requiredRole;
     },
-    [user],
+    [user]
   );
 
   return (
@@ -373,6 +541,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         dbStatus,
         isAuthModalOpen,
         authModalDefaultRole,
+        authModalDefaultMode,
         openAuthModal,
         closeAuthModal,
         signIn,
@@ -382,6 +551,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         signOut,
         refreshDbStatus,
         hasRole,
+        registeredUsers,
+        isEmailRegistered,
       }}
     >
       {children}

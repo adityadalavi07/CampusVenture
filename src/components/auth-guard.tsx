@@ -7,8 +7,8 @@ import {
   GraduationCap,
   LineChart,
   Building2,
-  RefreshCw,
-  Sparkles,
+  LogIn,
+  UserPlus,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
@@ -43,7 +43,7 @@ const ROLE_INFO: Record<Role, { title: string; badge: string; icon: typeof Gradu
 };
 
 export function AuthGuard({ requiredRole, children }: AuthGuardProps) {
-  const { user, isAuthenticated, isLoading, openAuthModal, loginAsRole, switchRole } = useAuth();
+  const { user, isAuthenticated, isLoading, openAuthModal } = useAuth();
 
   if (isLoading) {
     return (
@@ -77,27 +77,28 @@ export function AuthGuard({ requiredRole, children }: AuthGuardProps) {
           </CardHeader>
           <CardContent className="space-y-4 pt-4">
             <div className="rounded-lg border bg-muted/40 p-3.5 text-xs text-muted-foreground space-y-1">
-              <p className="font-medium text-foreground">Why do I see this?</p>
+              <p className="font-medium text-foreground">Role-Based Access Control</p>
               <p>
-                CampusVenture uses role-based access control (RBAC) to protect sensitive data rooms,
-                founder pitches, and institutional review pipelines.
+                CampusVenture verifies student founders, investors, and university partners
+                to protect sensitive startup data rooms and institutional workflows.
               </p>
             </div>
 
-            <div className="flex flex-col gap-2">
+            <div className="flex flex-col gap-2.5">
               <Button
-                onClick={() => loginAsRole(requiredRole)}
-                className="w-full flex items-center justify-center gap-2"
+                onClick={() => openAuthModal(requiredRole, "signin")}
+                className="w-full flex items-center justify-center gap-2 font-semibold"
               >
-                <Sparkles className="size-4" />
-                Quick Access as {targetRole.title}
+                <LogIn className="size-4" />
+                Sign In as {targetRole.title}
               </Button>
               <Button
                 variant="outline"
-                onClick={() => openAuthModal(requiredRole)}
-                className="w-full"
+                onClick={() => openAuthModal(requiredRole, "register")}
+                className="w-full flex items-center justify-center gap-2"
               >
-                Sign In with Email / Other Role
+                <UserPlus className="size-4" />
+                Create {targetRole.title} Account
               </Button>
               <Button variant="ghost" asChild className="w-full text-xs text-muted-foreground">
                 <Link to="/">Return to Homepage</Link>
@@ -151,17 +152,17 @@ export function AuthGuard({ requiredRole, children }: AuthGuardProps) {
               </div>
             </div>
 
-            <div className="flex flex-col gap-2">
+            <div className="flex flex-col gap-2.5">
               <Button
-                onClick={() => switchRole(requiredRole)}
+                onClick={() => openAuthModal(requiredRole, "signin")}
                 className="w-full flex items-center justify-center gap-2"
               >
-                <RefreshCw className="size-4" />
-                Switch to {targetRole.title} Workspace
+                <LogIn className="size-4" />
+                Sign In with a {targetRole.title} Account
               </Button>
               <Button variant="secondary" asChild className="w-full">
                 <Link to={currentRole.path}>
-                  Go to My {currentRole.title} Dashboard
+                  Return to My {currentRole.title} Dashboard
                   <ArrowRight className="ml-1 size-4" />
                 </Link>
               </Button>

@@ -1,429 +1,944 @@
-import { useState, useEffect } from "react";
-import {
-  GraduationCap,
-  LineChart,
-  Building2,
-  Lock,
-  Mail,
-  User,
-  ArrowRight,
-  Database,
-  CheckCircle2,
-  AlertCircle,
-  Loader2,
-  Sparkles,
-} from "lucide-react";
-import {
-  Dialog,
-  DialogContent,
-  DialogDescription,
-  DialogHeader,
-  DialogTitle,
-} from "@/components/ui/dialog";
-import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { Button } from "@/components/ui/button";
-import { Input } from "@/components/ui/input";
-import { Label } from "@/components/ui/label";
-import { Badge } from "@/components/ui/badge";
-import { useAuth, ROLE_PROFILES } from "@/lib/auth-context";
+import { useState, useEffect, useRef, useCallback } from "react";
+import { useRouter } from "@tanstack/react-router";
+import { Dialog, DialogContent, DialogTitle, DialogDescription } from "@/components/ui/dialog";
+import { useAuth, type RegisteredAccount } from "@/lib/auth-context";
 import type { Role } from "@/lib/demo-data";
+import { toast } from "sonner";
+
+// SVG path definitions from prototype
+const I: Record<string, string> = {
+  student: '<path d="M22 10 12 5 2 10l10 5 10-5z"/><path d="M6 12v5c3 2 9 2 12 0v-5"/>',
+  university:
+    '<rect x="5" y="3" width="14" height="18" rx="1"/><path d="M9 7h2M13 7h2M9 11h2M13 11h2M10 21v-4h4v4"/>',
+  investor: '<path d="M3 3v18h18"/><path d="m7 15 4-5 3 3 5-7"/>',
+  eye: '<path d="M2 12s4-7 10-7 10 7 10 7-4 7-10 7S2 12 2 12z"/><circle cx="12" cy="12" r="3"/>',
+  eyeoff:
+    '<path d="M3 3l18 18M10.6 6.1A9.7 9.7 0 0 1 12 6c6 0 10 6 10 6a17 17 0 0 1-3.2 3.7M6.6 6.6A16 16 0 0 0 2 12s4 6 10 6c1.5 0 2.9-.4 4.1-1"/>',
+  check: '<path d="m5 12 5 5 9-10"/>',
+  mail: '<rect x="3" y="5" width="18" height="14" rx="2"/><path d="m3 7 9 6 9-6"/>',
+  chev: '<path d="m6 9 6 6 6-6"/>',
+  x: '<path d="M6 6l12 12M18 6 6 18"/>',
+  back: '<path d="M15 6l-6 6 6 6"/>',
+};
+
+function Icon({ name, size = 18, className = "" }: { name: string; size?: number; className?: string }) {
+  const path = I[name] || "";
+  return (
+    <svg
+      width={size}
+      height={size}
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="1.8"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      aria-hidden="true"
+      className={className}
+      dangerouslySetInnerHTML={{ __html: path }}
+    />
+  );
+}
+
+const ROLES: Record<Role, string> = {
+  student: "Student",
+  university: "University",
+  investor: "Investor",
+};
+
+const ORDER: Role[] = ["student", "investor", "university"];
+
+const ORGLBL: Record<Role, string> = {
+  student: "College / University",
+  university: "Organization / College",
+  investor: "Firm (optional)",
+};
+
+const ORGPH: Record<Role, string> = {
+  student: "e.g. NIAT or COEP",
+  university: "e.g. Springfield University",
+  investor: "e.g. Acme Ventures",
+};
+
+const EMAILPH: Record<Role, string> = {
+  student: "alex@college.edu",
+  university: "alex@tech.edu",
+  investor: "alex@firm.com",
+};
+
+const emailOk = (e: string) => /^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/.test(e);
+const pwOk = (p: string) => p.length >= 8 && /\d/.test(p) && /[A-Za-z]/.test(p);
+const mask = (e: string) => {
+  if (!e || !e.includes("@")) return e;
+  const [a, b] = e.split("@");
+  return a[0] + "•••" + (a.length > 1 ? a.slice(-1) : "") + "@" + b;
+};
+
+type ViewMode = "signin" | "register" | "forgot" | "sent" | "dash";
 
 export function AuthDialog() {
   const {
+    user,
+    isAuthenticated,
     isAuthModalOpen,
     closeAuthModal,
     authModalDefaultRole,
-    loginAsRole,
+    authModalDefaultMode,
     signIn,
     signUp,
-    dbStatus,
+    signOut,
+    isEmailRegistered,
   } = useAuth();
 
-  const [activeTab, setActiveTab] = useState<"quick" | "signin" | "signup">("quick");
+  const router = useRouter();
 
-  // Sign in form state
-  const [signInEmail, setSignInEmail] = useState("");
-  const [signInPassword, setSignInPassword] = useState("");
-  const [signInLoading, setSignInLoading] = useState(false);
-  const [signInError, setSignInError] = useState<string | null>(null);
+  // Mode state: signin, register, forgot, sent, dash
+  const [mode, setMode] = useState<ViewMode>("signin");
+  const [role, setRole] = useState<Role>("student");
+  const [roleMenuOpen, setRoleMenuOpen] = useState(false);
+  const [busy, setBusy] = useState(false);
 
-  // Sign up form state
-  const [selectedRole, setSelectedRole] = useState<Role>("student");
-  const [signUpName, setSignUpName] = useState("");
-  const [signUpEmail, setSignUpEmail] = useState("");
-  const [signUpOrg, setSignUpOrg] = useState("");
-  const [signUpPassword, setSignUpPassword] = useState("");
-  const [signUpLoading, setSignUpLoading] = useState(false);
-  const [signUpError, setSignUpError] = useState<string | null>(null);
+  // Form field states
+  const [fName, setFName] = useState("");
+  const [fOrg, setFOrg] = useState("");
+  const [fEmail, setFEmail] = useState("");
+  const [fPw, setFPw] = useState("");
+  const [fPw2, setFPw2] = useState("");
 
-  // Set default role or tab when modal opens
+  // Password visibility states
+  const [showPw, setShowPw] = useState(false);
+  const [showPw2, setShowPw2] = useState(false);
+
+  // Field error messages
+  const [errors, setErrors] = useState<Record<string, string>>({});
+
+  // OTP Verification state
+  const [verSent, setVerSent] = useState<string | null>(null);
+  const [verCode, setVerCode] = useState<string | null>(null);
+  const [verExp, setVerExp] = useState(0);
+  const [verTries, setVerTries] = useState(0);
+  const [verCool, setVerCool] = useState(0);
+  const [verShow, setVerShow] = useState(false);
+  const [verOk, setVerOk] = useState(false);
+  const [verEmail, setVerEmail] = useState<string | null>(null);
+  const [otpDigits, setOtpDigits] = useState<string[]>(["", "", "", "", "", ""]);
+  const [otpError, setOtpError] = useState("");
+  const [resendCooldown, setResendCooldown] = useState(0);
+
+  const otpInputsRef = useRef<(HTMLInputElement | null)[]>([]);
+
+  // Reset form or set default role when modal opens
   useEffect(() => {
-    if (authModalDefaultRole) {
-      setSelectedRole(authModalDefaultRole);
+    if (isAuthModalOpen) {
+      if (authModalDefaultRole) {
+        setRole(authModalDefaultRole);
+      }
+      if (authModalDefaultMode) {
+        setMode(authModalDefaultMode);
+      } else if (isAuthenticated) {
+        setMode("dash");
+      } else {
+        setMode("signin");
+      }
+      setRoleMenuOpen(false);
+      setErrors({});
     }
-  }, [authModalDefaultRole]);
+  }, [isAuthModalOpen, authModalDefaultRole, authModalDefaultMode, isAuthenticated]);
 
-  const handleSignIn = async (e: React.FormEvent) => {
-    e.preventDefault();
-    setSignInError(null);
-    setSignInLoading(true);
-
-    const res = await signIn(signInEmail, signInPassword);
-    setSignInLoading(false);
-
-    if (!res.success) {
-      setSignInError(res.error || "Failed to sign in. Please check your credentials.");
-    }
+  // Set default placeholder email/org when switching role in sign in mode if fields are clean
+  const handleSelectRole = (r: Role) => {
+    setRole(r);
+    setRoleMenuOpen(false);
+    setErrors({});
   };
 
-  const handleSignUp = async (e: React.FormEvent) => {
-    e.preventDefault();
-    setSignUpError(null);
-    setSignUpLoading(true);
+  const setFieldError = (field: string, msg: string) => {
+    setErrors((prev) => ({ ...prev, [field]: msg }));
+  };
 
-    const res = await signUp({
-      email: signUpEmail,
-      password: signUpPassword,
-      role: selectedRole,
-      name: signUpName,
-      org: signUpOrg,
+  const clearFieldError = (field: string) => {
+    setErrors((prev) => {
+      const next = { ...prev };
+      delete next[field];
+      return next;
     });
-    setSignUpLoading(false);
+  };
 
-    if (!res.success) {
-      setSignUpError(res.error || "Failed to register. Please check your details.");
+  // Cooldown countdown timer effect
+  useEffect(() => {
+    if (!verShow) return;
+    const interval = setInterval(() => {
+      const remaining = Math.max(0, Math.ceil((verCool - Date.now()) / 1000));
+      setResendCooldown(remaining);
+    }, 500);
+    return () => clearInterval(interval);
+  }, [verShow, verCool]);
+
+  // Handle email changes during registration
+  const handleEmailChange = (val: string) => {
+    setFEmail(val);
+    clearFieldError("email");
+    if (verOk && verEmail !== val.trim().toLowerCase()) {
+      setVerOk(false);
+      setVerEmail(null);
+      toast.info("Email changed. Please verify the new address.");
     }
   };
+
+  // 1. Send OTP code
+  const handleSendOtp = async () => {
+    if (busy) return;
+    const clean = fEmail.trim().toLowerCase();
+    if (!emailOk(clean)) {
+      setFieldError("email", "Enter a valid email address.");
+      return;
+    }
+
+    if (isEmailRegistered(clean)) {
+      setFieldError("email", "An account with this email already exists. Try signing in.");
+      return;
+    }
+
+    if (verCool > Date.now()) return;
+
+    setBusy(true);
+    await new Promise((r) => setTimeout(r, 600));
+
+    // Generate 6 digit random OTP code
+    const array = new Uint32Array(1);
+    crypto.getRandomValues(array);
+    const code = String(array[0] % 1000000).padStart(6, "0");
+
+    setVerSent(clean);
+    setVerCode(code);
+    setVerExp(Date.now() + 5 * 60000); // 5 minutes
+    setVerTries(0);
+    setVerCool(Date.now() + 30000); // 30 seconds cooldown
+    setOtpDigits(["", "", "", "", "", ""]);
+    setOtpError("");
+    setVerShow(true);
+    setBusy(false);
+
+    toast(`Prototype mode: no real email is sent. Your demo code is ${code}`, {
+      duration: 10000,
+    });
+
+    setTimeout(() => {
+      otpInputsRef.current[0]?.focus();
+    }, 100);
+  };
+
+  // 2. Verify OTP code
+  const handleVerifyOtp = () => {
+    const entered = otpDigits.join("");
+    if (entered.length < 6) return;
+
+    if (Date.now() > verExp) {
+      setOtpError("This code has expired. Request a new one.");
+      return;
+    }
+
+    if (verTries >= 5) {
+      setOtpError("Too many attempts. Request a new code.");
+      return;
+    }
+
+    if (entered !== verCode) {
+      const nextTries = verTries + 1;
+      setVerTries(nextTries);
+      setOtpError(`Incorrect code. ${5 - nextTries} attempt${5 - nextTries === 1 ? "" : "s"} left.`);
+      return;
+    }
+
+    setVerOk(true);
+    setVerEmail(verSent);
+    setVerCode(null);
+    setVerShow(false);
+    toast.success("Email verified.");
+  };
+
+  // Handle OTP input navigation
+  const handleOtpInput = (index: number, val: string) => {
+    const digit = val.replace(/\D/g, "").slice(-1);
+    const nextDigits = [...otpDigits];
+    nextDigits[index] = digit;
+    setOtpDigits(nextDigits);
+    setOtpError("");
+
+    if (digit && index < 5) {
+      otpInputsRef.current[index + 1]?.focus();
+    }
+  };
+
+  const handleOtpKeyDown = (index: number, e: React.KeyboardEvent<HTMLInputElement>) => {
+    if (e.key === "Backspace" && !otpDigits[index] && index > 0) {
+      otpInputsRef.current[index - 1]?.focus();
+      const nextDigits = [...otpDigits];
+      nextDigits[index - 1] = "";
+      setOtpDigits(nextDigits);
+    }
+    if (e.key === "Enter" && otpDigits.join("").length === 6) {
+      handleVerifyOtp();
+    }
+  };
+
+  const handleOtpPaste = (e: React.ClipboardEvent<HTMLInputElement>) => {
+    e.preventDefault();
+    const paste = (e.clipboardData.getData("text") || "").replace(/\D/g, "").slice(0, 6);
+    if (!paste) return;
+    const nextDigits = [...otpDigits];
+    for (let i = 0; i < 6; i++) {
+      nextDigits[i] = paste[i] || "";
+    }
+    setOtpDigits(nextDigits);
+    setOtpError("");
+    const targetIdx = Math.min(paste.length, 5);
+    otpInputsRef.current[targetIdx]?.focus();
+  };
+
+  // 3. Sign In Action
+  const handleSignIn = async () => {
+    if (busy) return;
+    const cleanEmail = fEmail.trim().toLowerCase();
+    let bad = false;
+
+    if (!emailOk(cleanEmail)) {
+      setFieldError("email", "Enter a valid email address.");
+      bad = true;
+    }
+    if (!fPw) {
+      setFieldError("pw", "Enter your password.");
+      bad = true;
+    }
+    if (bad) return;
+
+    setBusy(true);
+    const res = await signIn(cleanEmail, fPw, role);
+    setBusy(false);
+
+    if (!res.success) {
+      toast.error(res.error || "Incorrect email or password.");
+      return;
+    }
+
+    closeAuthModal();
+    // Navigate smoothly to role portal
+    const targetRole = res.user?.role || role;
+    router.navigate({ to: `/app/${targetRole}` });
+  };
+
+  // 4. Register Action
+  const handleRegister = async () => {
+    if (busy) return;
+    const cleanEmail = fEmail.trim().toLowerCase();
+    let bad = false;
+
+    if (fName.trim().length < 2) {
+      setFieldError("name", "Enter your full name.");
+      bad = true;
+    }
+    if (role !== "investor" && fOrg.trim().length < 2) {
+      setFieldError("org", "This field is required.");
+      bad = true;
+    }
+    if (!emailOk(cleanEmail)) {
+      setFieldError("email", "Enter a valid email address.");
+      bad = true;
+    }
+    if (!pwOk(fPw)) {
+      setFieldError("pw", "Use 8+ characters with a letter and a number.");
+      bad = true;
+    }
+    if (fPw !== fPw2) {
+      setFieldError("pw2", "Passwords do not match.");
+      bad = true;
+    }
+    if (!(verOk && verEmail === cleanEmail)) {
+      setFieldError("email", "Verify this email first.");
+      bad = true;
+    }
+    if (bad) return;
+
+    setBusy(true);
+    const res = await signUp({
+      name: fName.trim(),
+      org: fOrg.trim(),
+      email: cleanEmail,
+      password: fPw,
+      role,
+    });
+    setBusy(false);
+
+    if (!res.success) {
+      toast.error(res.error || "Account creation failed.");
+      return;
+    }
+
+    closeAuthModal();
+    router.navigate({ to: `/app/${role}` });
+  };
+
+  // 5. Send Reset Password
+  const handleSendReset = () => {
+    const clean = fEmail.trim().toLowerCase();
+    if (!emailOk(clean)) {
+      setFieldError("email", "Enter a valid email address.");
+      return;
+    }
+    setMode("sent");
+  };
+
+  // 6. Logout
+  const handleLogout = async () => {
+    await signOut();
+    setFPw("");
+    setMode("signin");
+    closeAuthModal();
+    router.navigate({ to: "/" });
+  };
+
+  const isEmailVerified = verOk && verEmail === fEmail.trim().toLowerCase();
 
   return (
     <Dialog open={isAuthModalOpen} onOpenChange={(open) => !open && closeAuthModal()}>
-      <DialogContent className="max-w-md p-6 sm:max-w-lg">
-        <DialogHeader className="text-left space-y-2">
-          <div className="flex items-center justify-between">
-            <div className="flex items-center gap-2">
-              <span className="grid size-8 place-items-center rounded-lg bg-gradient-brand text-xs font-bold text-primary-foreground">
-                CV
-              </span>
-              <span className="font-semibold tracking-tight text-foreground">CampusVenture</span>
-            </div>
+      <DialogContent className="max-w-[560px] p-0 border-0 bg-transparent shadow-none overflow-visible [&>button]:hidden">
+        {/* Hidden accessible title/desc for Radix Dialog accessibility requirements */}
+        <DialogTitle className="sr-only">CampusVenture Authentication</DialogTitle>
+        <DialogDescription className="sr-only">
+          Sign in or register for your role-based CampusVenture account.
+        </DialogDescription>
 
-            {dbStatus?.connected ? (
-              <Badge
-                variant="outline"
-                className="flex items-center gap-1.5 border-emerald-500/30 bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 text-[11px] font-normal"
-              >
-                <span className="size-1.5 rounded-full bg-emerald-500 animate-pulse" />
-                <Database className="size-3" />
-                Database connected
-              </Badge>
-            ) : (
-              <Badge
-                variant="outline"
-                className="flex items-center gap-1.5 text-xs text-muted-foreground"
-              >
-                <Database className="size-3" />
-                Connecting...
-              </Badge>
-            )}
-          </div>
+        <div className="auth-flow flex items-center justify-center p-2 sm:p-4">
+          <main className="modal" id="modal" aria-live="polite">
+            {/* Modal Close Button */}
+            <button
+              type="button"
+              className="x"
+              onClick={closeAuthModal}
+              aria-label="Close modal"
+              title="Close modal"
+            >
+              <Icon name="x" size={18} />
+            </button>
 
-          <DialogTitle className="text-xl font-bold">Authentication & Role Access</DialogTitle>
-          <DialogDescription className="text-xs text-muted-foreground">
-            Sign in to access your role-authorized workspace, or use instant 1-click role access.
-          </DialogDescription>
-        </DialogHeader>
+            {/* VIEW 1: SIGN IN */}
+            {mode === "signin" && (
+              <div className="view">
+                <h1>Welcome back</h1>
+                <p className="sub">Sign in to continue to your dashboard.</p>
 
-        <Tabs
-          value={activeTab}
-          onValueChange={(v) => setActiveTab(v as "quick" | "signin" | "signup")}
-          className="mt-2"
-        >
-          <TabsList className="grid w-full grid-cols-3">
-            <TabsTrigger value="quick" className="text-xs">
-              <Sparkles className="size-3.5 mr-1" /> Quick Access
-            </TabsTrigger>
-            <TabsTrigger value="signin" className="text-xs">
-              <Lock className="size-3.5 mr-1" /> Sign In
-            </TabsTrigger>
-            <TabsTrigger value="signup" className="text-xs">
-              <User className="size-3.5 mr-1" /> Sign Up
-            </TabsTrigger>
-          </TabsList>
+                {/* Role dropdown selector */}
+                <div className="field">
+                  <span className="lbl" id="rl">
+                    User / Role
+                  </span>
+                  <button
+                    type="button"
+                    className="sel"
+                    id="roleBtn"
+                    aria-haspopup="listbox"
+                    aria-expanded={roleMenuOpen}
+                    aria-labelledby="rl"
+                    onClick={() => setRoleMenuOpen(!roleMenuOpen)}
+                  >
+                    <Icon name={role} />
+                    <span className="grow">{ROLES[role]}</span>
+                    <Icon name="chev" size={16} />
+                  </button>
 
-          {/* Quick 1-Click Role Access */}
-          <TabsContent value="quick" className="space-y-3 pt-3">
-            <p className="text-xs text-muted-foreground">
-              Select any role to immediately authenticate and test its specific features & authorization guards:
-            </p>
-
-            <div className="grid gap-2.5">
-              {/* Student */}
-              <button
-                type="button"
-                onClick={() => loginAsRole("student")}
-                className="group flex w-full items-center justify-between rounded-xl border border-border/80 bg-card/60 p-3.5 text-left transition-all hover:border-primary hover:bg-primary/5 hover:shadow-sm"
-              >
-                <div className="flex items-center gap-3">
-                  <div className="grid size-10 place-items-center rounded-lg bg-primary/10 text-primary transition-colors group-hover:bg-primary group-hover:text-primary-foreground">
-                    <GraduationCap className="size-5" />
-                  </div>
-                  <div>
-                    <div className="flex items-center gap-2">
-                      <span className="text-sm font-semibold text-foreground">Student Founder</span>
-                      <Badge variant="secondary" className="text-[10px] py-0 px-1.5">
-                        Founder
-                      </Badge>
+                  {roleMenuOpen && (
+                    <div className="menu" role="listbox">
+                      {(["student", "university", "investor"] as Role[]).map((r) => (
+                        <button
+                          key={r}
+                          type="button"
+                          className={`opt ${r === role ? "on" : ""}`}
+                          role="option"
+                          aria-selected={r === role}
+                          onClick={() => handleSelectRole(r)}
+                        >
+                          <Icon name={r} />
+                          <span style={{ flex: 1 }}>{ROLES[r]}</span>
+                          {r === role && <Icon name="check" size={16} />}
+                        </button>
+                      ))}
                     </div>
-                    <p className="text-xs text-muted-foreground">
-                      {ROLE_PROFILES.student.name} • {ROLE_PROFILES.student.org}
-                    </p>
-                  </div>
+                  )}
                 </div>
-                <ArrowRight className="size-4 text-muted-foreground transition-transform group-hover:translate-x-0.5 group-hover:text-primary" />
-              </button>
 
-              {/* Investor */}
-              <button
-                type="button"
-                onClick={() => loginAsRole("investor")}
-                className="group flex w-full items-center justify-between rounded-xl border border-border/80 bg-card/60 p-3.5 text-left transition-all hover:border-primary hover:bg-primary/5 hover:shadow-sm"
-              >
-                <div className="flex items-center gap-3">
-                  <div className="grid size-10 place-items-center rounded-lg bg-primary/10 text-primary transition-colors group-hover:bg-primary group-hover:text-primary-foreground">
-                    <LineChart className="size-5" />
-                  </div>
-                  <div>
-                    <div className="flex items-center gap-2">
-                      <span className="text-sm font-semibold text-foreground">Investor</span>
-                      <Badge variant="secondary" className="text-[10px] py-0 px-1.5">
-                        Angel / VC
-                      </Badge>
-                    </div>
-                    <p className="text-xs text-muted-foreground">
-                      {ROLE_PROFILES.investor.name} • {ROLE_PROFILES.investor.org}
-                    </p>
-                  </div>
-                </div>
-                <ArrowRight className="size-4 text-muted-foreground transition-transform group-hover:translate-x-0.5 group-hover:text-primary" />
-              </button>
-
-              {/* University */}
-              <button
-                type="button"
-                onClick={() => loginAsRole("university")}
-                className="group flex w-full items-center justify-between rounded-xl border border-border/80 bg-card/60 p-3.5 text-left transition-all hover:border-primary hover:bg-primary/5 hover:shadow-sm"
-              >
-                <div className="flex items-center gap-3">
-                  <div className="grid size-10 place-items-center rounded-lg bg-primary/10 text-primary transition-colors group-hover:bg-primary group-hover:text-primary-foreground">
-                    <Building2 className="size-5" />
-                  </div>
-                  <div>
-                    <div className="flex items-center gap-2">
-                      <span className="text-sm font-semibold text-foreground">University / Cell</span>
-                      <Badge variant="secondary" className="text-[10px] py-0 px-1.5">
-                        Partner
-                      </Badge>
-                    </div>
-                    <p className="text-xs text-muted-foreground">
-                      {ROLE_PROFILES.university.name} • {ROLE_PROFILES.university.org}
-                    </p>
-                  </div>
-                </div>
-                <ArrowRight className="size-4 text-muted-foreground transition-transform group-hover:translate-x-0.5 group-hover:text-primary" />
-              </button>
-            </div>
-          </TabsContent>
-
-          {/* Email + Password Sign In */}
-          <TabsContent value="signin" className="pt-3">
-            <form onSubmit={handleSignIn} className="space-y-3.5">
-              {signInError && (
-                <div className="flex items-start gap-2 rounded-lg border border-destructive/30 bg-destructive/10 p-2.5 text-xs text-destructive">
-                  <AlertCircle className="size-4 shrink-0 mt-0.5" />
-                  <span>{signInError}</span>
-                </div>
-              )}
-
-              <div className="space-y-1.5">
-                <Label htmlFor="signin-email" className="text-xs">
-                  Email Address
-                </Label>
-                <div className="relative">
-                  <Mail className="absolute left-3 top-2.5 size-4 text-muted-foreground" />
-                  <Input
-                    id="signin-email"
+                {/* Email Address */}
+                <div className="field">
+                  <label htmlFor="auth-signin-email">Email Address</label>
+                  <input
+                    id="auth-signin-email"
                     type="email"
-                    placeholder="founder@university.edu"
-                    className="pl-9 text-xs"
-                    value={signInEmail}
-                    onChange={(e) => setSignInEmail(e.target.value)}
-                    required
+                    placeholder={EMAILPH[role]}
+                    value={fEmail}
+                    onChange={(e) => {
+                      setFEmail(e.target.value);
+                      clearFieldError("email");
+                    }}
+                    autoComplete="email"
+                    className={errors["email"] ? "bad" : ""}
                   />
+                  {errors["email"] && <div className="err">{errors["email"]}</div>}
                 </div>
-              </div>
 
-              <div className="space-y-1.5">
-                <Label htmlFor="signin-password" className="text-xs">
-                  Password
-                </Label>
-                <div className="relative">
-                  <Lock className="absolute left-3 top-2.5 size-4 text-muted-foreground" />
-                  <Input
-                    id="signin-password"
-                    type="password"
-                    placeholder="••••••••"
-                    className="pl-9 text-xs"
-                    value={signInPassword}
-                    onChange={(e) => setSignInPassword(e.target.value)}
-                    required
-                  />
+                {/* Password with eye show/hide */}
+                <div className="field">
+                  <label htmlFor="auth-signin-pw">Password</label>
+                  <div className="pw">
+                    <input
+                      id="auth-signin-pw"
+                      type={showPw ? "text" : "password"}
+                      placeholder="Enter your password"
+                      value={fPw}
+                      onChange={(e) => {
+                        setFPw(e.target.value);
+                        clearFieldError("pw");
+                      }}
+                      autoComplete="current-password"
+                      className={errors["pw"] ? "bad" : ""}
+                      onKeyDown={(e) => e.key === "Enter" && handleSignIn()}
+                    />
+                    <button
+                      type="button"
+                      className="eye"
+                      onClick={() => setShowPw(!showPw)}
+                      aria-label={showPw ? "Hide password" : "Show password"}
+                    >
+                      <Icon name={showPw ? "eyeoff" : "eye"} />
+                    </button>
+                  </div>
+                  {errors["pw"] && <div className="err">{errors["pw"]}</div>}
                 </div>
-              </div>
 
-              <Button type="submit" className="w-full text-xs" disabled={signInLoading}>
-                {signInLoading ? (
-                  <>
-                    <Loader2 className="mr-2 size-3.5 animate-spin" /> Signing in...
-                  </>
-                ) : (
-                  <>
-                    Sign In with Supabase <ArrowRight className="ml-1 size-3.5" />
-                  </>
-                )}
-              </Button>
-
-              <div className="rounded-lg bg-muted/50 p-2 text-center text-[11px] text-muted-foreground">
-                Tip: For instant testing without registering, use the <strong>Quick Access</strong> tab.
-              </div>
-            </form>
-          </TabsContent>
-
-          {/* Create Account / Sign Up */}
-          <TabsContent value="signup" className="pt-3">
-            <form onSubmit={handleSignUp} className="space-y-3">
-              {signUpError && (
-                <div className="flex items-start gap-2 rounded-lg border border-destructive/30 bg-destructive/10 p-2.5 text-xs text-destructive">
-                  <AlertCircle className="size-4 shrink-0 mt-0.5" />
-                  <span>{signUpError}</span>
-                </div>
-              )}
-
-              <div className="space-y-1.5">
-                <Label className="text-xs">Select Your Role</Label>
-                <div className="grid grid-cols-3 gap-2">
+                {/* Forgot password */}
+                <div className="between">
                   <button
                     type="button"
-                    onClick={() => setSelectedRole("student")}
-                    className={`flex flex-col items-center gap-1 rounded-lg border p-2 text-xs transition-colors ${
-                      selectedRole === "student"
-                        ? "border-primary bg-primary/10 text-primary font-medium"
-                        : "border-border text-muted-foreground hover:bg-accent"
-                    }`}
+                    className="link"
+                    onClick={() => {
+                      setErrors({});
+                      setMode("forgot");
+                    }}
                   >
-                    <GraduationCap className="size-4" />
-                    <span>Founder</span>
+                    Forgot password?
+                  </button>
+                </div>
+
+                {/* Buttons */}
+                <div className="btns">
+                  <button
+                    type="button"
+                    className="btn primary"
+                    onClick={handleSignIn}
+                    disabled={busy}
+                  >
+                    {busy ? (
+                      <>
+                        <span className="spin" /> Signing in
+                      </>
+                    ) : (
+                      "Sign In"
+                    )}
                   </button>
                   <button
                     type="button"
-                    onClick={() => setSelectedRole("investor")}
-                    className={`flex flex-col items-center gap-1 rounded-lg border p-2 text-xs transition-colors ${
-                      selectedRole === "investor"
-                        ? "border-primary bg-primary/10 text-primary font-medium"
-                        : "border-border text-muted-foreground hover:bg-accent"
-                    }`}
+                    className="btn ghost"
+                    onClick={() => {
+                      setErrors({});
+                      setMode("register");
+                    }}
                   >
-                    <LineChart className="size-4" />
-                    <span>Investor</span>
+                    Register / New User
+                  </button>
+                </div>
+              </div>
+            )}
+
+            {/* VIEW 2: REGISTER */}
+            {mode === "register" && (
+              <div className="view">
+                <h1>Create Your Account</h1>
+                <p className="sub">Pick a role, then verify your email to finish.</p>
+
+                {/* Select Your Role Cards */}
+                <span className="lbl">Select Your Role</span>
+                <div className="cards" role="radiogroup" aria-label="Role">
+                  {ORDER.map((k) => (
+                    <button
+                      key={k}
+                      type="button"
+                      className={`card ${k === role ? "on" : ""}`}
+                      role="radio"
+                      aria-checked={k === role}
+                      onClick={() => {
+                        setRole(k);
+                        clearFieldError("org");
+                      }}
+                    >
+                      <Icon name={k} size={20} />
+                      <span>{ROLES[k]}</span>
+                    </button>
+                  ))}
+                </div>
+
+                {/* Full name & Org */}
+                <div className="row">
+                  <div className="field">
+                    <label htmlFor="auth-reg-name">Full Name</label>
+                    <input
+                      id="auth-reg-name"
+                      placeholder="e.g. Alex Chen"
+                      value={fName}
+                      onChange={(e) => {
+                        setFName(e.target.value);
+                        clearFieldError("name");
+                      }}
+                      autoComplete="name"
+                      className={errors["name"] ? "bad" : ""}
+                    />
+                    {errors["name"] && <div className="err">{errors["name"]}</div>}
+                  </div>
+                  <div className="field">
+                    <label htmlFor="auth-reg-org">{ORGLBL[role]}</label>
+                    <input
+                      id="auth-reg-org"
+                      placeholder={ORGPH[role]}
+                      value={fOrg}
+                      onChange={(e) => {
+                        setFOrg(e.target.value);
+                        clearFieldError("org");
+                      }}
+                      className={errors["org"] ? "bad" : ""}
+                    />
+                    {errors["org"] && <div className="err">{errors["org"]}</div>}
+                  </div>
+                </div>
+
+                {/* Email Address with Verification Button */}
+                <div className="field">
+                  <label htmlFor="auth-reg-email">
+                    {role === "university" ? "Official Email Address" : "Email Address"}
+                  </label>
+                  <div className="vrow">
+                    <input
+                      id="auth-reg-email"
+                      type="email"
+                      placeholder={EMAILPH[role]}
+                      value={fEmail}
+                      onChange={(e) => handleEmailChange(e.target.value)}
+                      autoComplete="email"
+                      className={errors["email"] ? "bad" : ""}
+                    />
+                    <button
+                      type="button"
+                      className={`vbtn ${isEmailVerified ? "done" : ""}`}
+                      onClick={handleSendOtp}
+                      disabled={isEmailVerified || !emailOk(fEmail.trim()) || busy}
+                    >
+                      {isEmailVerified ? (
+                        <>
+                          <Icon name="check" size={16} /> Email Verified
+                        </>
+                      ) : busy ? (
+                        <>
+                          <span className="spin" /> Sending
+                        </>
+                      ) : (
+                        "Verify Email"
+                      )}
+                    </button>
+                  </div>
+                  {errors["email"] && <div className="err">{errors["email"]}</div>}
+                </div>
+
+                {/* Password & Confirm Password */}
+                <div className="row">
+                  <div className="field">
+                    <label htmlFor="auth-reg-pw">Password</label>
+                    <div className="pw">
+                      <input
+                        id="auth-reg-pw"
+                        type={showPw ? "text" : "password"}
+                        placeholder="8+ chars, with a number"
+                        value={fPw}
+                        onChange={(e) => {
+                          setFPw(e.target.value);
+                          clearFieldError("pw");
+                        }}
+                        autoComplete="new-password"
+                        className={errors["pw"] ? "bad" : ""}
+                      />
+                      <button
+                        type="button"
+                        className="eye"
+                        onClick={() => setShowPw(!showPw)}
+                        aria-label={showPw ? "Hide password" : "Show password"}
+                      >
+                        <Icon name={showPw ? "eyeoff" : "eye"} />
+                      </button>
+                    </div>
+                    {errors["pw"] && <div className="err">{errors["pw"]}</div>}
+                  </div>
+
+                  <div className="field">
+                    <label htmlFor="auth-reg-pw2">Confirm Password</label>
+                    <div className="pw">
+                      <input
+                        id="auth-reg-pw2"
+                        type={showPw2 ? "text" : "password"}
+                        placeholder="Repeat password"
+                        value={fPw2}
+                        onChange={(e) => {
+                          setFPw2(e.target.value);
+                          clearFieldError("pw2");
+                        }}
+                        autoComplete="new-password"
+                        className={errors["pw2"] ? "bad" : ""}
+                      />
+                      <button
+                        type="button"
+                        className="eye"
+                        onClick={() => setShowPw2(!showPw2)}
+                        aria-label={showPw2 ? "Hide password" : "Show password"}
+                      >
+                        <Icon name={showPw2 ? "eyeoff" : "eye"} />
+                      </button>
+                    </div>
+                    {errors["pw2"] && <div className="err">{errors["pw2"]}</div>}
+                  </div>
+                </div>
+
+                {/* Register Submit Button */}
+                <button
+                  type="button"
+                  className="btn primary"
+                  onClick={handleRegister}
+                  disabled={!isEmailVerified || busy}
+                >
+                  {busy ? (
+                    <>
+                      <span className="spin" /> Creating account
+                    </>
+                  ) : (
+                    `Register as ${ROLES[role]}`
+                  )}
+                </button>
+
+                <div className="hint" style={{ textAlign: "center" }}>
+                  {isEmailVerified ? "" : "Verify your email to enable registration."}
+                </div>
+
+                <div style={{ textAlign: "center", marginTop: 14 }}>
+                  <span className="sub" style={{ margin: 0 }}>
+                    Already have an account?{" "}
+                  </span>
+                  <button
+                    type="button"
+                    className="link"
+                    onClick={() => {
+                      setErrors({});
+                      setMode("signin");
+                    }}
+                  >
+                    Sign In
+                  </button>
+                </div>
+              </div>
+            )}
+
+            {/* VIEW 3: FORGOT PASSWORD */}
+            {mode === "forgot" && (
+              <div className="view">
+                <button
+                  type="button"
+                  className="link back"
+                  onClick={() => {
+                    setErrors({});
+                    setMode("signin");
+                  }}
+                  style={{ display: "flex", alignItems: "center", gap: 4 }}
+                >
+                  <Icon name="back" size={16} /> Back to sign in
+                </button>
+                <h1>Reset your password</h1>
+                <p className="sub">Enter your email and we’ll send you a reset link.</p>
+
+                <div className="field">
+                  <label htmlFor="auth-forgot-email">Email Address</label>
+                  <input
+                    id="auth-forgot-email"
+                    type="email"
+                    placeholder={EMAILPH[role]}
+                    value={fEmail}
+                    onChange={(e) => {
+                      setFEmail(e.target.value);
+                      clearFieldError("email");
+                    }}
+                    className={errors["email"] ? "bad" : ""}
+                  />
+                  {errors["email"] && <div className="err">{errors["email"]}</div>}
+                </div>
+
+                <button
+                  type="button"
+                  className="btn primary"
+                  onClick={handleSendReset}
+                >
+                  Send reset link
+                </button>
+              </div>
+            )}
+
+            {/* VIEW 4: RESET SENT */}
+            {mode === "sent" && (
+              <div className="view dash">
+                <div className="ico ok">
+                  <Icon name="mail" size={22} />
+                </div>
+                <h1>Check your inbox</h1>
+                <p className="sub">
+                  If an account exists for that email, a reset link is on its way.
+                </p>
+                <button
+                  type="button"
+                  className="btn ghost"
+                  onClick={() => {
+                    setErrors({});
+                    setMode("signin");
+                  }}
+                >
+                  Back to sign in
+                </button>
+              </div>
+            )}
+
+            {/* VIEW 5: DASHBOARD STATUS (When already signed in) */}
+            {mode === "dash" && user && (
+              <div className="view dash">
+                <div className="ico ok">
+                  <Icon name="check" size={22} />
+                </div>
+                <h1>Welcome, {user.name.split(" ")[0]}</h1>
+                <div className="badge">
+                  <Icon name={user.role} size={16} />
+                  {ROLES[user.role]} dashboard
+                </div>
+                <p className="sub">
+                  {user.role === "university"
+                    ? "University accounts normally wait for admin approval. In this prototype you are let straight in."
+                    : "You are currently signed in to your workspace."}
+                </p>
+                <div className="btns">
+                  <button
+                    type="button"
+                    className="btn primary"
+                    onClick={() => {
+                      closeAuthModal();
+                      router.navigate({ to: `/app/${user.role}` });
+                    }}
+                  >
+                    Go to {ROLES[user.role]} Portal
                   </button>
                   <button
                     type="button"
-                    onClick={() => setSelectedRole("university")}
-                    className={`flex flex-col items-center gap-1 rounded-lg border p-2 text-xs transition-colors ${
-                      selectedRole === "university"
-                        ? "border-primary bg-primary/10 text-primary font-medium"
-                        : "border-border text-muted-foreground hover:bg-accent"
-                    }`}
+                    className="btn ghost"
+                    onClick={handleLogout}
                   >
-                    <Building2 className="size-4" />
-                    <span>University</span>
+                    Log out
                   </button>
                 </div>
               </div>
+            )}
 
-              <div className="grid grid-cols-2 gap-2">
-                <div className="space-y-1">
-                  <Label htmlFor="signup-name" className="text-xs">
-                    Full Name
-                  </Label>
-                  <Input
-                    id="signup-name"
-                    placeholder="e.g. Alex Chen"
-                    className="text-xs"
-                    value={signUpName}
-                    onChange={(e) => setSignUpName(e.target.value)}
-                    required
-                  />
+            {/* OTP SHEET OVERLAY SCRIM */}
+            {verShow && (
+              <div
+                className="scrim"
+                onClick={(e) => {
+                  if (e.target === e.currentTarget) setVerShow(false);
+                }}
+              >
+                <div
+                  className="sheet"
+                  role="dialog"
+                  aria-modal="true"
+                  aria-labelledby="ot"
+                >
+                  <button
+                    type="button"
+                    className="x"
+                    onClick={() => setVerShow(false)}
+                    aria-label="Close"
+                  >
+                    <Icon name="x" size={18} />
+                  </button>
+
+                  <div className="ico">
+                    <Icon name="mail" size={22} />
+                  </div>
+
+                  <h1 id="ot" style={{ fontSize: 20 }}>
+                    Verify Your Email
+                  </h1>
+                  <p className="sub" style={{ marginBottom: 0 }}>
+                    We’ve sent a verification code to
+                    <br />
+                    <b style={{ color: "var(--text)" }}>{mask(verSent || "")}</b>
+                  </p>
+
+                  <div className="otp" id="otp">
+                    {[0, 1, 2, 3, 4, 5].map((i) => (
+                      <input
+                        key={i}
+                        ref={(el) => {
+                          otpInputsRef.current[i] = el;
+                        }}
+                        inputMode="numeric"
+                        maxLength={1}
+                        autoComplete={i === 0 ? "one-time-code" : "off"}
+                        aria-label={`Digit ${i + 1}`}
+                        value={otpDigits[i]}
+                        onChange={(e) => handleOtpInput(i, e.target.value)}
+                        onKeyDown={(e) => handleOtpKeyDown(i, e)}
+                        onPaste={handleOtpPaste}
+                        className={otpError ? "bad" : ""}
+                      />
+                    ))}
+                  </div>
+
+                  <div className="err" style={{ minHeight: 18, margin: "0 0 10px" }}>
+                    {otpError}
+                  </div>
+
+                  <button
+                    type="button"
+                    className="btn primary"
+                    onClick={handleVerifyOtp}
+                    disabled={otpDigits.join("").length < 6}
+                  >
+                    Verify OTP
+                  </button>
+
+                  <div style={{ marginTop: 14 }}>
+                    <button
+                      type="button"
+                      className="link"
+                      onClick={handleSendOtp}
+                      disabled={resendCooldown > 0}
+                    >
+                      {resendCooldown > 0
+                        ? `Resend OTP in ${resendCooldown}s`
+                        : "Resend OTP"}
+                    </button>
+                  </div>
                 </div>
-                <div className="space-y-1">
-                  <Label htmlFor="signup-org" className="text-xs">
-                    Organization / College
-                  </Label>
-                  <Input
-                    id="signup-org"
-                    placeholder="e.g. Tech Institute"
-                    className="text-xs"
-                    value={signUpOrg}
-                    onChange={(e) => setSignUpOrg(e.target.value)}
-                    required
-                  />
-                </div>
               </div>
-
-              <div className="space-y-1">
-                <Label htmlFor="signup-email" className="text-xs">
-                  Email Address
-                </Label>
-                <Input
-                  id="signup-email"
-                  type="email"
-                  placeholder="alex@tech.edu"
-                  className="text-xs"
-                  value={signUpEmail}
-                  onChange={(e) => setSignUpEmail(e.target.value)}
-                  required
-                />
-              </div>
-
-              <div className="space-y-1">
-                <Label htmlFor="signup-password" className="text-xs">
-                  Password
-                </Label>
-                <Input
-                  id="signup-password"
-                  type="password"
-                  placeholder="At least 6 characters"
-                  className="text-xs"
-                  value={signUpPassword}
-                  onChange={(e) => setSignUpPassword(e.target.value)}
-                  required
-                  minLength={6}
-                />
-              </div>
-
-              <Button type="submit" className="w-full text-xs" disabled={signUpLoading}>
-                {signUpLoading ? (
-                  <>
-                    <Loader2 className="mr-2 size-3.5 animate-spin" /> Creating Account...
-                  </>
-                ) : (
-                  <>
-                    Register as {selectedRole === "student" ? "Founder" : selectedRole === "investor" ? "Investor" : "University Partner"}
-                  </>
-                )}
-              </Button>
-            </form>
-          </TabsContent>
-        </Tabs>
+            )}
+          </main>
+        </div>
       </DialogContent>
     </Dialog>
   );
