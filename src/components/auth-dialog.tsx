@@ -62,12 +62,63 @@ const ORGPH: Record<Role, string> = {
 };
 
 const EMAILPH: Record<Role, string> = {
-  student: "alex@college.edu",
-  university: "alex@tech.edu",
+  student: "e.g. 252921389@sguk.ac.in",
+  university: "e.g. dean@sgu.ac.in",
   investor: "alex@firm.com",
 };
 
 const emailOk = (e: string) => /^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/.test(e);
+
+export const isUniversityEmail = (email: string): boolean => {
+  const clean = email.trim().toLowerCase();
+  if (!emailOk(clean)) return false;
+  const parts = clean.split("@");
+  if (parts.length !== 2) return false;
+  const domain = parts[1];
+
+  // Common public commercial domains not allowed for student registration
+  const blocked = [
+    "gmail.com",
+    "googlemail.com",
+    "yahoo.com",
+    "yahoo.co.in",
+    "yahoo.in",
+    "outlook.com",
+    "hotmail.com",
+    "live.com",
+    "msn.com",
+    "icloud.com",
+    "me.com",
+    "rediffmail.com",
+    "rediff.com",
+    "protonmail.com",
+    "proton.me",
+    "zoho.com",
+    "zohomail.in",
+    "aol.com",
+    "mail.com",
+    "gmx.com",
+    "yandex.com",
+  ];
+
+  if (blocked.includes(domain)) return false;
+
+  // Must match recognized academic or university domains
+  return (
+    domain.endsWith(".ac.in") ||
+    domain.endsWith(".edu.in") ||
+    domain.endsWith(".edu") ||
+    domain.endsWith(".res.in") ||
+    domain.endsWith(".ernet.in") ||
+    domain.endsWith(".ac.uk") ||
+    domain.endsWith(".ac") ||
+    domain.includes("sguk.ac.in") ||
+    domain.includes("sgu.ac.in") ||
+    domain.includes(".univ.") ||
+    domain.includes(".college") ||
+    domain.includes(".institute")
+  );
+};
 const pwOk = (p: string) => p.length >= 8 && /\d/.test(p) && /[A-Za-z]/.test(p);
 const mask = (e: string) => {
   if (!e || !e.includes("@")) return e;
@@ -185,11 +236,26 @@ export function AuthDialog() {
     }
   }, [isAuthModalOpen, authModalDefaultRole, authModalDefaultMode, isAuthenticated]);
 
-  // Set default placeholder email/org when switching role in sign in mode if fields are clean
-  const handleSelectRole = (r: Role) => {
-    setRole(r);
+  // Switch role and clear all filled inputs so the new role starts completely fresh
+  const handleRoleChange = (newRole: Role) => {
+    setRole(newRole);
     setRoleMenuOpen(false);
+    setFName("");
+    setFOrg("");
+    setFEmail("");
+    setFPw("");
+    setFPw2("");
     setErrors({});
+    setVerOk(false);
+    setVerEmail(null);
+    setVerSent(null);
+    setVerCode(null);
+    setShowUnivDropdown(false);
+    setUnivSuggestions([]);
+  };
+
+  const handleSelectRole = (r: Role) => {
+    handleRoleChange(r);
   };
 
   const setFieldError = (field: string, msg: string) => {
@@ -231,6 +297,14 @@ export function AuthDialog() {
     const clean = fEmail.trim().toLowerCase();
     if (!emailOk(clean)) {
       setFieldError("email", "Enter a valid email address.");
+      return;
+    }
+
+    if (role === "student" && !isUniversityEmail(clean)) {
+      setFieldError(
+        "email",
+        "Student registration requires an official university email (e.g. 252921389@sguk.ac.in or ending with .ac.in / .edu). Personal emails like Gmail/Yahoo are not allowed."
+      );
       return;
     }
 
@@ -376,6 +450,9 @@ export function AuthDialog() {
     if (fName.trim().length < 2) {
       setFieldError("name", "Enter your full name.");
       bad = true;
+    } else if (fName.trim().length > 50) {
+      setFieldError("name", "Full name cannot exceed 50 characters.");
+      bad = true;
     }
     if (role !== "investor" && fOrg.trim().length < 2) {
       setFieldError("org", "This field is required.");
@@ -383,6 +460,9 @@ export function AuthDialog() {
     }
     if (!emailOk(cleanEmail)) {
       setFieldError("email", "Enter a valid email address.");
+      bad = true;
+    } else if (role === "student" && !isUniversityEmail(cleanEmail)) {
+      setFieldError("email", "Student registration requires an official university email (e.g. 252921389@sguk.ac.in).");
       bad = true;
     }
     if (!pwOk(fPw)) {
@@ -619,8 +699,9 @@ export function AuthDialog() {
                       role="radio"
                       aria-checked={k === role}
                       onClick={() => {
-                        setRole(k);
-                        clearFieldError("org");
+                        if (k !== role) {
+                          handleRoleChange(k);
+                        }
                       }}
                     >
                       <Icon name={k} size={20} />
@@ -632,13 +713,20 @@ export function AuthDialog() {
                 {/* Full name & Org with UGC Search */}
                 <div className="row">
                   <div className="field">
-                    <label htmlFor="auth-reg-name">Full Name</label>
+                    <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline" }}>
+                      <label htmlFor="auth-reg-name" style={{ margin: 0 }}>Full Name</label>
+                      <span style={{ fontSize: 11, color: "var(--mute)" }}>
+                        {fName.length}/50
+                      </span>
+                    </div>
                     <input
                       id="auth-reg-name"
-                      placeholder="e.g. Alex Chen"
+                      style={{ marginTop: 4 }}
+                      placeholder="e.g. Aditya Dalvi"
+                      maxLength={50}
                       value={fName}
                       onChange={(e) => {
-                        setFName(e.target.value);
+                        setFName(e.target.value.slice(0, 50));
                         clearFieldError("name");
                       }}
                       autoComplete="name"
@@ -717,10 +805,17 @@ export function AuthDialog() {
 
                 {/* Email Address with Verification Button */}
                 <div className="field">
-                  <label htmlFor="auth-reg-email">
-                    {role === "university" ? "Official Email Address" : "Email Address"}
-                  </label>
-                  <div className="vrow">
+                  <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline" }}>
+                    <label htmlFor="auth-reg-email" style={{ margin: 0 }}>
+                      {role === "student" ? "University Student Email" : role === "university" ? "Official University Email" : "Email Address"}
+                    </label>
+                    {role === "student" && (
+                      <span style={{ fontSize: 11, color: "var(--mute)" }}>
+                        .ac.in / .edu required
+                      </span>
+                    )}
+                  </div>
+                  <div className="vrow" style={{ marginTop: 4 }}>
                     <input
                       id="auth-reg-email"
                       type="email"
@@ -734,7 +829,11 @@ export function AuthDialog() {
                       type="button"
                       className={`vbtn ${isEmailVerified ? "done" : ""}`}
                       onClick={handleSendOtp}
-                      disabled={isEmailVerified || !emailOk(fEmail.trim()) || busy}
+                      disabled={
+                        isEmailVerified ||
+                        (role === "student" ? !isUniversityEmail(fEmail.trim()) : !emailOk(fEmail.trim())) ||
+                        busy
+                      }
                     >
                       {isEmailVerified ? (
                         <>
@@ -750,6 +849,19 @@ export function AuthDialog() {
                     </button>
                   </div>
                   {errors["email"] && <div className="err">{errors["email"]}</div>}
+
+                  {/* Student email domain guidance alerts */}
+                  {role === "student" && fEmail.trim().length > 0 && !errors["email"] && (
+                    !isUniversityEmail(fEmail.trim()) ? (
+                      <div style={{ fontSize: 11.5, color: "#fca5a5", marginTop: 4 }}>
+                        ⚠️ Only official university emails are allowed (e.g. 252921389@sguk.ac.in or .ac.in / .edu). Personal emails like Gmail/Yahoo are not permitted.
+                      </div>
+                    ) : !isEmailVerified ? (
+                      <div style={{ fontSize: 11.5, color: "var(--ok)", marginTop: 4, display: "flex", alignItems: "center", gap: 4 }}>
+                        <Icon name="check" size={13} /> Valid university email domain! Click "Verify Email" to get your OTP.
+                      </div>
+                    ) : null
+                  )}
                 </div>
 
                 {/* Password & Confirm Password */}
