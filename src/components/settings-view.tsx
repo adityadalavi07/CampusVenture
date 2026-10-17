@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { RotateCcw, Save, Database, ShieldCheck, CheckCircle2, RefreshCw, LogOut } from "lucide-react";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
@@ -43,21 +43,34 @@ export function SettingsView({ role }: { role: Role }) {
 
   const [testingDb, setTestingDb] = useState(false);
   const [profile, setProfile] = useState(() => {
+    let saved: Partial<{ name: string; email: string; org: string; bio: string }> = {};
     if (typeof window !== "undefined") {
       try {
         const raw = window.localStorage.getItem(KEY(role));
-        if (raw) return { ...DEFAULTS[role], ...JSON.parse(raw) };
+        if (raw) saved = JSON.parse(raw);
       } catch {
         /* ignore */
       }
     }
     return {
       ...DEFAULTS[role],
-      name: user?.name || DEFAULTS[role].name,
-      email: user?.email || DEFAULTS[role].email,
-      org: user?.org || DEFAULTS[role].org,
+      ...saved,
+      name: user?.name || saved.name || DEFAULTS[role].name,
+      email: user?.email || saved.email || DEFAULTS[role].email,
+      org: user?.org || saved.org || DEFAULTS[role].org,
     };
   });
+
+  useEffect(() => {
+    if (user) {
+      setProfile((prev) => ({
+        ...prev,
+        name: user.name || prev.name,
+        email: user.email || prev.email,
+        org: user.org || prev.org,
+      }));
+    }
+  }, [user]);
   const [emailAlerts, setEmailAlerts] = useState(true);
   const [weeklyDigest, setWeeklyDigest] = useState(role === "university");
 

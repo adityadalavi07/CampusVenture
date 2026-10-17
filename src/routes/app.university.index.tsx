@@ -17,6 +17,7 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { STAGES, formatMoney } from "@/lib/demo-data";
 import { STATUS_LABEL, useVenture } from "@/lib/store";
+import { useAuth } from "@/lib/auth-context";
 
 const TITLE = "University Ecosystem Dashboard — CampusVenture";
 const DESCRIPTION =
@@ -44,6 +45,8 @@ const CHART_COLORS = [
 
 function UniversityDashboard() {
   const { startups: DEMO_STARTUPS } = useVenture();
+  const { user } = useAuth();
+  const uniName = user?.org || "University Innovation & Incubation Cell";
   const pending = DEMO_STARTUPS.filter((s) => s.status === "pending");
   const byStage = STAGES.map((stage) => ({
     stage,
@@ -69,7 +72,7 @@ function UniversityDashboard() {
         <div>
           <h1 className="text-2xl font-semibold">Ecosystem dashboard</h1>
           <p className="text-sm text-muted-foreground">
-            COEP Technological University · Innovation &amp; Incubation Cell
+            {uniName} · Innovation &amp; Incubation Cell
           </p>
         </div>
 

@@ -1,5 +1,5 @@
-import { createFileRoute } from "@tanstack/react-router";
-import { useRef, useState } from "react";
+import { createFileRoute, Link } from "@tanstack/react-router";
+import { useRef, useState, useEffect } from "react";
 import { useDebouncedField } from "@/hooks/use-debounced-field";
 import {
   CheckCircle2,
@@ -22,6 +22,7 @@ import { Progress } from "@/components/ui/progress";
 import { Textarea } from "@/components/ui/textarea";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { STATUS_LABEL, completeness, useVenture } from "@/lib/store";
+import { useAuth } from "@/lib/auth-context";
 
 const TITLE = "My Startup — CampusVenture";
 const DESCRIPTION =
@@ -50,9 +51,18 @@ function embedUrl(url: string) {
 
 function MyStartup() {
   const { startups, updateStartup, notify } = useVenture();
+  const { user } = useAuth();
   const startup = startups[0]!;
   const fileRef = useRef<HTMLInputElement>(null);
   const [github, setGithub] = useState(startup.githubUrl);
+
+  // Sync startup founder and university with authenticated user
+  useEffect(() => {
+    if (user?.name && user?.org && (startup.founder !== user.name || startup.university !== user.org)) {
+      updateStartup(startup.id, { founder: user.name, university: user.org });
+    }
+  }, [user, startup.id, startup.founder, startup.university, updateStartup]);
+
   const [problem, setProblem] = useDebouncedField(startup.problem, (v) =>
     updateStartup(startup.id, { problem: v }),
   );
@@ -113,7 +123,7 @@ function MyStartup() {
           <div>
             <h1 className="text-2xl font-semibold">{startup.name}</h1>
             <p className="text-sm text-muted-foreground">
-              {startup.sector} · {startup.stage} · {startup.university}
+              {startup.sector} · {startup.stage} · {user?.org || startup.university}
             </p>
           </div>
           <div className="flex items-center gap-2">
