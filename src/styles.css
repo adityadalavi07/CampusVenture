@@ -254,39 +254,92 @@
   box-shadow: 0 30px 80px rgba(0, 0, 0, 0.6);
 }
 
-.auth-flow .auth-tabs {
-  display: flex;
-  background: var(--field);
-  border: 1px solid var(--line);
-  border-radius: 9px;
-  padding: 3px;
-  margin-bottom: 12px;
-  max-width: 240px;
+.auth-flow .univ-wrap {
+  position: relative;
 }
 
-.auth-flow .auth-tab {
-  flex: 1;
-  padding: 5px 12px;
+.auth-flow .univ-dropdown {
+  position: absolute;
+  top: calc(100% + 4px);
+  left: 0;
+  right: 0;
+  z-index: 50;
+  background: #0d1322;
+  border: 1px solid var(--line2);
+  border-radius: 12px;
+  max-height: 230px;
+  overflow-y: auto;
+  box-shadow: 0 16px 40px rgba(0, 0, 0, 0.7);
+  padding: 4px;
+}
+
+.auth-flow .univ-dropdown::-webkit-scrollbar {
+  width: 6px;
+}
+
+.auth-flow .univ-dropdown::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.auth-flow .univ-dropdown::-webkit-scrollbar-thumb {
+  background: var(--line2);
+  border-radius: 4px;
+}
+
+.auth-flow .univ-item {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 8px 10px;
+  border: 0;
+  background: transparent;
+  color: var(--text);
+  border-radius: 8px;
+  text-align: left;
+  cursor: pointer;
+  transition: background 0.12s;
+}
+
+.auth-flow .univ-item:hover,
+.auth-flow .univ-item:focus {
+  background: var(--accbg);
+  outline: none;
+}
+
+.auth-flow .univ-name {
   font-size: 13px;
   font-weight: 600;
-  border: 0;
-  border-radius: 7px;
-  background: transparent;
-  color: var(--mute);
-  cursor: pointer;
-  transition: all 0.15s ease;
-  text-align: center;
-}
-
-.auth-flow .auth-tab:hover {
   color: var(--text);
+  line-height: 1.3;
 }
 
-.auth-flow .auth-tab.active {
-  background: var(--accbg);
-  color: var(--acc);
-  border: 1px solid var(--line2);
-  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.25);
+.auth-flow .univ-meta {
+  font-size: 11.5px;
+  color: var(--mute);
+  margin-top: 2px;
+}
+
+.auth-flow .univ-badge {
+  font-size: 11px;
+  font-weight: 600;
+  padding: 2px 7px;
+  border-radius: 12px;
+  background: rgba(52, 211, 153, 0.15);
+  color: var(--ok);
+  border: 1px solid rgba(52, 211, 153, 0.3);
+  white-space: nowrap;
+}
+
+.auth-flow .univ-verified-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  font-size: 11.5px;
+  color: var(--ok);
+  margin-top: 5px;
+  font-weight: 500;
 }
 
 .auth-flow .view {

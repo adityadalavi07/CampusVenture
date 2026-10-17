@@ -3,6 +3,7 @@ import { useRouter } from "@tanstack/react-router";
 import { Dialog, DialogContent, DialogTitle, DialogDescription } from "@/components/ui/dialog";
 import { useAuth, type RegisteredAccount } from "@/lib/auth-context";
 import type { Role } from "@/lib/demo-data";
+import { searchUniversities, isUGCApproved, type University } from "@/lib/universities";
 import { toast } from "sonner";
 
 // SVG path definitions from prototype
@@ -126,6 +127,45 @@ export function AuthDialog() {
   const [resendCooldown, setResendCooldown] = useState(0);
 
   const otpInputsRef = useRef<(HTMLInputElement | null)[]>([]);
+
+  // University autocomplete state
+  const [univSuggestions, setUnivSuggestions] = useState<University[]>([]);
+  const [showUnivDropdown, setShowUnivDropdown] = useState(false);
+  const univWrapRef = useRef<HTMLDivElement>(null);
+
+  // Close university suggestions on outside click
+  useEffect(() => {
+    function handleClickOutside(event: MouseEvent) {
+      if (univWrapRef.current && !univWrapRef.current.contains(event.target as Node)) {
+        setShowUnivDropdown(false);
+      }
+    }
+    document.addEventListener("mousedown", handleClickOutside);
+    return () => {
+      document.removeEventListener("mousedown", handleClickOutside);
+    };
+  }, []);
+
+  const handleOrgChange = (val: string) => {
+    setFOrg(val);
+    clearFieldError("org");
+    if (role === "student" || role === "university") {
+      if (val.trim().length > 0) {
+        const matches = searchUniversities(val, 8);
+        setUnivSuggestions(matches);
+        setShowUnivDropdown(true);
+      } else {
+        setUnivSuggestions([]);
+        setShowUnivDropdown(false);
+      }
+    }
+  };
+
+  const handleSelectUniversity = (u: University) => {
+    setFOrg(u.name);
+    setShowUnivDropdown(false);
+    clearFieldError("org");
+  };
 
   // Reset form or set default role when modal opens
   useEffect(() => {
@@ -421,54 +461,11 @@ export function AuthDialog() {
               <Icon name="x" size={18} />
             </button>
 
-            {/* Top Tab Switcher: Sign In / Register */}
-            {(mode === "signin" || mode === "register") && (
-              <div className="auth-tabs" role="tablist" aria-label="Authentication type">
-                <button
-                  type="button"
-                  role="tab"
-                  aria-selected={mode === "signin"}
-                  className={`auth-tab ${mode === "signin" ? "active" : ""}`}
-                  onClick={() => {
-                    setErrors({});
-                    setMode("signin");
-                  }}
-                >
-                  Sign In
-                </button>
-                <button
-                  type="button"
-                  role="tab"
-                  aria-selected={mode === "register"}
-                  className={`auth-tab ${mode === "register" ? "active" : ""}`}
-                  onClick={() => {
-                    setErrors({});
-                    setMode("register");
-                  }}
-                >
-                  Register
-                </button>
-              </div>
-            )}
-
             {/* VIEW 1: SIGN IN */}
             {mode === "signin" && (
               <div className="view">
-                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", flexWrap: "wrap", gap: 8, paddingRight: 28 }}>
-                  <h1 style={{ margin: 0 }}>Welcome back</h1>
-                  <button
-                    type="button"
-                    className="link"
-                    style={{ fontSize: 13, fontWeight: 600 }}
-                    onClick={() => {
-                      setErrors({});
-                      setMode("register");
-                    }}
-                  >
-                    Need an account? Register →
-                  </button>
-                </div>
-                <p className="sub" style={{ marginTop: 4 }}>Sign in to continue to your dashboard.</p>
+                <h1>Sign In to CampusVenture</h1>
+                <p className="sub">Welcome back! Enter your credentials to continue.</p>
 
                 {/* Role dropdown selector */}
                 <div className="field">
@@ -570,31 +567,36 @@ export function AuthDialog() {
                   </button>
                 </div>
 
-                {/* Buttons */}
-                <div className="btns">
+                {/* Single Primary Action Button */}
+                <button
+                  type="button"
+                  className="btn primary"
+                  onClick={handleSignIn}
+                  disabled={busy}
+                >
+                  {busy ? (
+                    <>
+                      <span className="spin" /> Signing in
+                    </>
+                  ) : (
+                    "Sign In"
+                  )}
+                </button>
+
+                <div style={{ textAlign: "center", marginTop: 16 }}>
+                  <span className="sub" style={{ margin: 0 }}>
+                    Don't have an account?{" "}
+                  </span>
                   <button
                     type="button"
-                    className="btn primary"
-                    onClick={handleSignIn}
-                    disabled={busy}
-                  >
-                    {busy ? (
-                      <>
-                        <span className="spin" /> Signing in
-                      </>
-                    ) : (
-                      "Sign In"
-                    )}
-                  </button>
-                  <button
-                    type="button"
-                    className="btn ghost"
+                    className="link"
+                    style={{ fontWeight: 600 }}
                     onClick={() => {
                       setErrors({});
                       setMode("register");
                     }}
                   >
-                    Register / New User
+                    Register
                   </button>
                 </div>
               </div>
@@ -603,21 +605,8 @@ export function AuthDialog() {
             {/* VIEW 2: REGISTER */}
             {mode === "register" && (
               <div className="view">
-                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", flexWrap: "wrap", gap: 8, paddingRight: 28 }}>
-                  <h1 style={{ margin: 0 }}>Create Your Account</h1>
-                  <button
-                    type="button"
-                    className="link"
-                    style={{ fontSize: 13, fontWeight: 600 }}
-                    onClick={() => {
-                      setErrors({});
-                      setMode("signin");
-                    }}
-                  >
-                    Already registered? Sign In →
-                  </button>
-                </div>
-                <p className="sub" style={{ marginTop: 4 }}>Pick a role, then verify your email to finish.</p>
+                <h1>Create Your Account</h1>
+                <p className="sub">Pick your role, then verify your email to finish.</p>
 
                 {/* Select Your Role Cards */}
                 <span className="lbl">Select Your Role</span>
@@ -640,7 +629,7 @@ export function AuthDialog() {
                   ))}
                 </div>
 
-                {/* Full name & Org */}
+                {/* Full name & Org with UGC Search */}
                 <div className="row">
                   <div className="field">
                     <label htmlFor="auth-reg-name">Full Name</label>
@@ -658,17 +647,70 @@ export function AuthDialog() {
                     {errors["name"] && <div className="err">{errors["name"]}</div>}
                   </div>
                   <div className="field">
-                    <label htmlFor="auth-reg-org">{ORGLBL[role]}</label>
-                    <input
-                      id="auth-reg-org"
-                      placeholder={ORGPH[role]}
-                      value={fOrg}
-                      onChange={(e) => {
-                        setFOrg(e.target.value);
-                        clearFieldError("org");
-                      }}
-                      className={errors["org"] ? "bad" : ""}
-                    />
+                    <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline" }}>
+                      <label htmlFor="auth-reg-org" style={{ margin: 0 }}>
+                        {role === "student" ? "University / College" : role === "university" ? "University / Institute Name" : "Firm / Angel Network"}
+                      </label>
+                      {(role === "student" || role === "university") && isUGCApproved(fOrg) && (
+                        <span className="univ-verified-pill" title="Verified Govt / UGC Recognized University">
+                          <Icon name="check" size={14} /> Govt / UGC Recognized
+                        </span>
+                      )}
+                    </div>
+
+                    {(role === "student" || role === "university") ? (
+                      <div className="univ-wrap" ref={univWrapRef} style={{ marginTop: 4 }}>
+                        <input
+                          id="auth-reg-org"
+                          placeholder="Type university (e.g. Sanjay Ghodawat, Shivaji, IIT...)"
+                          value={fOrg}
+                          onChange={(e) => handleOrgChange(e.target.value)}
+                          onFocus={() => {
+                            if (fOrg.trim().length > 0) {
+                              const matches = searchUniversities(fOrg, 8);
+                              setUnivSuggestions(matches);
+                              setShowUnivDropdown(true);
+                            }
+                          }}
+                          autoComplete="off"
+                          className={errors["org"] ? "bad" : ""}
+                        />
+
+                        {showUnivDropdown && univSuggestions.length > 0 && (
+                          <div className="univ-dropdown" role="listbox">
+                            {univSuggestions.map((u) => (
+                              <button
+                                key={u.name}
+                                type="button"
+                                className="univ-item"
+                                role="option"
+                                onClick={() => handleSelectUniversity(u)}
+                              >
+                                <div style={{ overflow: "hidden", textOverflow: "ellipsis", marginRight: 6 }}>
+                                  <div className="univ-name">{u.name}</div>
+                                  <div className="univ-meta">
+                                    {u.city}, {u.state} • {u.type}
+                                  </div>
+                                </div>
+                                <span className="univ-badge">✓ UGC Approved</span>
+                              </button>
+                            ))}
+                          </div>
+                        )}
+                      </div>
+                    ) : (
+                      <input
+                        id="auth-reg-org"
+                        style={{ marginTop: 4 }}
+                        placeholder={ORGPH[role]}
+                        value={fOrg}
+                        onChange={(e) => {
+                          setFOrg(e.target.value);
+                          clearFieldError("org");
+                        }}
+                        className={errors["org"] ? "bad" : ""}
+                      />
+                    )}
                     {errors["org"] && <div className="err">{errors["org"]}</div>}
                   </div>
                 </div>
