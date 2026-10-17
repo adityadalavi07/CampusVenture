@@ -421,11 +421,54 @@ export function AuthDialog() {
               <Icon name="x" size={18} />
             </button>
 
+            {/* Top Tab Switcher: Sign In / Register */}
+            {(mode === "signin" || mode === "register") && (
+              <div className="auth-tabs" role="tablist" aria-label="Authentication type">
+                <button
+                  type="button"
+                  role="tab"
+                  aria-selected={mode === "signin"}
+                  className={`auth-tab ${mode === "signin" ? "active" : ""}`}
+                  onClick={() => {
+                    setErrors({});
+                    setMode("signin");
+                  }}
+                >
+                  Sign In
+                </button>
+                <button
+                  type="button"
+                  role="tab"
+                  aria-selected={mode === "register"}
+                  className={`auth-tab ${mode === "register" ? "active" : ""}`}
+                  onClick={() => {
+                    setErrors({});
+                    setMode("register");
+                  }}
+                >
+                  Register
+                </button>
+              </div>
+            )}
+
             {/* VIEW 1: SIGN IN */}
             {mode === "signin" && (
               <div className="view">
-                <h1>Welcome back</h1>
-                <p className="sub">Sign in to continue to your dashboard.</p>
+                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", flexWrap: "wrap", gap: 8, paddingRight: 28 }}>
+                  <h1 style={{ margin: 0 }}>Welcome back</h1>
+                  <button
+                    type="button"
+                    className="link"
+                    style={{ fontSize: 13, fontWeight: 600 }}
+                    onClick={() => {
+                      setErrors({});
+                      setMode("register");
+                    }}
+                  >
+                    Need an account? Register →
+                  </button>
+                </div>
+                <p className="sub" style={{ marginTop: 4 }}>Sign in to continue to your dashboard.</p>
 
                 {/* Role dropdown selector */}
                 <div className="field">
@@ -560,8 +603,21 @@ export function AuthDialog() {
             {/* VIEW 2: REGISTER */}
             {mode === "register" && (
               <div className="view">
-                <h1>Create Your Account</h1>
-                <p className="sub">Pick a role, then verify your email to finish.</p>
+                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", flexWrap: "wrap", gap: 8, paddingRight: 28 }}>
+                  <h1 style={{ margin: 0 }}>Create Your Account</h1>
+                  <button
+                    type="button"
+                    className="link"
+                    style={{ fontSize: 13, fontWeight: 600 }}
+                    onClick={() => {
+                      setErrors({});
+                      setMode("signin");
+                    }}
+                  >
+                    Already registered? Sign In →
+                  </button>
+                </div>
+                <p className="sub" style={{ marginTop: 4 }}>Pick a role, then verify your email to finish.</p>
 
                 {/* Select Your Role Cards */}
                 <span className="lbl">Select Your Role</span>

@@ -244,13 +244,49 @@
 .auth-flow .modal {
   position: relative;
   width: 100%;
-  max-width: 560px;
+  max-width: 490px;
+  max-height: calc(100vh - 40px);
+  overflow-y: auto;
   background: var(--panel);
   border: 1px solid var(--line);
-  border-radius: 20px;
-  padding: 30px;
+  border-radius: 16px;
+  padding: 18px 22px;
   box-shadow: 0 30px 80px rgba(0, 0, 0, 0.6);
-  overflow: hidden;
+}
+
+.auth-flow .auth-tabs {
+  display: flex;
+  background: var(--field);
+  border: 1px solid var(--line);
+  border-radius: 9px;
+  padding: 3px;
+  margin-bottom: 12px;
+  max-width: 240px;
+}
+
+.auth-flow .auth-tab {
+  flex: 1;
+  padding: 5px 12px;
+  font-size: 13px;
+  font-weight: 600;
+  border: 0;
+  border-radius: 7px;
+  background: transparent;
+  color: var(--mute);
+  cursor: pointer;
+  transition: all 0.15s ease;
+  text-align: center;
+}
+
+.auth-flow .auth-tab:hover {
+  color: var(--text);
+}
+
+.auth-flow .auth-tab.active {
+  background: var(--accbg);
+  color: var(--acc);
+  border: 1px solid var(--line2);
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.25);
 }
 
 .auth-flow .view {
@@ -269,8 +305,8 @@
 }
 
 .auth-flow h1 {
-  font-size: 24px;
-  margin: 0 0 6px;
+  font-size: 20px;
+  margin: 0 0 3px;
   letter-spacing: -0.02em;
   color: var(--text);
   font-weight: 700;
@@ -278,28 +314,28 @@
 
 .auth-flow .sub {
   color: var(--mute);
-  font-size: 14px;
-  margin: 0 0 22px;
+  font-size: 13px;
+  margin: 0 0 12px;
 }
 
 .auth-flow label,
 .auth-flow .lbl {
   display: block;
-  font-size: 14px;
+  font-size: 12.5px;
   font-weight: 600;
-  margin: 0 0 8px;
+  margin: 0 0 4px;
   color: var(--text);
 }
 
 .auth-flow .field {
-  margin-bottom: 16px;
+  margin-bottom: 10px;
   position: relative;
 }
 
 .auth-flow .row {
   display: grid;
   grid-template-columns: 1fr 1fr;
-  gap: 14px;
+  gap: 10px;
 }
 
 @media (max-width: 520px) {
@@ -307,20 +343,20 @@
     grid-template-columns: 1fr;
   }
   .auth-flow .modal {
-    padding: 22px 18px;
+    padding: 16px 14px;
   }
 }
 
 .auth-flow input {
   width: 100%;
-  height: 48px;
+  height: 40px;
   background: var(--field);
   border: 1px solid var(--line);
-  border-radius: 12px;
+  border-radius: 10px;
   color: var(--text);
   font: inherit;
-  font-size: 15px;
-  padding: 0 14px;
+  font-size: 14px;
+  padding: 0 12px;
   outline: none;
   transition: border-color 0.15s, box-shadow 0.15s;
 }
@@ -386,11 +422,11 @@
 
 .auth-flow .btn {
   width: 100%;
-  height: 48px;
-  border-radius: 12px;
+  height: 40px;
+  border-radius: 10px;
   border: 1px solid transparent;
   font-weight: 600;
-  font-size: 15px;
+  font-size: 13.5px;
   display: flex;
   align-items: center;
   justify-content: center;
@@ -454,15 +490,15 @@
 
 .auth-flow .sel {
   width: 100%;
-  height: 48px;
+  height: 40px;
   background: var(--field);
   border: 1px solid var(--line);
-  border-radius: 12px;
+  border-radius: 10px;
   color: var(--text);
   display: flex;
   align-items: center;
   gap: 10px;
-  padding: 0 14px;
+  padding: 0 12px;
   text-align: left;
 }
 
@@ -479,7 +515,7 @@
   position: absolute;
   left: 0;
   right: 0;
-  top: 78px;
+  top: 70px;
   z-index: 25;
   background: #0c1220;
   border: 1px solid var(--line2);
@@ -493,7 +529,7 @@
   display: flex;
   align-items: center;
   gap: 10px;
-  padding: 11px 10px;
+  padding: 10px 10px;
   border: 0;
   background: none;
   color: var(--text);
@@ -513,22 +549,22 @@
 .auth-flow .cards {
   display: grid;
   grid-template-columns: repeat(3, 1fr);
-  gap: 12px;
-  margin-bottom: 20px;
+  gap: 8px;
+  margin-bottom: 10px;
 }
 
 .auth-flow .card {
   background: var(--field);
   border: 1px solid var(--line);
-  border-radius: 12px;
-  height: 80px;
+  border-radius: 9px;
+  height: 46px;
   color: var(--mute);
   display: flex;
   flex-direction: column;
   align-items: center;
   justify-content: center;
-  gap: 6px;
-  font-size: 15px;
+  gap: 3px;
+  font-size: 12.5px;
   transition: all 0.15s;
 }
 
@@ -554,14 +590,14 @@
 }
 
 .auth-flow .vbtn {
-  height: 48px;
-  padding: 0 14px;
-  border-radius: 12px;
+  height: 40px;
+  padding: 0 12px;
+  border-radius: 10px;
   border: 1px solid var(--acc);
   background: transparent;
   color: var(--acc);
   font-weight: 600;
-  font-size: 13.5px;
+  font-size: 13px;
   white-space: nowrap;
   display: flex;
   align-items: center;
