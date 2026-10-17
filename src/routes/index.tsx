@@ -3,13 +3,11 @@ import {
   ArrowRight,
   BadgeCheck,
   Building2,
+  ChevronDown,
   FolderLock,
-  GraduationCap,
-  LineChart,
   Search,
   Sparkles,
   TrendingUp,
-  Users,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -155,13 +153,26 @@ function Landing() {
                   size="lg"
                   variant="outline"
                   className="h-12 px-8 text-base"
-                  onClick={() => openAuthModal(undefined, "signin")}
+                  onClick={() => {
+                    const el = document.getElementById("how-it-works");
+                    el?.scrollIntoView({ behavior: "smooth" });
+                  }}
                 >
-                  <LogIn className="mr-2 size-4" />
-                  Sign In
+                  See How It Works
+                  <ChevronDown className="ml-2 size-4" />
                 </Button>
               </>
             )}
+          </div>
+          <div className="mt-6 flex flex-wrap items-center justify-center gap-x-6 gap-y-2 text-xs text-muted-foreground">
+            <span className="flex items-center gap-1.5">
+              <span className="size-1.5 rounded-full bg-emerald-500 animate-pulse" />
+              Verified University Network
+            </span>
+            <span className="hidden sm:inline">•</span>
+            <span>AI Investment Readiness</span>
+            <span className="hidden sm:inline">•</span>
+            <span>Free for Student Founders</span>
           </div>
         </div>
       </section>
@@ -192,7 +203,7 @@ function Landing() {
         </div>
       </section>
 
-      <section className="mx-auto max-w-6xl px-4 py-8">
+      <section id="how-it-works" className="mx-auto max-w-6xl px-4 py-8 scroll-mt-20">
         <h2 className="text-2xl font-semibold">How CampusVenture works</h2>
         <ol className="mt-8 grid gap-4 sm:grid-cols-2 lg:grid-cols-5">
           {STEPS.map((step, i) => (
@@ -249,13 +260,13 @@ function Landing() {
 
       <section className="mx-auto max-w-6xl px-4 pb-24">
         <div className="rounded-2xl border bg-card p-10 text-center shadow-elevated">
-          <h2 className="text-2xl font-semibold">Ready to join CampusVenture?</h2>
+          <h2 className="text-2xl font-semibold sm:text-3xl">Ready to launch your opportunity?</h2>
           <p className="mx-auto mt-3 max-w-xl text-sm text-muted-foreground">
-            Connect verified student founders, angel & VC investors, and university incubators in one secure workspace.
+            Connect verified student founders, angel & VC investors, and university incubators in one secure ecosystem.
           </p>
-          <div className="mt-6 flex justify-center gap-3">
+          <div className="mt-7 flex flex-col items-center justify-center gap-3">
             {isAuthenticated && user ? (
-              <Button asChild size="lg">
+              <Button asChild size="lg" className="h-12 px-8 text-base">
                 <Link to={`/app/${user.role}`}>
                   Go to Dashboard
                   <ArrowRight className="ml-2 size-4" />
@@ -263,13 +274,24 @@ function Landing() {
               </Button>
             ) : (
               <>
-                <Button size="lg" onClick={() => openAuthModal(undefined, "register")}>
-                  Get Started
+                <Button
+                  size="lg"
+                  className="h-12 px-8 text-base shadow-elevated"
+                  onClick={() => openAuthModal(undefined, "register")}
+                >
+                  Create Your Account
                   <ArrowRight className="ml-2 size-4" />
                 </Button>
-                <Button size="lg" variant="outline" onClick={() => openAuthModal(undefined, "signin")}>
-                  Sign In
-                </Button>
+                <p className="text-xs text-muted-foreground">
+                  Already have an account?{" "}
+                  <button
+                    type="button"
+                    onClick={() => openAuthModal(undefined, "signin")}
+                    className="font-semibold text-primary underline underline-offset-4 hover:text-primary/80"
+                  >
+                    Sign in here
+                  </button>
+                </p>
               </>
             )}
           </div>
