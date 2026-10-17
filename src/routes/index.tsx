@@ -134,24 +134,34 @@ function Landing() {
           </h1>
           <p className="mx-auto mt-6 max-w-2xl text-balance text-lg text-muted-foreground">{DESCRIPTION}</p>
           <div className="mt-9 flex flex-wrap justify-center gap-3">
-            <Button asChild size="lg">
-              <Link to="/app/student">
-                <GraduationCap className="size-4" aria-hidden="true" />
-                I&apos;m a Student Founder
-              </Link>
-            </Button>
-            <Button asChild size="lg" variant="secondary">
-              <Link to="/app/investor">
-                <LineChart className="size-4" aria-hidden="true" />
-                I&apos;m an Investor
-              </Link>
-            </Button>
-            <Button asChild size="lg" variant="outline">
-              <Link to="/app/university">
-                <Users className="size-4" aria-hidden="true" />
-                I&apos;m a University
-              </Link>
-            </Button>
+            {isAuthenticated && user ? (
+              <Button asChild size="lg" className="h-12 px-8 text-base shadow-elevated">
+                <Link to={`/app/${user.role}`}>
+                  Go to Dashboard ({user.role})
+                  <ArrowRight className="ml-2 size-4" />
+                </Link>
+              </Button>
+            ) : (
+              <>
+                <Button
+                  size="lg"
+                  className="h-12 px-8 text-base shadow-elevated"
+                  onClick={() => openAuthModal(undefined, "register")}
+                >
+                  Get Started
+                  <ArrowRight className="ml-2 size-4" />
+                </Button>
+                <Button
+                  size="lg"
+                  variant="outline"
+                  className="h-12 px-8 text-base"
+                  onClick={() => openAuthModal(undefined, "signin")}
+                >
+                  <LogIn className="mr-2 size-4" />
+                  Sign In
+                </Button>
+              </>
+            )}
           </div>
         </div>
       </section>
@@ -239,16 +249,30 @@ function Landing() {
 
       <section className="mx-auto max-w-6xl px-4 pb-24">
         <div className="rounded-2xl border bg-card p-10 text-center shadow-elevated">
-          <h2 className="text-2xl font-semibold">See the full journey end to end</h2>
+          <h2 className="text-2xl font-semibold">Ready to join CampusVenture?</h2>
           <p className="mx-auto mt-3 max-w-xl text-sm text-muted-foreground">
-            Explore the student, investor and university experiences with seeded demo data.
+            Connect verified student founders, angel & VC investors, and university incubators in one secure workspace.
           </p>
-          <Button asChild size="lg" className="mt-6">
-            <Link to="/app/student">
-              Open the demo
-              <ArrowRight className="size-4" aria-hidden="true" />
-            </Link>
-          </Button>
+          <div className="mt-6 flex justify-center gap-3">
+            {isAuthenticated && user ? (
+              <Button asChild size="lg">
+                <Link to={`/app/${user.role}`}>
+                  Go to Dashboard
+                  <ArrowRight className="ml-2 size-4" />
+                </Link>
+              </Button>
+            ) : (
+              <>
+                <Button size="lg" onClick={() => openAuthModal(undefined, "register")}>
+                  Get Started
+                  <ArrowRight className="ml-2 size-4" />
+                </Button>
+                <Button size="lg" variant="outline" onClick={() => openAuthModal(undefined, "signin")}>
+                  Sign In
+                </Button>
+              </>
+            )}
+          </div>
         </div>
       </section>
 

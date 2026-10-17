@@ -141,7 +141,6 @@ export function AppShell({ role, children }: { role: Role; children: ReactNode }
           </Link>
           <div className="hidden lg:block" />
           <div className="flex items-center gap-1.5">
-            <RoleSwitch current={role} />
             <NotificationBell role={role} />
             <ThemeToggle />
             <AccountMenu role={role} />
@@ -175,52 +174,30 @@ export function AppShell({ role, children }: { role: Role; children: ReactNode }
   );
 }
 
-function RoleSwitch({ current }: { current: Role }) {
-  const roles: Role[] = ["student", "investor", "university"];
-  const { switchRole } = useAuth();
-  const router = useRouter();
-
-  const handleRoleChange = (targetRole: Role) => {
-    switchRole(targetRole);
-    router.navigate({ to: `/app/${targetRole}` });
-  };
-
-  return (
-    <div className="mr-1 hidden rounded-lg border p-0.5 sm:flex">
-      {roles.map((r) => (
-        <button
-          key={r}
-          type="button"
-          onClick={() => handleRoleChange(r)}
-          className={cn(
-            "rounded-md px-2.5 py-1 text-xs capitalize transition-colors font-medium",
-            r === current
-              ? "bg-primary text-primary-foreground"
-              : "text-muted-foreground hover:text-foreground",
-          )}
-        >
-          {r}
-        </button>
-      ))}
-    </div>
-  );
-}
-
 function AccountMenu({ role }: { role: Role }) {
-  const { user, signOut, switchRole, openAuthModal, isAuthenticated } = useAuth();
+  const { user, signOut, openAuthModal, isAuthenticated } = useAuth();
   const router = useRouter();
 
   if (!isAuthenticated || !user) {
     return (
-      <Button
-        variant="default"
-        size="sm"
-        className="text-xs flex items-center gap-1.5"
-        onClick={() => openAuthModal(role)}
-      >
-        <LogIn className="size-3.5" />
-        Sign In
-      </Button>
+      <div className="flex items-center gap-1.5">
+        <Button
+          variant="ghost"
+          size="sm"
+          className="text-xs flex items-center gap-1.5"
+          onClick={() => openAuthModal(role, "signin")}
+        >
+          <LogIn className="size-3.5" />
+          Sign In
+        </Button>
+        <Button
+          size="sm"
+          className="text-xs flex items-center gap-1.5"
+          onClick={() => openAuthModal(role, "register")}
+        >
+          Get Started
+        </Button>
+      </div>
     );
   }
 
@@ -229,11 +206,6 @@ function AccountMenu({ role }: { role: Role }) {
   const handleLogout = async () => {
     await signOut();
     router.navigate({ to: "/" });
-  };
-
-  const handleSwitch = (newRole: Role) => {
-    switchRole(newRole);
-    router.navigate({ to: `/app/${newRole}` });
   };
 
   return (
@@ -273,17 +245,6 @@ function AccountMenu({ role }: { role: Role }) {
           </Link>
         </DropdownMenuItem>
         <DropdownMenuSeparator />
-        <div className="sm:hidden">
-          <DropdownMenuLabel className="text-xs font-normal text-muted-foreground">
-            Switch role
-          </DropdownMenuLabel>
-          {(["student", "investor", "university"] as Role[]).map((r) => (
-            <DropdownMenuItem key={r} onClick={() => handleSwitch(r)} className="capitalize">
-              {r}
-            </DropdownMenuItem>
-          ))}
-          <DropdownMenuSeparator />
-        </div>
         <DropdownMenuItem
           onClick={handleLogout}
           className="text-destructive focus:text-destructive cursor-pointer"
