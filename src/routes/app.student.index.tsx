@@ -14,6 +14,15 @@ import {
   Trash2,
   X,
   Plus,
+  Settings,
+  Flame,
+  AlertTriangle,
+  ChevronDown,
+  ChevronUp,
+  ShieldAlert,
+  HelpCircle,
+  RefreshCw,
+  Loader2,
 } from "lucide-react";
 import { toast } from "sonner";
 import { AppShell } from "@/components/app-shell";
@@ -28,6 +37,14 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { DEMO_INVESTORS, READINESS_WEIGHTS, formatMoney, matchScore } from "@/lib/demo-data";
 import { STATUS_LABEL, completeness, useVenture, type StartupRecord } from "@/lib/store";
 import { useAuth } from "@/lib/auth-context";
+import { AISettingsDialog } from "@/components/ai-settings-dialog";
+import {
+  runAIReadinessAnalysis,
+  getSavedAssessment,
+  getAIConfig,
+  evaluateStartupLocally,
+  type AIReadinessResult,
+} from "@/lib/ai-readiness";
 
 const TITLE = "Founder Dashboard — CampusVenture";
 const DESCRIPTION =
@@ -119,7 +136,13 @@ function StudentDashboard() {
   const { user } = useAuth();
   const STARTUP = startups[0]!;
   const [analyzing, setAnalyzing] = useState(false);
-  const [showResult, setShowResult] = useState(true);
+  const [analysisStep, setAnalysisStep] = useState("");
+  const [settingsOpen, setSettingsOpen] = useState(false);
+  const [expandedCategory, setExpandedCategory] = useState<string | null>(null);
+  const [aiConfig, setAiConfig] = useState(() => getAIConfig());
+  const [assessmentResult, setAssessmentResult] = useState<AIReadinessResult | null>(() => {
+    return getSavedAssessment() || evaluateStartupLocally(STARTUP, getAIConfig().honestyLevel);
+  });
 
   // Dynamic founder name and university from authenticated user
   const founderName = user?.name || STARTUP.founder || "Founder";
@@ -288,8 +311,12 @@ function StudentDashboard() {
     toast.info("Co-founder removed from startup roster.");
   }
 
-  const scores = categoryScores(STARTUP);
-  const weighted = Math.round(
+  const fallbackScores = categoryScores(STARTUP);
+  const scores: Record<string, number> = {};
+  for (const { key } of READINESS_WEIGHTS) {
+    scores[key] = assessmentResult?.categoryScores?.[key]?.score ?? fallbackScores[key] ?? 40;
+  }
+  const weighted = assessmentResult?.overallScore ?? Math.round(
     READINESS_WEIGHTS.reduce((sum, { key, weight }) => sum + (scores[key] ?? 0) * (weight / 100), 0),
   );
   const review = assessment(STARTUP, scores);
@@ -308,28 +335,64 @@ function StudentDashboard() {
     !STARTUP.githubUrl && "Connect your GitHub project",
   ].filter(Boolean) as string[];
 
-  function runAnalysis() {
+  async function runAnalysis() {
     setAnalyzing(true);
-    setShowResult(false);
-    window.setTimeout(() => {
-      const previous = STARTUP.readiness;
-      updateStartup(STARTUP.id, { readiness: weighted });
-      setAnalyzing(false);
-      setShowResult(true);
-      const delta = weighted - previous;
-      toast.success(`Readiness re-scored: ${weighted}/100`, {
-        description:
-          delta === 0
-            ? "No change since your last assessment."
-            : `${delta > 0 ? "+" : ""}${delta} points versus your previous score.`,
-      });
-      notify("student", "AI assessment updated", `${STARTUP.name} now scores ${weighted}/100.`);
+    setAnalysisStep("Connecting to AI Due Diligence Engine...");
+
+    const t1 = setTimeout(() => {
+      setAnalysisStep("Scrutinizing Problem, Solution & Moat defensibility...");
+    }, 450);
+    const t2 = setTimeout(() => {
+      setAnalysisStep("Evaluating Unit Economics, Traction & Market sizing...");
     }, 900);
+    const t3 = setTimeout(() => {
+      setAnalysisStep("Applying Honesty Filter (Zero Sugarcoating)...");
+    }, 1350);
+
+    try {
+      const result = await runAIReadinessAnalysis(STARTUP);
+      clearTimeout(t1);
+      clearTimeout(t2);
+      clearTimeout(t3);
+
+      setAssessmentResult(result);
+      const previous = STARTUP.readiness;
+      updateStartup(STARTUP.id, { readiness: result.overallScore });
+
+      const delta = result.overallScore - previous;
+      toast.success(
+        `AI Due Diligence Completed: ${result.overallScore}/100 (Grade ${result.investorGrade})`,
+        {
+          description:
+            delta === 0
+              ? "Readiness score re-evaluated."
+              : `${delta > 0 ? "+" : ""}${delta} points versus your previous assessment.`,
+        },
+      );
+      notify(
+        "student",
+        "AI Readiness Re-scored",
+        `${STARTUP.name} scored ${result.overallScore}/100 (${result.investorGrade}) · ${result.honestyLevel.toUpperCase()} honesty filter.`,
+      );
+    } catch (err: unknown) {
+      clearTimeout(t1);
+      clearTimeout(t2);
+      clearTimeout(t3);
+      const msg = err instanceof Error ? err.message : String(err);
+      toast.error(`Analysis failed: ${msg}`);
+    } finally {
+      setAnalyzing(false);
+      setAnalysisStep("");
+    }
   }
+
+  const currentGrade = assessmentResult?.investorGrade || (weighted >= 80 ? "A" : weighted >= 65 ? "B" : weighted >= 45 ? "C" : "D");
+  const currentVerdict = assessmentResult?.verdict || (weighted >= 75 ? "Strong potential" : weighted >= 55 ? "Promising, needs polish" : "Early — keep building");
 
   return (
     <AppShell role="student">
       <div className="mx-auto max-w-6xl space-y-6">
+        {/* Top Header Bar */}
         <div className="flex flex-wrap items-end justify-between gap-4">
           <div>
             <h1 className="text-2xl font-semibold">Welcome back, {founderName}</h1>
@@ -338,58 +401,218 @@ function StudentDashboard() {
               {STATUS_LABEL[STARTUP.status]}
             </p>
           </div>
-          <div className="flex flex-wrap gap-2">
-            <Button variant="outline" asChild>
+          <div className="flex flex-wrap items-center gap-2">
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={() => setSettingsOpen(true)}
+              className="h-9 gap-1.5 text-xs"
+              title="Configure AI Provider & Honesty Settings"
+            >
+              <Settings className="size-3.5 text-muted-foreground" />
+              <span>AI Settings</span>
+              <Badge variant="secondary" className="text-[10px] py-0 px-1 font-mono">
+                {aiConfig.provider === "gemini" ? "Gemini" : "OpenAI"}
+              </Badge>
+              {aiConfig.honestyLevel === "brutal" && (
+                <span className="flex items-center text-red-500 text-[10px] font-bold" title="Brutal VC Honesty Active">
+                  <Flame className="size-3" />
+                </span>
+              )}
+            </Button>
+            <Button variant="outline" asChild size="sm" className="h-9 text-xs">
               <Link to="/app/student/startup">Edit my startup</Link>
             </Button>
-            <Button onClick={runAnalysis} disabled={analyzing}>
-              <Sparkles className="size-4" aria-hidden="true" />
-              {analyzing ? "Analyzing…" : "Analyze Startup with AI"}
+            <Button
+              onClick={runAnalysis}
+              disabled={analyzing}
+              size="sm"
+              className="h-9 gap-1.5 text-xs bg-gradient-to-r from-primary to-primary/85 shadow-sm transition-all hover:shadow"
+            >
+              {analyzing ? (
+                <Loader2 className="size-3.5 animate-spin" />
+              ) : (
+                <Sparkles className="size-3.5" />
+              )}
+              {analyzing ? "Due Diligence in Progress…" : "Analyze Startup with AI"}
             </Button>
           </div>
         </div>
 
+        {/* Live Analysis Progress Banner */}
+        {analyzing && (
+          <div className="flex items-center gap-3 rounded-lg border border-primary/30 bg-primary/5 p-3 text-xs animate-in fade-in-50">
+            <Loader2 className="size-4 animate-spin text-primary shrink-0" />
+            <div className="flex-1">
+              <span className="font-semibold text-foreground">AI Investor Due Diligence in Progress: </span>
+              <span className="text-muted-foreground">{analysisStep || "Synthesizing deep feedback..."}</span>
+            </div>
+            <Badge variant="outline" className="border-primary/30 text-primary text-[10px]">
+              Honesty Filter: {aiConfig.honestyLevel.toUpperCase()}
+            </Badge>
+          </div>
+        )}
+
+        {/* Investment Readiness & Category Breakdown Cards */}
         <div className="grid gap-5 lg:grid-cols-3">
-          <Card className="lg:col-span-1">
-            <CardHeader>
-              <CardTitle className="text-base">Investment readiness</CardTitle>
-              <CardDescription>
-                {STARTUP.readiness >= 75
-                  ? "Strong potential"
-                  : STARTUP.readiness >= 55
-                    ? "Promising, needs polish"
-                    : "Early — keep building"}
+          {/* Card 1: Investment Readiness Summary */}
+          <Card className="lg:col-span-1 flex flex-col justify-between">
+            <CardHeader className="pb-3">
+              <div className="flex items-center justify-between">
+                <CardTitle className="text-base">Investment readiness</CardTitle>
+                <Badge
+                  className={`text-xs font-bold px-2 py-0.5 ${
+                    currentGrade === "A+" || currentGrade === "A"
+                      ? "bg-emerald-500 text-white"
+                      : currentGrade === "B"
+                        ? "bg-blue-600 text-white"
+                        : currentGrade === "C"
+                          ? "bg-amber-500 text-white"
+                          : "bg-red-500 text-white"
+                  }`}
+                >
+                  Grade {currentGrade}
+                </Badge>
+              </div>
+              <CardDescription className="text-xs font-medium text-foreground/80">
+                {currentVerdict}
               </CardDescription>
             </CardHeader>
-            <CardContent className="flex flex-col items-center gap-4">
+            <CardContent className="flex flex-col items-center gap-3 pb-4">
               {analyzing ? (
                 <Skeleton className="size-[132px] rounded-full" />
               ) : (
                 <ScoreRing value={STARTUP.readiness} />
               )}
-              <p className="text-center text-xs text-muted-foreground">
-                AI-generated readiness assessment, not investment advice.
-              </p>
+
+              {/* Honesty Filter Indicator */}
+              <button
+                type="button"
+                onClick={() => setSettingsOpen(true)}
+                className={`flex items-center gap-1.5 rounded-full px-2.5 py-1 text-[11px] font-medium border transition-colors ${
+                  (assessmentResult?.honestyLevel || aiConfig.honestyLevel) === "brutal"
+                    ? "bg-red-500/10 text-red-600 dark:text-red-400 border-red-500/30 hover:bg-red-500/20"
+                    : "bg-primary/10 text-primary border-primary/20 hover:bg-primary/15"
+                }`}
+                title="Click to adjust Honesty Filter or AI Provider"
+              >
+                <Flame className="size-3" />
+                <span>
+                  Honesty: {(assessmentResult?.honestyLevel || aiConfig.honestyLevel) === "brutal" ? "Brutal VC (Zero Sugarcoating)" : "Institutional Standard"}
+                </span>
+              </button>
+
+              <div className="text-center space-y-0.5">
+                <p className="text-[11px] text-muted-foreground">
+                  {assessmentResult?.providerUsed === "gemini"
+                    ? `Powered by Google Gemini (${assessmentResult.modelUsed})`
+                    : assessmentResult?.providerUsed === "openai"
+                      ? `Powered by OpenAI (${assessmentResult.modelUsed})`
+                      : "Powered by Institutional Due Diligence Engine"}
+                </p>
+                {assessmentResult?.assessedAt && (
+                  <p className="text-[10px] text-muted-foreground/75">
+                    Last evaluated {new Date(assessmentResult.assessedAt).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}
+                  </p>
+                )}
+              </div>
             </CardContent>
           </Card>
 
+          {/* Card 2: All 9 Category Breakdown with Expandable Honesty Critiques */}
           <Card className="lg:col-span-2">
-            <CardHeader>
-              <CardTitle className="text-base">Category breakdown</CardTitle>
-              <CardDescription>Weighted scoring across nine dimensions</CardDescription>
-            </CardHeader>
-            <CardContent className="grid gap-3 sm:grid-cols-2">
-              {READINESS_WEIGHTS.map(({ key, weight }) => (
-                <div key={key} className="space-y-1.5">
-                  <div className="flex items-center justify-between text-xs">
-                    <span>{key}</span>
-                    <span className="text-muted-foreground">
-                      {scores[key]} · {weight}%
-                    </span>
-                  </div>
-                  <Progress value={scores[key]} />
+            <CardHeader className="pb-3">
+              <div className="flex flex-wrap items-center justify-between gap-2">
+                <div>
+                  <CardTitle className="text-base">Category breakdown</CardTitle>
+                  <CardDescription className="text-xs">
+                    Institutional scoring across all 9 investment dimensions · Click any row for candid feedback
+                  </CardDescription>
                 </div>
-              ))}
+                <Badge variant="outline" className="text-[10px]">
+                  9 Categories
+                </Badge>
+              </div>
+            </CardHeader>
+            <CardContent className="space-y-2.5 max-h-[380px] overflow-y-auto pr-1">
+              <div className="grid gap-2.5 sm:grid-cols-2">
+                {READINESS_WEIGHTS.map(({ key, weight }) => {
+                  const catEval = assessmentResult?.categoryScores?.[key];
+                  const catScore = catEval ? catEval.score : scores[key] ?? 35;
+                  const status = catEval?.status || (catScore >= 75 ? "Strong" : catScore >= 60 ? "Moderate" : catScore >= 40 ? "Critical Concern" : "Fatal Gap");
+                  const isExpanded = expandedCategory === key;
+
+                  return (
+                    <div
+                      key={key}
+                      className={`rounded-lg border p-2.5 transition-all ${
+                        isExpanded
+                          ? "border-primary/50 bg-muted/40 sm:col-span-2 shadow-xs"
+                          : "border-border/80 bg-card hover:border-primary/30"
+                      }`}
+                    >
+                      <button
+                        type="button"
+                        onClick={() => setExpandedCategory(isExpanded ? null : key)}
+                        className="w-full text-left"
+                      >
+                        <div className="flex items-center justify-between text-xs">
+                          <span className="font-medium text-foreground">{key}</span>
+                          <div className="flex items-center gap-1.5">
+                            <Badge
+                              variant="outline"
+                              className={`text-[9px] py-0 px-1 font-semibold ${
+                                status === "Strong"
+                                  ? "border-emerald-500/30 text-emerald-600 dark:text-emerald-400 bg-emerald-500/10"
+                                  : status === "Moderate"
+                                    ? "border-amber-500/30 text-amber-600 dark:text-amber-400 bg-amber-500/10"
+                                    : status === "Critical Concern"
+                                      ? "border-orange-500/30 text-orange-600 dark:text-orange-400 bg-orange-500/10"
+                                      : "border-red-500/30 text-red-600 dark:text-red-400 bg-red-500/10"
+                              }`}
+                            >
+                              {status}
+                            </Badge>
+                            <span className="text-xs font-semibold tabular-nums">
+                              {catScore}
+                              <span className="text-[10px] text-muted-foreground font-normal"> · {weight}%</span>
+                            </span>
+                            {isExpanded ? (
+                              <ChevronUp className="size-3 text-muted-foreground" />
+                            ) : (
+                              <ChevronDown className="size-3 text-muted-foreground" />
+                            )}
+                          </div>
+                        </div>
+                        <Progress value={catScore} className="h-1.5 mt-2" />
+                      </button>
+
+                      {/* Expandable Candid Detail */}
+                      {isExpanded && catEval && (
+                        <div className="mt-2.5 pt-2 border-t space-y-2 text-xs animate-in fade-in-50">
+                          <div>
+                            <p className="text-[11px] font-semibold text-foreground">Institutional Critique:</p>
+                            <p className="text-muted-foreground leading-relaxed mt-0.5">{catEval.critique}</p>
+                          </div>
+                          <div className="rounded bg-red-500/10 border border-red-500/20 p-2">
+                            <p className="text-[10px] font-bold uppercase tracking-wider text-red-600 dark:text-red-400 flex items-center gap-1 mb-0.5">
+                              <Flame className="size-3 text-red-500" />
+                              The Unvarnished Truth (No Sugarcoating)
+                            </p>
+                            <p className="text-xs text-foreground italic leading-relaxed">
+                              "{catEval.honestFeedback}"
+                            </p>
+                          </div>
+                          <div>
+                            <p className="text-[11px] font-semibold text-primary">Immediate Action To Improve Score:</p>
+                            <p className="text-muted-foreground leading-relaxed mt-0.5">{catEval.actionItem}</p>
+                          </div>
+                        </div>
+                      )}
+                    </div>
+                  );
+                })}
+              </div>
             </CardContent>
           </Card>
         </div>
@@ -740,18 +963,90 @@ function StudentDashboard() {
           </Card>
         </div>
 
-        {showResult && (
-          <Card>
-            <CardHeader>
-              <CardTitle className="text-base">Latest AI assessment</CardTitle>
-              <CardDescription>
-                Live scoring from your current profile · weighted score {weighted}/100
+        {/* Unvarnished Truth & VC Due Diligence Analysis Card */}
+        {assessmentResult && (
+          <Card className="border-red-500/30 bg-gradient-to-br from-card to-red-500/[0.02]">
+            <CardHeader className="pb-3">
+              <div className="flex flex-wrap items-center justify-between gap-2">
+                <CardTitle className="text-base flex items-center gap-2">
+                  <Flame className="size-4 text-red-500" />
+                  Unvarnished Truth &amp; VC Due Diligence
+                </CardTitle>
+                <div className="flex items-center gap-2">
+                  <Badge
+                    variant="outline"
+                    className="border-red-500/40 bg-red-500/10 text-red-600 dark:text-red-400 text-xs gap-1"
+                  >
+                    <Flame className="size-3 text-red-500" />
+                    Honesty Mode: {assessmentResult.honestyLevel.toUpperCase()} (Zero Sugarcoating)
+                  </Badge>
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    onClick={() => setSettingsOpen(true)}
+                    className="h-7 text-xs text-muted-foreground hover:text-foreground"
+                  >
+                    <Settings className="size-3 mr-1" />
+                    Settings
+                  </Button>
+                </div>
+              </div>
+              <CardDescription className="text-xs">
+                Direct, uncompromised evaluation an institutional VC partner shares in internal committee — no polite euphemisms.
               </CardDescription>
             </CardHeader>
-            <CardContent className="grid gap-6 md:grid-cols-3">
-              <Section title="Strengths" items={review.strengths} />
-              <Section title="Weaknesses" items={review.weaknesses} />
-              <Section title="Recommendations" items={review.recommendations} />
+            <CardContent className="space-y-4">
+              {/* Raw Verdict Quote */}
+              <div className="rounded-lg border-l-4 border-l-red-500 bg-muted/40 p-3.5">
+                <p className="text-[11px] font-bold uppercase tracking-wider text-red-600 dark:text-red-400 mb-1 flex items-center gap-1.5">
+                  <ShieldAlert className="size-3.5" />
+                  The Closed-Door Partner Verdict
+                </p>
+                <p className="text-sm font-medium leading-relaxed italic text-foreground">
+                  "{assessmentResult.honestTake}"
+                </p>
+              </div>
+
+              <div className="grid gap-4 md:grid-cols-2">
+                {/* Top Red Flags / Dealbreakers */}
+                <div className="rounded-lg border bg-card p-3 space-y-2">
+                  <div className="flex items-center gap-2 text-xs font-semibold text-red-600 dark:text-red-400">
+                    <AlertTriangle className="size-4 shrink-0" />
+                    <span>Top Red Flags (Why Investors Will Pass)</span>
+                  </div>
+                  <ul className="space-y-1.5 text-xs text-muted-foreground">
+                    {assessmentResult.redFlags.map((flag, idx) => (
+                      <li key={idx} className="flex items-start gap-1.5 leading-relaxed">
+                        <span className="text-red-500 font-bold shrink-0">✕</span>
+                        <span>{flag}</span>
+                      </li>
+                    ))}
+                  </ul>
+                </div>
+
+                {/* 3 Tough Grilling Questions */}
+                <div className="rounded-lg border bg-card p-3 space-y-2">
+                  <div className="flex items-center gap-2 text-xs font-semibold text-primary">
+                    <HelpCircle className="size-4 shrink-0" />
+                    <span>Pitch Grilling Questions (Defend in 5 Mins)</span>
+                  </div>
+                  <ul className="space-y-1.5 text-xs text-muted-foreground">
+                    {assessmentResult.grillingQuestions.map((q, idx) => (
+                      <li key={idx} className="flex items-start gap-1.5 leading-relaxed">
+                        <span className="text-primary font-bold shrink-0">Q{idx + 1}:</span>
+                        <span className="text-foreground">{q}</span>
+                      </li>
+                    ))}
+                  </ul>
+                </div>
+              </div>
+
+              {/* Strengths, Weaknesses, and Recommendations */}
+              <div className="grid gap-6 pt-2 border-t md:grid-cols-3">
+                <Section title="Institutional Strengths" items={assessmentResult.strengths} />
+                <Section title="Vulnerabilities & Weaknesses" items={assessmentResult.weaknesses} />
+                <Section title="Actionable Next Steps" items={assessmentResult.recommendations} />
+              </div>
             </CardContent>
           </Card>
         )}
@@ -809,6 +1104,13 @@ function StudentDashboard() {
           <TriangleAlert className="size-3.5" aria-hidden="true" />
           Demo build: data is seeded locally and authentication is intentionally disabled.
         </p>
+
+        {/* AI Readiness Configuration Dialog */}
+        <AISettingsDialog
+          open={settingsOpen}
+          onOpenChange={setSettingsOpen}
+          onConfigSaved={() => setAiConfig(getAIConfig())}
+        />
       </div>
     </AppShell>
   );
