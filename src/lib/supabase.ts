@@ -1,20 +1,23 @@
 import { createClient } from "@supabase/supabase-js";
+import type { Database } from "@/types/database";
 
 // Fallback to project credentials if import.meta.env is not populated during SSR
 const env = typeof import.meta !== "undefined" && import.meta.env ? (import.meta.env as Record<string, string | undefined>) : {};
 const procEnv = typeof process !== "undefined" && process.env ? (process.env as Record<string, string | undefined>) : {};
 
-const SUPABASE_URL =
+export const SUPABASE_URL =
   env["VITE_SUPABASE_URL"] ||
   procEnv["VITE_SUPABASE_URL"] ||
   "https://fhjkuwpbnlcxtvenpnqm.supabase.co";
 
-const SUPABASE_KEY =
+export const SUPABASE_KEY =
+  env["VITE_SUPABASE_ANON_KEY"] ||
+  procEnv["VITE_SUPABASE_ANON_KEY"] ||
   env["VITE_SUPABASE_PUBLISHABLE_KEY"] ||
   procEnv["VITE_SUPABASE_PUBLISHABLE_KEY"] ||
   "sb_publishable_gWHA_QY_TYQe1YGyYMTcIg_YM2NoCes";
 
-export const supabase = createClient(SUPABASE_URL, SUPABASE_KEY, {
+export const supabase = createClient<Database>(SUPABASE_URL, SUPABASE_KEY, {
   auth: {
     persistSession: true,
     autoRefreshToken: true,
@@ -68,5 +71,22 @@ export async function checkDatabaseConnection(): Promise<ConnectionStatus> {
       url: SUPABASE_URL,
       projectId: "fhjkuwpbnlcxtvenpnqm",
     };
+  }
+}
+
+/**
+ * Direct table query health check to verify database operations
+ */
+export async function testDatabaseConnection(): Promise<{ success: boolean; message: string; latencyMs?: number }> {
+  const start = Date.now();
+  try {
+    const { error } = await supabase.from("profiles").select("id", { count: "exact", head: true });
+    const latencyMs = Date.now() - start;
+    if (error && error.code !== "PGRST116") {
+      return { success: false, message: error.message, latencyMs };
+    }
+    return { success: true, message: "Successfully connected to Supabase database tables!", latencyMs };
+  } catch (err: any) {
+    return { success: false, message: err?.message || "Database query error" };
   }
 }
