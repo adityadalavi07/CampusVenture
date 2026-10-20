@@ -305,7 +305,7 @@ function Landing() {
         </p>
         <div className="flex items-center justify-center gap-2 text-[11px] text-muted-foreground/80">
           <span className="inline-block size-1.5 rounded-full bg-emerald-500 animate-pulse" />
-          <span>Database: Supabase Cloud Connected (Project: fhjkuwpbnlcxtvenpnqm)</span>
+          <span>Database: Supabase Cloud Connected · Protected by RLS</span>
         </div>
       </footer>
     </div>

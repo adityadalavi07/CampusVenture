@@ -1,0 +1,16 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 128 128">
+  <defs>
+    <linearGradient id="cvGradient" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#4F46E5"/>
+      <stop offset="50%" stop-color="#6366F1"/>
+      <stop offset="100%" stop-color="#06B6D4"/>
+    </linearGradient>
+    <filter id="shadow" x="-10%" y="-10%" width="120%" height="120%">
+      <feDropShadow dx="0" dy="4" stdDeviation="6" flood-color="#4F46E5" flood-opacity="0.35"/>
+    </filter>
+  </defs>
+  <rect width="128" height="128" rx="28" fill="url(#cvGradient)" filter="url(#shadow)"/>
+  <path d="M42 46 C32 46, 26 53, 26 64 C26 75, 32 82, 42 82 C48 82, 53 79, 56 75 L63 80 C58 87, 51 91, 42 91 C26 91, 16 80, 16 64 C16 48, 26 37, 42 37 C51 37, 58 41, 63 48 L56 53 C53 49, 48 46, 42 46 Z" fill="#FFFFFF"/>
+  <path d="M72 39 L85 88 L98 88 L111 39 L100 39 L92 73 L84 39 Z" fill="#FFFFFF"/>
+  <circle cx="98" cy="33" r="5" fill="#38BDF8"/>
+</svg>
