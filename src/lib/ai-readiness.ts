@@ -32,7 +32,7 @@ export interface AIReadinessResult {
 }
 
 export interface AIConfig {
-  provider: "gemini" | "openai";
+  provider: "gemini";
   apiKey: string;
   model: string;
   honestyLevel: HonestyLevel;
@@ -70,18 +70,9 @@ export function getAIConfig(): AIConfig {
   }
 
   const envGemini = (import.meta.env["VITE_GEMINI_API_KEY"] as string) || "";
-  const envOpenAI = (import.meta.env["VITE_OPENAI_API_KEY"] as string) || "";
 
   if (envGemini) {
     return { ...DEFAULT_AI_CONFIG, provider: "gemini", apiKey: envGemini };
-  }
-  if (envOpenAI) {
-    return {
-      ...DEFAULT_AI_CONFIG,
-      provider: "openai",
-      apiKey: envOpenAI,
-      model: "gpt-4o-mini",
-    };
   }
 
   return DEFAULT_AI_CONFIG;
@@ -735,102 +726,142 @@ export async function runAIReadinessAnalysis(
   const config = { ...getAIConfig(), ...configOverride };
   const honestyLevel = config.honestyLevel || "brutal";
 
-  // If no API key is provided, execute the thorough local heuristic engine
-  if (!config.apiKey.trim()) {
-    const localResult = evaluateStartupLocally(startup, honestyLevel);
-    saveAssessment(localResult);
-    return localResult;
-  }
-
-  const systemPrompt = buildSystemPrompt(honestyLevel);
-  const userPrompt = buildUserPrompt(startup, honestyLevel);
-
-  let rawJsonText = "";
+  // 1. First attempt secure server-side Google Gemini analysis (API key hidden from hackers)
   try {
-    if (config.provider === "gemini") {
-      rawJsonText = await callGeminiAPI(
-        config.apiKey.trim(),
-        config.model || "gemini-1.5-flash",
-        systemPrompt,
-        userPrompt,
-      );
-    } else {
-      rawJsonText = await callOpenAIAPI(
-        config.apiKey.trim(),
-        config.model || "gpt-4o-mini",
-        systemPrompt,
-        userPrompt,
-      );
+    if (typeof window !== "undefined") {
+      const resp = await fetch("/api/ai/analyze", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ startup, honestyLevel }),
+      });
+
+      if (resp.ok) {
+        const payload = (await resp.json()) as { success?: boolean; rawJson?: string; fallback?: boolean };
+        if (payload.success && payload.rawJson) {
+          const parsed = JSON.parse(
+            payload.rawJson
+              .replace(/^```json\s*/i, "")
+              .replace(/^```\s*/i, "")
+              .replace(/\s*```$/, "")
+              .trim(),
+          );
+
+          const categoryScores: Record<string, CategoryEvaluation> = {};
+          for (const { key, weight } of READINESS_WEIGHTS) {
+            const incoming = parsed.categories?.[key];
+            const score = Math.max(0, Math.min(100, Math.round(Number(incoming?.score) || 40)));
+            categoryScores[key] = {
+              score,
+              weight,
+              status: deriveCategoryStatus(score),
+              critique: incoming?.critique || `Assessment conducted for ${key}.`,
+              honestFeedback: incoming?.honestFeedback || `Feedback noted for ${key}.`,
+              actionItem: incoming?.actionItem || `Refine ${key} with validated customer proof.`,
+            };
+          }
+
+          const overallScore = computeWeightedScore(categoryScores);
+          const investorGrade = scoreToGrade(overallScore);
+          const verdict = scoreToVerdict(overallScore);
+
+          const result: AIReadinessResult = {
+            overallScore,
+            investorGrade,
+            verdict,
+            honestTake: parsed.honestTake || "Honest assessment generated via Google Gemini.",
+            redFlags: Array.isArray(parsed.redFlags) ? parsed.redFlags.slice(0, 4) : [],
+            fatalFlaws: Array.isArray(parsed.fatalFlaws) ? parsed.fatalFlaws.slice(0, 3) : [],
+            grillingQuestions: Array.isArray(parsed.grillingQuestions)
+              ? parsed.grillingQuestions.slice(0, 3)
+              : [],
+            categoryScores,
+            strengths: Array.isArray(parsed.strengths) ? parsed.strengths.slice(0, 3) : [],
+            weaknesses: Array.isArray(parsed.weaknesses) ? parsed.weaknesses.slice(0, 3) : [],
+            recommendations: Array.isArray(parsed.recommendations) ? parsed.recommendations.slice(0, 4) : [],
+            honestyLevel,
+            providerUsed: "gemini",
+            modelUsed: "gemini-1.5-flash (Secure Server AI)",
+            assessedAt: new Date().toISOString(),
+          };
+
+          saveAssessment(result);
+          return result;
+        }
+      }
     }
-  } catch (apiError: unknown) {
-    console.warn("AI API call failed, falling back to local due diligence engine:", apiError);
-    // Return local evaluation with warning embedded
-    const localResult = evaluateStartupLocally(startup, honestyLevel);
-    const errMsg = apiError instanceof Error ? apiError.message : String(apiError);
-    localResult.honestTake = `[Notice: Live API error (${errMsg}) — showing local due diligence benchmark] ${localResult.honestTake}`;
-    saveAssessment(localResult);
-    return localResult;
+  } catch (err) {
+    console.info("[CampusVenture AI] Server API endpoint unreachable, falling back to offline engine:", err);
   }
 
-  // Parse and validate the response
-  try {
-    // Strip possible markdown fences if returned
-    const cleaned = rawJsonText
-      .replace(/^```json\s*/i, "")
-      .replace(/^```\s*/i, "")
-      .replace(/\s*```$/, "")
-      .trim();
+  // 2. Direct client-side Gemini fallback if an explicit key was provided in environment
+  if (config.apiKey.trim()) {
+    try {
+      const systemPrompt = buildSystemPrompt(honestyLevel);
+      const userPrompt = buildUserPrompt(startup, honestyLevel);
+      const rawJsonText = await callGeminiAPI(
+        config.apiKey.trim(),
+        "gemini-1.5-flash",
+        systemPrompt,
+        userPrompt,
+      );
 
-    const parsed = JSON.parse(cleaned);
+      const cleaned = rawJsonText
+        .replace(/^```json\s*/i, "")
+        .replace(/^```\s*/i, "")
+        .replace(/\s*```$/, "")
+        .trim();
 
-    const weightsMap = Object.fromEntries(READINESS_WEIGHTS.map((w) => [w.key, w.weight]));
-    const categoryScores: Record<string, CategoryEvaluation> = {};
+      const parsed = JSON.parse(cleaned);
+      const categoryScores: Record<string, CategoryEvaluation> = {};
 
-    for (const { key, weight } of READINESS_WEIGHTS) {
-      const incoming = parsed.categories?.[key];
-      const score = Math.max(0, Math.min(100, Math.round(Number(incoming?.score) || 40)));
-      categoryScores[key] = {
-        score,
-        weight,
-        status: deriveCategoryStatus(score),
-        critique: incoming?.critique || `Assessment conducted for ${key}.`,
-        honestFeedback: incoming?.honestFeedback || `Feedback noted for ${key}.`,
-        actionItem: incoming?.actionItem || `Refine ${key} with validated customer proof.`,
+      for (const { key, weight } of READINESS_WEIGHTS) {
+        const incoming = parsed.categories?.[key];
+        const score = Math.max(0, Math.min(100, Math.round(Number(incoming?.score) || 40)));
+        categoryScores[key] = {
+          score,
+          weight,
+          status: deriveCategoryStatus(score),
+          critique: incoming?.critique || `Assessment conducted for ${key}.`,
+          honestFeedback: incoming?.honestFeedback || `Feedback noted for ${key}.`,
+          actionItem: incoming?.actionItem || `Refine ${key} with validated customer proof.`,
+        };
+      }
+
+      const overallScore = computeWeightedScore(categoryScores);
+      const investorGrade = scoreToGrade(overallScore);
+      const verdict = scoreToVerdict(overallScore);
+
+      const result: AIReadinessResult = {
+        overallScore,
+        investorGrade,
+        verdict,
+        honestTake: parsed.honestTake || "Honest assessment generated via Google Gemini.",
+        redFlags: Array.isArray(parsed.redFlags) ? parsed.redFlags.slice(0, 4) : [],
+        fatalFlaws: Array.isArray(parsed.fatalFlaws) ? parsed.fatalFlaws.slice(0, 3) : [],
+        grillingQuestions: Array.isArray(parsed.grillingQuestions)
+          ? parsed.grillingQuestions.slice(0, 3)
+          : [],
+        categoryScores,
+        strengths: Array.isArray(parsed.strengths) ? parsed.strengths.slice(0, 3) : [],
+        weaknesses: Array.isArray(parsed.weaknesses) ? parsed.weaknesses.slice(0, 3) : [],
+        recommendations: Array.isArray(parsed.recommendations) ? parsed.recommendations.slice(0, 4) : [],
+        honestyLevel,
+        providerUsed: "gemini",
+        modelUsed: "gemini-1.5-flash",
+        assessedAt: new Date().toISOString(),
       };
+
+      saveAssessment(result);
+      return result;
+    } catch (apiError: unknown) {
+      console.warn("Direct Gemini call failed, falling back to local engine:", apiError);
     }
-
-    const overallScore = computeWeightedScore(categoryScores);
-    const investorGrade = scoreToGrade(overallScore);
-    const verdict = scoreToVerdict(overallScore);
-
-    const result: AIReadinessResult = {
-      overallScore,
-      investorGrade,
-      verdict,
-      honestTake: parsed.honestTake || "Honest assessment generated.",
-      redFlags: Array.isArray(parsed.redFlags) ? parsed.redFlags.slice(0, 4) : [],
-      fatalFlaws: Array.isArray(parsed.fatalFlaws) ? parsed.fatalFlaws.slice(0, 3) : [],
-      grillingQuestions: Array.isArray(parsed.grillingQuestions)
-        ? parsed.grillingQuestions.slice(0, 3)
-        : [],
-      categoryScores,
-      strengths: Array.isArray(parsed.strengths) ? parsed.strengths.slice(0, 3) : [],
-      weaknesses: Array.isArray(parsed.weaknesses) ? parsed.weaknesses.slice(0, 3) : [],
-      recommendations: Array.isArray(parsed.recommendations) ? parsed.recommendations.slice(0, 4) : [],
-      honestyLevel,
-      providerUsed: config.provider,
-      modelUsed: config.provider === "gemini" ? config.model || "gemini-1.5-flash" : config.model || "gpt-4o-mini",
-      assessedAt: new Date().toISOString(),
-    };
-
-    saveAssessment(result);
-    return result;
-  } catch (parseErr) {
-    console.error("Failed to parse AI output, falling back to local engine:", parseErr, rawJsonText);
-    const localResult = evaluateStartupLocally(startup, honestyLevel);
-    saveAssessment(localResult);
-    return localResult;
   }
+
+  // 3. Built-in Offline Due Diligence Engine (100% Free, Zero Cost, Always Available)
+  const localResult = evaluateStartupLocally(startup, honestyLevel);
+  saveAssessment(localResult);
+  return localResult;
 }
 
 /** Test API connection */

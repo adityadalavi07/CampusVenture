@@ -37,7 +37,6 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { DEMO_INVESTORS, READINESS_WEIGHTS, formatMoney, matchScore } from "@/lib/demo-data";
 import { STATUS_LABEL, completeness, useVenture, type StartupRecord } from "@/lib/store";
 import { useAuth } from "@/lib/auth-context";
-import { AISettingsDialog } from "@/components/ai-settings-dialog";
 import {
   runAIReadinessAnalysis,
   getSavedAssessment,
@@ -137,7 +136,6 @@ function StudentDashboard() {
   const STARTUP = startups[0]!;
   const [analyzing, setAnalyzing] = useState(false);
   const [analysisStep, setAnalysisStep] = useState("");
-  const [settingsOpen, setSettingsOpen] = useState(false);
   const [expandedCategory, setExpandedCategory] = useState<string | null>(null);
   const [aiConfig, setAiConfig] = useState(() => getAIConfig());
   const [assessmentResult, setAssessmentResult] = useState<AIReadinessResult | null>(() => {
@@ -402,24 +400,6 @@ function StudentDashboard() {
             </p>
           </div>
           <div className="flex flex-wrap items-center gap-2">
-            <Button
-              variant="outline"
-              size="sm"
-              onClick={() => setSettingsOpen(true)}
-              className="h-9 gap-1.5 text-xs"
-              title="Configure AI Provider & Honesty Settings"
-            >
-              <Settings className="size-3.5 text-muted-foreground" />
-              <span>AI Settings</span>
-              <Badge variant="secondary" className="text-[10px] py-0 px-1 font-mono">
-                {aiConfig.provider === "gemini" ? "Gemini" : "OpenAI"}
-              </Badge>
-              {aiConfig.honestyLevel === "brutal" && (
-                <span className="flex items-center text-red-500 text-[10px] font-bold" title="Brutal VC Honesty Active">
-                  <Flame className="size-3" />
-                </span>
-              )}
-            </Button>
             <Button variant="outline" asChild size="sm" className="h-9 text-xs">
               <Link to="/app/student/startup">Edit my startup</Link>
             </Button>
@@ -486,21 +466,18 @@ function StudentDashboard() {
               )}
 
               {/* Honesty Filter Indicator */}
-              <button
-                type="button"
-                onClick={() => setSettingsOpen(true)}
-                className={`flex items-center gap-1.5 rounded-full px-2.5 py-1 text-[11px] font-medium border transition-colors ${
+              <div
+                className={`flex items-center gap-1.5 rounded-full px-2.5 py-1 text-[11px] font-medium border ${
                   (assessmentResult?.honestyLevel || aiConfig.honestyLevel) === "brutal"
-                    ? "bg-red-500/10 text-red-600 dark:text-red-400 border-red-500/30 hover:bg-red-500/20"
-                    : "bg-primary/10 text-primary border-primary/20 hover:bg-primary/15"
+                    ? "bg-red-500/10 text-red-600 dark:text-red-400 border-red-500/30"
+                    : "bg-primary/10 text-primary border-primary/20"
                 }`}
-                title="Click to adjust Honesty Filter or AI Provider"
               >
                 <Flame className="size-3" />
                 <span>
                   Honesty: {(assessmentResult?.honestyLevel || aiConfig.honestyLevel) === "brutal" ? "Brutal VC (Zero Sugarcoating)" : "Institutional Standard"}
                 </span>
-              </button>
+              </div>
 
               <div className="text-center space-y-0.5">
                 <p className="text-[11px] text-muted-foreground">
@@ -980,15 +957,6 @@ function StudentDashboard() {
                     <Flame className="size-3 text-red-500" />
                     Honesty Mode: {assessmentResult.honestyLevel.toUpperCase()} (Zero Sugarcoating)
                   </Badge>
-                  <Button
-                    variant="ghost"
-                    size="sm"
-                    onClick={() => setSettingsOpen(true)}
-                    className="h-7 text-xs text-muted-foreground hover:text-foreground"
-                  >
-                    <Settings className="size-3 mr-1" />
-                    Settings
-                  </Button>
                 </div>
               </div>
               <CardDescription className="text-xs">
@@ -1099,14 +1067,6 @@ function StudentDashboard() {
             ))}
           </CardContent>
         </Card>
-
-
-        {/* AI Readiness Configuration Dialog */}
-        <AISettingsDialog
-          open={settingsOpen}
-          onOpenChange={setSettingsOpen}
-          onConfigSaved={() => setAiConfig(getAIConfig())}
-        />
       </div>
     </AppShell>
   );

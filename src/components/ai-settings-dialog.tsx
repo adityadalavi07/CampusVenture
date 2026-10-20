@@ -103,87 +103,33 @@ export function AISettingsDialog({ open, onOpenChange, onConfigSaved }: AISettin
           {/* Provider Selection */}
           <div className="space-y-2">
             <Label className="text-xs font-semibold">AI Provider</Label>
-            <div className="grid grid-cols-2 gap-3">
-              <button
-                type="button"
-                onClick={() =>
-                  setConfig((prev) => ({
-                    ...prev,
-                    provider: "gemini",
-                    model: "gemini-1.5-flash",
-                  }))
-                }
-                className={`flex flex-col items-start rounded-lg border p-3 text-left transition-all ${
-                  config.provider === "gemini"
-                    ? "border-primary bg-primary/5 ring-1 ring-primary"
-                    : "border-border hover:bg-muted/50"
-                }`}
-              >
-                <div className="flex items-center justify-between w-full">
-                  <span className="font-semibold text-xs flex items-center gap-1.5">
-                    Google Gemini
-                  </span>
-                  <Badge variant="secondary" className="text-[10px] py-0 px-1.5">
-                    Recommended
-                  </Badge>
-                </div>
-                <span className="text-[11px] text-muted-foreground mt-1">
-                  Fast, generous free tier via Google AI Studio
+            <div className="flex flex-col items-start rounded-lg border border-primary bg-primary/5 ring-1 ring-primary p-3 text-left">
+              <div className="flex items-center justify-between w-full">
+                <span className="font-semibold text-xs flex items-center gap-1.5">
+                  Google Gemini
                 </span>
-              </button>
-
-              <button
-                type="button"
-                onClick={() =>
-                  setConfig((prev) => ({
-                    ...prev,
-                    provider: "openai",
-                    model: "gpt-4o-mini",
-                  }))
-                }
-                className={`flex flex-col items-start rounded-lg border p-3 text-left transition-all ${
-                  config.provider === "openai"
-                    ? "border-primary bg-primary/5 ring-1 ring-primary"
-                    : "border-border hover:bg-muted/50"
-                }`}
-              >
-                <div className="flex items-center justify-between w-full">
-                  <span className="font-semibold text-xs">OpenAI</span>
-                  <Badge variant="outline" className="text-[10px] py-0 px-1.5">
-                    GPT-4o Mini
-                  </Badge>
-                </div>
-                <span className="text-[11px] text-muted-foreground mt-1">
-                  Industry standard evaluation using OpenAI API
-                </span>
-              </button>
+                <Badge variant="secondary" className="text-[10px] py-0 px-1.5">
+                  Recommended · Free Tier
+                </Badge>
+              </div>
+              <span className="text-[11px] text-muted-foreground mt-1">
+                Fast, generous free tier via Google AI Studio (gemini-1.5-flash)
+              </span>
             </div>
           </div>
 
           {/* Model Selection */}
           <div className="space-y-1.5">
             <Label className="text-xs font-semibold">Model</Label>
-            {config.provider === "gemini" ? (
-              <select
-                value={config.model}
-                onChange={(e) => setConfig((p) => ({ ...p, model: e.target.value }))}
-                className="w-full rounded-md border border-input bg-background px-3 py-1.5 text-xs focus:ring-1 focus:ring-primary"
-              >
-                <option value="gemini-1.5-flash">gemini-1.5-flash (Fastest &amp; Free Tier Recommended)</option>
-                <option value="gemini-2.0-flash">gemini-2.0-flash (Latest Next-Gen)</option>
-                <option value="gemini-1.5-pro">gemini-1.5-pro (Deep Due Diligence Analysis)</option>
-              </select>
-            ) : (
-              <select
-                value={config.model}
-                onChange={(e) => setConfig((p) => ({ ...p, model: e.target.value }))}
-                className="w-full rounded-md border border-input bg-background px-3 py-1.5 text-xs focus:ring-1 focus:ring-primary"
-              >
-                <option value="gpt-4o-mini">gpt-4o-mini (Fast, Low Cost)</option>
-                <option value="gpt-4o">gpt-4o (Flagship Model)</option>
-                <option value="gpt-3.5-turbo">gpt-3.5-turbo (Legacy)</option>
-              </select>
-            )}
+            <select
+              value={config.model}
+              onChange={(e) => setConfig((p) => ({ ...p, model: e.target.value }))}
+              className="w-full rounded-md border border-input bg-background px-3 py-1.5 text-xs focus:ring-1 focus:ring-primary"
+            >
+              <option value="gemini-1.5-flash">gemini-1.5-flash (Fastest &amp; Free Tier Recommended)</option>
+              <option value="gemini-2.0-flash">gemini-2.0-flash (Latest Next-Gen)</option>
+              <option value="gemini-1.5-pro">gemini-1.5-pro (Deep Due Diligence Analysis)</option>
+            </select>
           </div>
 
           {/* API Key Input */}
@@ -203,18 +149,14 @@ export function AISettingsDialog({ open, onOpenChange, onConfigSaved }: AISettin
                 rel="noreferrer"
                 className="text-[11px] text-primary hover:underline flex items-center gap-1"
               >
-                Get {config.provider === "gemini" ? "Gemini" : "OpenAI"} API Key
+                Get Free Google Gemini API Key
                 <ExternalLink className="size-2.5" />
               </a>
             </div>
             <div className="relative">
               <Input
                 type={showKey ? "text" : "password"}
-                placeholder={
-                  config.provider === "gemini"
-                    ? "AIzaSy..."
-                    : "sk-..."
-                }
+                placeholder="AIzaSy..."
                 value={config.apiKey}
                 onChange={(e) => setConfig((p) => ({ ...p, apiKey: e.target.value }))}
                 className="pr-20 text-xs font-mono"
