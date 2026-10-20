@@ -224,7 +224,7 @@
   box-shadow: var(--shadow-elevated);
 }
 
-/* Auth Flow Modal Prototype Styles */
+/* Auth Flow Modal Styles */
 .auth-flow {
   --bg: #05070d;
   --panel: #090d17;

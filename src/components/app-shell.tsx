@@ -15,9 +15,7 @@ import {
   Settings,
   User,
   Users,
-  Database,
   LogIn,
-  ShieldCheck,
 } from "lucide-react";
 import { ThemeToggle } from "@/components/theme-toggle";
 import { NotificationBell } from "@/components/notification-bell";
@@ -74,12 +72,12 @@ const NAV: Record<Role, NavItem[]> = {
 export function AppShell({ role, children }: { role: Role; children: ReactNode }) {
   const items = NAV[role];
   const pathname = useRouterState({ select: (s) => s.location.pathname });
-  const { dbStatus, user } = useAuth();
+  const { user } = useAuth();
 
   return (
     <div className="min-h-screen bg-background">
       <aside className="fixed inset-y-0 left-0 hidden w-64 flex-col border-r bg-sidebar lg:flex">
-        <Link to="/" className="flex items-center gap-2 px-6 py-6">
+        <Link to={`/app/${role}`} className="flex items-center gap-2 px-6 py-6" aria-label="CampusVenture Dashboard">
           <span className="grid size-8 place-items-center rounded-lg bg-gradient-brand text-sm font-bold text-primary-foreground">
             CV
           </span>
@@ -101,39 +99,11 @@ export function AppShell({ role, children }: { role: Role; children: ReactNode }
             </Link>
           ))}
         </nav>
-
-        {/* Database & Authorization Status Footer */}
-        <div className="border-t border-sidebar-border p-4 space-y-2 text-xs">
-          <div className="flex items-center justify-between">
-            <span className="flex items-center gap-1.5 text-muted-foreground">
-              <Database className="size-3.5" />
-              Database:
-            </span>
-            {dbStatus?.connected ? (
-              <span className="flex items-center gap-1 font-medium text-emerald-600 dark:text-emerald-400">
-                <span className="size-1.5 rounded-full bg-emerald-500 animate-pulse" />
-                Connected
-              </span>
-            ) : (
-              <span className="text-muted-foreground">Connecting...</span>
-            )}
-          </div>
-
-          <div className="flex items-center justify-between text-[11px] text-muted-foreground">
-            <span className="flex items-center gap-1">
-              <ShieldCheck className="size-3.5 text-primary" />
-              RBAC Guard:
-            </span>
-            <Badge variant="outline" className="text-[10px] py-0 px-1 capitalize">
-              {role}
-            </Badge>
-          </div>
-        </div>
       </aside>
 
       <div className="lg:pl-64">
         <header className="sticky top-0 z-20 flex items-center justify-between gap-3 border-b bg-background/80 px-4 py-3 backdrop-blur-sm transition-colors duration-300 lg:px-8">
-          <Link to="/" className="flex items-center gap-2 lg:hidden">
+          <Link to={`/app/${role}`} className="flex items-center gap-2 lg:hidden" aria-label="CampusVenture Dashboard">
             <span className="grid size-8 place-items-center rounded-lg bg-gradient-brand text-xs font-bold text-primary-foreground">
               CV
             </span>

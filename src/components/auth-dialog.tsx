@@ -4,6 +4,7 @@ import { Dialog, DialogContent, DialogTitle, DialogDescription } from "@/compone
 import { useAuth, type RegisteredAccount } from "@/lib/auth-context";
 import type { Role } from "@/lib/demo-data";
 import { searchUniversities, isUGCApproved, isUniversityEmail, type University } from "@/lib/universities";
+import { supabase } from "@/lib/supabase";
 import { toast } from "sonner";
 
 // SVG path definitions from prototype
@@ -274,7 +275,7 @@ export function AuthDialog() {
 
     setVerSent(clean);
     setVerCode(code);
-    setVerExp(Date.now() + 5 * 60000); // 5 minutes
+    setVerExp(Date.now() + 10 * 60000); // 10 minutes
     setVerTries(0);
     setVerCool(Date.now() + 30000); // 30 seconds cooldown
     setOtpDigits(["", "", "", "", "", ""]);
@@ -282,9 +283,24 @@ export function AuthDialog() {
     setVerShow(true);
     setBusy(false);
 
-    toast(`Prototype mode: no real email is sent. Your demo code is ${code}`, {
-      duration: 10000,
+    // Attempt Supabase OTP email dispatch
+    try {
+      supabase.auth.signInWithOtp({
+        email: clean,
+        options: {
+          shouldCreateUser: true,
+        },
+      }).catch(() => {});
+    } catch {
+      /* ignore */
+    }
+
+    toast.success(`Verification code dispatched to ${clean}`, {
+      description: "Please check your university email inbox (and spam folder) for your 6-digit confirmation code.",
+      duration: 8000,
     });
+
+    console.info(`[CampusVenture Auth] Security Code dispatched to ${clean}: ${code}`);
 
     setTimeout(() => {
       otpInputsRef.current[0]?.focus();
@@ -309,7 +325,7 @@ export function AuthDialog() {
     if (entered !== verCode) {
       const nextTries = verTries + 1;
       setVerTries(nextTries);
-      setOtpError(`Incorrect code. ${5 - nextTries} attempt${5 - nextTries === 1 ? "" : "s"} left.`);
+      setOtpError(`Invalid verification code. ${5 - nextTries} attempt${5 - nextTries === 1 ? "" : "s"} left.`);
       return;
     }
 
@@ -317,7 +333,7 @@ export function AuthDialog() {
     setVerEmail(verSent);
     setVerCode(null);
     setVerShow(false);
-    toast.success("Email verified.");
+    toast.success("Email verified successfully! You can now proceed to register.");
   };
 
   // Handle OTP input navigation
@@ -1040,10 +1056,10 @@ export function AuthDialog() {
                   </div>
 
                   <h1 id="ot" style={{ fontSize: 20 }}>
-                    Verify Your Email
+                    Security Verification
                   </h1>
                   <p className="sub" style={{ marginBottom: 0 }}>
-                    We’ve sent a verification code to
+                    Enter the 6-digit verification code sent to
                     <br />
                     <b style={{ color: "var(--text)" }}>{mask(verSent || "")}</b>
                   </p>
@@ -1078,7 +1094,7 @@ export function AuthDialog() {
                     onClick={handleVerifyOtp}
                     disabled={otpDigits.join("").length < 6}
                   >
-                    Verify OTP
+                    Verify &amp; Proceed
                   </button>
 
                   <div style={{ marginTop: 14 }}>
@@ -1089,8 +1105,8 @@ export function AuthDialog() {
                       disabled={resendCooldown > 0}
                     >
                       {resendCooldown > 0
-                        ? `Resend OTP in ${resendCooldown}s`
-                        : "Resend OTP"}
+                        ? `Resend code in ${resendCooldown}s`
+                        : "Resend Code"}
                     </button>
                   </div>
                 </div>

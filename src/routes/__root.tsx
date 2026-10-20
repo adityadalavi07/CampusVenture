@@ -18,21 +18,40 @@ import { AuthDialog } from "@/components/auth-dialog";
 
 function NotFoundComponent() {
   return (
-    <div className="flex min-h-screen items-center justify-center bg-background px-4">
-      <div className="max-w-md text-center">
-        <h1 className="text-7xl font-bold text-foreground">404</h1>
-        <h2 className="mt-4 text-xl font-semibold text-foreground">Page not found</h2>
-        <p className="mt-2 text-sm text-muted-foreground">
-          The page you're looking for doesn't exist or has been moved.
-        </p>
-        <div className="mt-6">
+    <div className="flex min-h-screen flex-col items-center justify-center bg-background px-4 py-16 text-center">
+      <div className="mx-auto max-w-md space-y-6">
+        <div className="inline-flex items-center gap-2 rounded-full border border-border/80 bg-muted/40 px-3 py-1 text-xs font-medium text-muted-foreground">
+          <span className="size-2 rounded-full bg-primary" />
+          Error 404 · Page Not Found
+        </div>
+
+        <div className="space-y-2">
+          <h1 className="text-4xl font-bold tracking-tight text-foreground sm:text-5xl">
+            Off the Radar
+          </h1>
+          <p className="text-sm leading-relaxed text-muted-foreground">
+            The page or institutional resource you are attempting to reach does not exist, has been archived, or the link is incorrect.
+          </p>
+        </div>
+
+        <div className="flex flex-wrap items-center justify-center gap-3 pt-2">
+          <Link
+            to="/app/student"
+            className="inline-flex h-10 items-center justify-center rounded-lg bg-primary px-5 text-sm font-medium text-primary-foreground shadow-xs transition-colors hover:bg-primary/90"
+          >
+            Go to Dashboard
+          </Link>
           <Link
             to="/"
-            className="inline-flex items-center justify-center rounded-md bg-primary px-4 py-2 text-sm font-medium text-primary-foreground transition-colors hover:bg-primary/90"
+            className="inline-flex h-10 items-center justify-center rounded-lg border border-input bg-background px-5 text-sm font-medium text-foreground transition-colors hover:bg-accent hover:text-accent-foreground"
           >
-            Go home
+            Return Home
           </Link>
         </div>
+
+        <p className="pt-4 text-xs text-muted-foreground/80">
+          CampusVenture · Verified Student Startups &amp; Institutional Ecosystem
+        </p>
       </div>
     </div>
   );

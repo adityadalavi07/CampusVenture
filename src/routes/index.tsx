@@ -79,7 +79,7 @@ const STEPS = [
 ];
 
 function Landing() {
-  const { user, isAuthenticated, openAuthModal, dbStatus } = useAuth();
+  const { user, isAuthenticated, openAuthModal } = useAuth();
 
   return (
     <div className="min-h-screen bg-background">
@@ -92,12 +92,6 @@ function Landing() {
             <span className="font-semibold">CampusVenture</span>
           </div>
           <div className="flex items-center gap-2">
-            {dbStatus?.connected && (
-              <div className="hidden sm:flex items-center gap-1.5 rounded-full border border-emerald-500/30 bg-emerald-500/10 px-2.5 py-1 text-xs text-emerald-600 dark:text-emerald-400">
-                <span className="size-1.5 rounded-full bg-emerald-500 animate-pulse" />
-                <span className="font-medium text-[11px]">Database Connected</span>
-              </div>
-            )}
             <ThemeToggle />
             {isAuthenticated && user ? (
               <Button asChild size="sm">
@@ -298,15 +292,10 @@ function Landing() {
         </div>
       </section>
 
-      <footer className="border-t py-8 text-center text-xs text-muted-foreground space-y-2">
+      <footer className="border-t py-8 text-center text-xs text-muted-foreground">
         <p>
-          CampusVenture — discovery, readiness and collaboration for student founders. Not investment
-          advice.
+          CampusVenture — discovery, readiness and collaboration for student founders. Not investment advice.
         </p>
-        <div className="flex items-center justify-center gap-2 text-[11px] text-muted-foreground/80">
-          <span className="inline-block size-1.5 rounded-full bg-emerald-500 animate-pulse" />
-          <span>Database: Supabase Cloud Connected · Protected by RLS</span>
-        </div>
       </footer>
     </div>
   );

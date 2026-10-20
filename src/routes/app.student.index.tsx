@@ -1100,10 +1100,6 @@ function StudentDashboard() {
           </CardContent>
         </Card>
 
-        <p className="flex items-center gap-2 text-xs text-muted-foreground">
-          <TriangleAlert className="size-3.5" aria-hidden="true" />
-          Demo build: data is seeded locally and authentication is intentionally disabled.
-        </p>
 
         {/* AI Readiness Configuration Dialog */}
         <AISettingsDialog

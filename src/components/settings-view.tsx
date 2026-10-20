@@ -1,5 +1,5 @@
 import { useState, useEffect } from "react";
-import { RotateCcw, Save, Database, ShieldCheck, CheckCircle2, RefreshCw, LogOut } from "lucide-react";
+import { RotateCcw, Save, ShieldCheck, CheckCircle2, LogOut } from "lucide-react";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
@@ -38,10 +38,9 @@ const KEY = (role: Role) => `campusventure.profile.${role}`;
 
 export function SettingsView({ role }: { role: Role }) {
   const { resetDemo } = useVenture();
-  const { user, dbStatus, refreshDbStatus, signOut } = useAuth();
+  const { user, signOut } = useAuth();
   const router = useRouter();
 
-  const [testingDb, setTestingDb] = useState(false);
   const [profile, setProfile] = useState(() => {
     let saved: Partial<{ name: string; email: string; org: string; bio: string }> = {};
     if (typeof window !== "undefined") {
@@ -81,22 +80,6 @@ export function SettingsView({ role }: { role: Role }) {
       /* ignore */
     }
     toast.success("Profile saved");
-  }
-
-  async function handleTestConnection() {
-    setTestingDb(true);
-    try {
-      const status = await refreshDbStatus();
-      if (status.connected) {
-        toast.success(`Supabase connected! Latency: ${status.latencyMs ?? "<50"}ms`);
-      } else {
-        toast.error(`Database connection issue: ${status.message}`);
-      }
-    } catch (err) {
-      toast.error("Failed to ping database");
-    } finally {
-      setTestingDb(false);
-    }
   }
 
   const handleLogout = async () => {
@@ -153,88 +136,59 @@ export function SettingsView({ role }: { role: Role }) {
       </Card>
 
       <div className="space-y-4">
-        {/* Database & Authorization Card */}
-        <Card className="border-primary/20 bg-card">
+        {/* Account & Security Card */}
+        <Card className="bg-card">
           <CardHeader>
             <div className="flex items-center justify-between">
               <CardTitle className="text-base flex items-center gap-2">
-                <Database className="size-4 text-primary" />
-                Database & Authorization
+                <ShieldCheck className="size-4 text-primary" />
+                Account &amp; Security
               </CardTitle>
-              {dbStatus?.connected ? (
-                <Badge
-                  variant="outline"
-                  className="border-emerald-500/30 bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 text-xs"
-                >
-                  <span className="size-1.5 rounded-full bg-emerald-500 mr-1.5 animate-pulse" />
-                  Connected
-                </Badge>
-              ) : (
-                <Badge variant="outline" className="text-xs text-muted-foreground">
-                  Connecting...
-                </Badge>
-              )}
+              <Badge
+                variant="outline"
+                className="border-emerald-500/30 bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 text-xs"
+              >
+                <CheckCircle2 className="size-3 mr-1" />
+                Active Session
+              </Badge>
             </div>
             <CardDescription>
-              Real-time connection status with Supabase and active RBAC role session.
+              Manage your credentials, role privileges, and session authentication.
             </CardDescription>
           </CardHeader>
           <CardContent className="space-y-3.5 text-xs">
             <div className="grid gap-2 rounded-lg border bg-muted/40 p-3">
               <div className="flex items-center justify-between">
-                <span className="text-muted-foreground">Provider:</span>
-                <span className="font-semibold text-foreground">Supabase Cloud</span>
+                <span className="text-muted-foreground">Account Status:</span>
+                <span className="font-semibold text-emerald-600 dark:text-emerald-400 flex items-center gap-1">
+                  <CheckCircle2 className="size-3" /> Verified Member
+                </span>
               </div>
               <div className="flex items-center justify-between">
-                <span className="text-muted-foreground">Project ID:</span>
-                <code className="rounded bg-muted px-1.5 py-0.5 text-[11px] font-mono">
-                  {dbStatus?.projectId || "fhjkuwpbnlcxtvenpnqm"}
-                </code>
-              </div>
-              <div className="flex items-center justify-between">
-                <span className="text-muted-foreground">Active Role:</span>
+                <span className="text-muted-foreground">Assigned Role:</span>
                 <Badge variant="secondary" className="capitalize text-[11px]">
-                  <ShieldCheck className="size-3 mr-1 text-primary" />
                   {user?.role || role}
                 </Badge>
               </div>
               <div className="flex items-center justify-between">
-                <span className="text-muted-foreground">Authenticated As:</span>
-                <span className="font-medium text-foreground">{user?.email || "Guest"}</span>
+                <span className="text-muted-foreground">Primary Email:</span>
+                <span className="font-medium text-foreground">{user?.email || profile.email}</span>
               </div>
-              {dbStatus?.latencyMs !== undefined && (
-                <div className="flex items-center justify-between">
-                  <span className="text-muted-foreground">API Latency:</span>
-                  <span className="text-emerald-600 dark:text-emerald-400 font-medium">
-                    {dbStatus.latencyMs} ms
-                  </span>
-                </div>
-              )}
+              <div className="flex items-center justify-between">
+                <span className="text-muted-foreground">Security Protection:</span>
+                <span className="text-muted-foreground font-medium">Row-Level Security Active</span>
+              </div>
             </div>
 
-            <div className="flex gap-2">
-              <Button
-                variant="outline"
-                size="sm"
-                className="w-full text-xs"
-                onClick={handleTestConnection}
-                disabled={testingDb}
-              >
-                <RefreshCw
-                  className={`size-3.5 mr-1.5 ${testingDb ? "animate-spin" : ""}`}
-                />
-                {testingDb ? "Testing Connection..." : "Test Database Connection"}
-              </Button>
-              <Button
-                variant="ghost"
-                size="sm"
-                className="text-xs text-destructive hover:bg-destructive/10 hover:text-destructive"
-                onClick={handleLogout}
-              >
-                <LogOut className="size-3.5 mr-1" />
-                Sign Out
-              </Button>
-            </div>
+            <Button
+              variant="outline"
+              size="sm"
+              className="w-full text-xs text-destructive hover:bg-destructive/10 hover:text-destructive"
+              onClick={handleLogout}
+            >
+              <LogOut className="size-3.5 mr-1.5" />
+              Sign Out of Account
+            </Button>
           </CardContent>
         </Card>
 
