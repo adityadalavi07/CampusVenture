@@ -25,6 +25,7 @@ export interface StartupRecord extends Startup {
   status: ReviewStatus;
   reviewNote: string;
   views: number;
+  founder?: string;
 }
 
 export interface Notification {

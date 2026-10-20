@@ -933,6 +933,7 @@ export function isUniversityEmail(email: string): boolean {
   const parts = clean.split("@");
   if (parts.length !== 2) return false;
   const domain = parts[1];
+  if (!domain) return false;
 
   const blocked = [
     "gmail.com",

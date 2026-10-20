@@ -61,16 +61,16 @@ export function getAIConfig(): AIConfig {
         apiKey:
           parsed.apiKey ||
           (parsed.provider === "gemini"
-            ? (import.meta.env.VITE_GEMINI_API_KEY as string) || ""
-            : (import.meta.env.VITE_OPENAI_API_KEY as string) || ""),
+            ? (import.meta.env["VITE_GEMINI_API_KEY"] as string) || ""
+            : (import.meta.env["VITE_OPENAI_API_KEY"] as string) || ""),
       };
     }
   } catch {
     /* ignore error */
   }
 
-  const envGemini = (import.meta.env.VITE_GEMINI_API_KEY as string) || "";
-  const envOpenAI = (import.meta.env.VITE_OPENAI_API_KEY as string) || "";
+  const envGemini = (import.meta.env["VITE_GEMINI_API_KEY"] as string) || "";
+  const envOpenAI = (import.meta.env["VITE_OPENAI_API_KEY"] as string) || "";
 
   if (envGemini) {
     return { ...DEFAULT_AI_CONFIG, provider: "gemini", apiKey: envGemini };

@@ -56,7 +56,7 @@ export async function signUpUser(
 
   // Attempt to insert/upsert into public.profiles
   if (data.user) {
-    await supabase.from("profiles").upsert({
+    await (supabase as any).from("profiles").upsert({
       id: data.user.id,
       email: data.user.email || email,
       name,

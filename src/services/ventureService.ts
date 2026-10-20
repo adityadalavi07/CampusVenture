@@ -41,7 +41,7 @@ export const ventureService = {
    */
   async getVentureById(id: string): Promise<Startup | null> {
     try {
-      const { data, error } = await supabase
+      const { data, error } = await (supabase as any)
         .from("startups")
         .select("*")
         .eq("id", id)
@@ -68,7 +68,7 @@ export const ventureService = {
       updated_at: new Date().toISOString(),
     };
 
-    const { data, error } = await supabase
+    const { data, error } = await (supabase as any)
       .from("startups")
       .insert(payload as any)
       .select()
@@ -86,7 +86,7 @@ export const ventureService = {
    * Update an existing venture
    */
   async updateVenture(id: string, updates: Partial<Venture>): Promise<Venture> {
-    const { data, error } = await supabase
+    const { data, error } = await (supabase as any)
       .from("startups")
       .update({ ...updates, updated_at: new Date().toISOString() } as any)
       .eq("id", id)
@@ -116,7 +116,7 @@ export const ventureService = {
       created_at: new Date().toISOString(),
     };
 
-    const { data, error } = await supabase
+    const { data, error } = await (supabase as any)
       .from("venture_applications")
       .insert(payload as any)
       .select()

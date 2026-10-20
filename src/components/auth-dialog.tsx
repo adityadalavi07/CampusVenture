@@ -73,6 +73,7 @@ const pwOk = (p: string) => p.length >= 8 && /\d/.test(p) && /[A-Za-z]/.test(p);
 const mask = (e: string) => {
   if (!e || !e.includes("@")) return e;
   const [a, b] = e.split("@");
+  if (!a || !b) return e;
   return a[0] + "•••" + (a.length > 1 ? a.slice(-1) : "") + "@" + b;
 };
 
@@ -275,7 +276,7 @@ export function AuthDialog() {
     // Generate 6 digit random OTP code
     const array = new Uint32Array(1);
     crypto.getRandomValues(array);
-    const code = String(array[0] % 1000000).padStart(6, "0");
+    const code = String((array[0] ?? 0) % 1000000).padStart(6, "0");
 
     setVerSent(clean);
     setVerCode(code);
@@ -293,12 +294,15 @@ export function AuthDialog() {
         localStorage.setItem("cv_email_ver_pending", clean);
       }
       const redirectUrl = typeof window !== "undefined" ? window.location.origin : undefined;
+      const options: { shouldCreateUser: boolean; emailRedirectTo?: string } = {
+        shouldCreateUser: true,
+      };
+      if (redirectUrl) {
+        options.emailRedirectTo = redirectUrl;
+      }
       supabase.auth.signInWithOtp({
         email: clean,
-        options: {
-          shouldCreateUser: true,
-          emailRedirectTo: redirectUrl,
-        },
+        options,
       }).catch(() => {});
     } catch {
       /* ignore */
