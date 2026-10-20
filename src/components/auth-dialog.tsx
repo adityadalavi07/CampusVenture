@@ -128,6 +128,10 @@ export function AuthDialog() {
   const [resendCooldown, setResendCooldown] = useState(0);
 
   const otpInputsRef = useRef<(HTMLInputElement | null)[]>([]);
+  const fEmailRef = useRef(fEmail);
+  fEmailRef.current = fEmail;
+  const verSentRef = useRef(verSent);
+  verSentRef.current = verSent;
 
   // University autocomplete state
   const [univSuggestions, setUnivSuggestions] = useState<University[]>([]);
@@ -316,8 +320,8 @@ export function AuthDialog() {
   useEffect(() => {
     const handleCheckSession = (email: string) => {
       const cleanEmail = email.toLowerCase();
-      const target = (verSent || (typeof window !== "undefined" ? localStorage.getItem("cv_email_ver_pending") : "") || fEmail).toLowerCase();
-      if (cleanEmail && (!target || cleanEmail === target)) {
+      const currentTarget = (verSentRef.current || (typeof window !== "undefined" ? localStorage.getItem("cv_email_ver_pending") : "") || fEmailRef.current).toLowerCase();
+      if (cleanEmail && (!currentTarget || cleanEmail === currentTarget)) {
         setVerOk(true);
         setVerEmail(cleanEmail);
         setVerCode(null);
@@ -358,7 +362,7 @@ export function AuthDialog() {
         window.removeEventListener("storage", handleStorageChange);
       }
     };
-  }, [verShow, verSent, fEmail]);
+  }, [verShow]);
 
   // 2. Verify OTP code
   const handleVerifyOtp = async () => {
