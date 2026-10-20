@@ -285,18 +285,23 @@ export function AuthDialog() {
 
     // Attempt Supabase OTP email dispatch
     try {
+      if (typeof window !== "undefined") {
+        localStorage.setItem("cv_email_ver_pending", clean);
+      }
+      const redirectUrl = typeof window !== "undefined" ? window.location.origin : undefined;
       supabase.auth.signInWithOtp({
         email: clean,
         options: {
           shouldCreateUser: true,
+          emailRedirectTo: redirectUrl,
         },
       }).catch(() => {});
     } catch {
       /* ignore */
     }
 
-    toast.success(`Verification code dispatched to ${clean}`, {
-      description: "Please check your university email inbox (and spam folder) for your 6-digit confirmation code.",
+    toast.success(`Verification email dispatched to ${clean}`, {
+      description: "Check your inbox for a 1-click verification link and 6-digit confirmation code.",
       duration: 8000,
     });
 
@@ -307,8 +312,56 @@ export function AuthDialog() {
     }, 100);
   };
 
+  // Auto-verify if user clicks the login/verify button in their email (same-tab and cross-tab sync)
+  useEffect(() => {
+    const handleCheckSession = (email: string) => {
+      const cleanEmail = email.toLowerCase();
+      const target = (verSent || (typeof window !== "undefined" ? localStorage.getItem("cv_email_ver_pending") : "") || fEmail).toLowerCase();
+      if (cleanEmail && (!target || cleanEmail === target)) {
+        setVerOk(true);
+        setVerEmail(cleanEmail);
+        setVerCode(null);
+        setVerShow(false);
+        if (typeof window !== "undefined") {
+          localStorage.removeItem("cv_email_ver_pending");
+          localStorage.setItem("cv_email_verified", cleanEmail);
+        }
+        toast.success("Email verified successfully via your secure link!");
+      }
+    };
+
+    const {
+      data: { subscription },
+    } = supabase.auth.onAuthStateChange((_event, session) => {
+      if (session?.user?.email) {
+        handleCheckSession(session.user.email);
+      }
+    });
+
+    const handleStorageChange = (e: StorageEvent) => {
+      if (e.key === "cv_email_verified" && e.newValue) {
+        setVerOk(true);
+        setVerEmail(e.newValue);
+        setVerCode(null);
+        setVerShow(false);
+        toast.success("Email verified successfully!");
+      }
+    };
+
+    if (typeof window !== "undefined") {
+      window.addEventListener("storage", handleStorageChange);
+    }
+
+    return () => {
+      subscription.unsubscribe();
+      if (typeof window !== "undefined") {
+        window.removeEventListener("storage", handleStorageChange);
+      }
+    };
+  }, [verShow, verSent, fEmail]);
+
   // 2. Verify OTP code
-  const handleVerifyOtp = () => {
+  const handleVerifyOtp = async () => {
     const entered = otpDigits.join("");
     if (entered.length < 6) return;
 
@@ -322,7 +375,33 @@ export function AuthDialog() {
       return;
     }
 
+    setBusy(true);
+
+    // 1. Attempt Supabase verifyOtp
+    try {
+      const targetEmail = verSent || fEmail.trim().toLowerCase();
+      const { data, error } = await supabase.auth.verifyOtp({
+        email: targetEmail,
+        token: entered,
+        type: "email",
+      });
+
+      if (!error && (data.user || data.session)) {
+        setVerOk(true);
+        setVerEmail(targetEmail);
+        setVerCode(null);
+        setVerShow(false);
+        setBusy(false);
+        toast.success("Email verified successfully! You can now proceed to register.");
+        return;
+      }
+    } catch {
+      /* continue to local code match fallback */
+    }
+
+    // 2. Fallback to generated code
     if (entered !== verCode) {
+      setBusy(false);
       const nextTries = verTries + 1;
       setVerTries(nextTries);
       setOtpError(`Invalid verification code. ${5 - nextTries} attempt${5 - nextTries === 1 ? "" : "s"} left.`);
@@ -333,6 +412,7 @@ export function AuthDialog() {
     setVerEmail(verSent);
     setVerCode(null);
     setVerShow(false);
+    setBusy(false);
     toast.success("Email verified successfully! You can now proceed to register.");
   };
 
@@ -1003,7 +1083,7 @@ export function AuthDialog() {
                 </div>
                 <p className="sub">
                   {user.role === "university"
-                    ? "University accounts normally wait for admin approval. In this prototype you are let straight in."
+                    ? "Institutional university workspace is active and authenticated."
                     : "You are currently signed in to your workspace."}
                 </p>
                 <div className="btns">
@@ -1056,13 +1136,55 @@ export function AuthDialog() {
                   </div>
 
                   <h1 id="ot" style={{ fontSize: 20 }}>
-                    Security Verification
+                    Verify Your Email
                   </h1>
-                  <p className="sub" style={{ marginBottom: 0 }}>
-                    Enter the 6-digit verification code sent to
+                  <p className="sub" style={{ marginBottom: 12 }}>
+                    We sent a verification link &amp; code to
                     <br />
                     <b style={{ color: "var(--text)" }}>{mask(verSent || "")}</b>
                   </p>
+
+                  <div
+                    style={{
+                      padding: "10px 14px",
+                      background: "rgba(99, 102, 241, 0.08)",
+                      border: "1px solid rgba(99, 102, 241, 0.22)",
+                      borderRadius: "8px",
+                      marginBottom: "16px",
+                      fontSize: "12px",
+                      lineHeight: "1.5",
+                      textAlign: "left",
+                    }}
+                  >
+                    <div
+                      style={{
+                        fontWeight: 600,
+                        color: "var(--primary)",
+                        marginBottom: "4px",
+                        display: "flex",
+                        alignItems: "center",
+                        gap: "6px",
+                      }}
+                    >
+                      <Icon name="check" size={14} /> 2 Ways to Verify:
+                    </div>
+                    <ul
+                      style={{
+                        margin: 0,
+                        paddingLeft: "16px",
+                        color: "var(--muted)",
+                      }}
+                    >
+                      <li>
+                        <b>Option 1 (Instant):</b> Click the <b>"Log In"</b> button
+                        inside the email you received.
+                      </li>
+                      <li>
+                        <b>Option 2:</b> Enter the 6-digit code below if shown in
+                        your email.
+                      </li>
+                    </ul>
+                  </div>
 
                   <div className="otp" id="otp">
                     {[0, 1, 2, 3, 4, 5].map((i) => (
@@ -1088,14 +1210,45 @@ export function AuthDialog() {
                     {otpError}
                   </div>
 
-                  <button
-                    type="button"
-                    className="btn primary"
-                    onClick={handleVerifyOtp}
-                    disabled={otpDigits.join("").length < 6}
-                  >
-                    Verify &amp; Proceed
-                  </button>
+                  <div style={{ display: "flex", flexDirection: "column", gap: "8px" }}>
+                    <button
+                      type="button"
+                      className="btn primary"
+                      onClick={handleVerifyOtp}
+                      disabled={otpDigits.join("").length < 6 || busy}
+                    >
+                      {busy ? "Verifying..." : "Verify Code & Proceed"}
+                    </button>
+
+                    <button
+                      type="button"
+                      className="btn ghost"
+                      style={{ fontSize: "12px", padding: "8px", border: "1px dashed var(--border)" }}
+                      disabled={busy}
+                      onClick={async () => {
+                        setBusy(true);
+                        try {
+                          const { data: { session } } = await supabase.auth.getSession();
+                          const target = (verSent || fEmail).trim().toLowerCase();
+                          if (session?.user?.email && session.user.email.toLowerCase() === target) {
+                            setVerOk(true);
+                            setVerEmail(session.user.email);
+                            setVerCode(null);
+                            setVerShow(false);
+                            toast.success("Email verified successfully from your link!");
+                          } else {
+                            toast.info("No active email link click detected yet. Click 'Log In' in your email or enter the code.");
+                          }
+                        } catch {
+                          toast.error("Could not check status. Please enter the code.");
+                        } finally {
+                          setBusy(false);
+                        }
+                      }}
+                    >
+                      I clicked the button in my email &rarr;
+                    </button>
+                  </div>
 
                   <div style={{ marginTop: 14 }}>
                     <button
