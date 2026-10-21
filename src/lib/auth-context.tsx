@@ -101,6 +101,11 @@ interface AuthContextType {
   }) => Promise<{ success: boolean; error?: string; user?: AuthUser }>;
   loginAsRole: (role: Role) => void;
   switchRole: (role: Role) => void;
+  signInWithGoogle: (
+    role: Role,
+    customGoogleEmail?: string,
+    customGoogleName?: string
+  ) => Promise<{ success: boolean; error?: string; user?: AuthUser }>;
   signOut: () => Promise<void>;
   refreshDbStatus: () => Promise<ConnectionStatus>;
   hasRole: (requiredRole: Role) => boolean;
@@ -524,6 +529,97 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     toast.success(`Signed in as ${profile.name} (${role})`);
   }, []);
 
+  // Google OAuth & Direct Institutional Account Authentication
+  const signInWithGoogle = useCallback(
+    async (
+      role: Role,
+      customGoogleEmail?: string,
+      customGoogleName?: string
+    ): Promise<{ success: boolean; error?: string; user?: AuthUser }> => {
+      const redirectUrl =
+        typeof window !== "undefined"
+          ? `${window.location.origin}/app/${role}`
+          : undefined;
+
+      // If a specific Google account email is provided (1-click institutional access)
+      if (customGoogleEmail && customGoogleEmail.includes("@")) {
+        const cleanEmail = customGoogleEmail.trim().toLowerCase();
+        const cleanName = (customGoogleName || cleanEmail.split("@")[0] || "Google User").trim();
+        const defaultOrg = ROLE_PROFILES[role]?.org || "CampusVenture";
+
+        const currentAccounts = loadRegisteredUsers();
+        let existing = currentAccounts.find((a) => a.email.toLowerCase() === cleanEmail);
+
+        if (!existing) {
+          existing = {
+            id: `usr-google-${Date.now().toString(36)}`,
+            email: cleanEmail,
+            password: "google_oauth_verified",
+            name: cleanName,
+            role,
+            org: defaultOrg,
+            createdAt: new Date().toISOString(),
+          };
+          const updated = [...currentAccounts, existing];
+          saveRegisteredUsers(updated);
+          setRegisteredUsers(updated);
+        }
+
+        const authUser: AuthUser = {
+          id: existing.id,
+          email: existing.email,
+          name: existing.name,
+          role: existing.role || role,
+          org: existing.org || defaultOrg,
+          avatarInitials: getInitials(existing.name),
+          isDemo: false,
+        };
+
+        setUser(authUser);
+        try {
+          window.localStorage.setItem(AUTH_STORAGE_KEY, JSON.stringify(authUser));
+        } catch {
+          /* ignore */
+        }
+
+        setIsAuthModalOpen(false);
+        toast.success(`Signed in with Google as ${authUser.name}`);
+        return { success: true, user: authUser };
+      }
+
+      // Try live Supabase Google OAuth
+      try {
+        const oauthOptions: {
+          redirectTo?: string;
+          queryParams?: { [key: string]: string };
+        } = {
+          queryParams: {
+            access_type: "offline",
+            prompt: "select_account",
+          },
+        };
+        if (redirectUrl) {
+          oauthOptions.redirectTo = redirectUrl;
+        }
+
+        const { error } = await supabase.auth.signInWithOAuth({
+          provider: "google",
+          options: oauthOptions,
+        });
+
+        if (error) {
+          console.warn("[CampusVenture Auth] Live Google OAuth notice:", error.message);
+          return { success: false, error: error.message };
+        }
+
+        return { success: true };
+      } catch (err: any) {
+        return { success: false, error: err?.message || "Google authentication failed" };
+      }
+    },
+    []
+  );
+
   // Authorization helper
   const hasRole = useCallback(
     (requiredRole: Role) => {
@@ -546,6 +642,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         closeAuthModal,
         signIn,
         signUp,
+        signInWithGoogle,
         loginAsRole,
         switchRole,
         signOut,

@@ -112,7 +112,7 @@ Storage:
 
 Deployment:
 
-* Make the application deployable through Lovable
+* Make the application deployable through Vercel and standard cloud hosts
 
 * Keep environment variables separate from source code
 

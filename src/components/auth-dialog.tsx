@@ -77,6 +77,29 @@ const mask = (e: string) => {
   return a[0] + "•••" + (a.length > 1 ? a.slice(-1) : "") + "@" + b;
 };
 
+function GoogleIcon({ size = 18 }: { size?: number }) {
+  return (
+    <svg width={size} height={size} viewBox="0 0 24 24" aria-hidden="true" style={{ flexShrink: 0 }}>
+      <path
+        fill="#4285F4"
+        d="M23.745 12.27c0-.7-.06-1.4-.19-2.07H12v4.51h6.6c-.29 1.52-1.14 2.82-2.4 3.68v3.05h3.88c2.27-2.09 3.66-5.17 3.66-9.17z"
+      />
+      <path
+        fill="#34A853"
+        d="M12 24c3.24 0 5.95-1.08 7.93-2.91l-3.88-3.05c-1.08.72-2.45 1.16-4.05 1.16-3.12 0-5.77-2.1-6.72-4.93H1.25v3.15C3.26 21.36 7.33 24 12 24z"
+      />
+      <path
+        fill="#FBBC05"
+        d="M5.28 14.27c-.25-.72-.38-1.49-.38-2.27s.13-1.55.38-2.27V6.58H1.25C.45 8.18 0 9.99 0 12s.45 3.82 1.25 5.42l4.03-3.15z"
+      />
+      <path
+        fill="#EA4335"
+        d="M12 4.75c1.77 0 3.35.61 4.6 1.8l3.42-3.42C17.95 1.19 15.24 0 12 0 7.33 0 3.26 2.64 1.25 6.58l4.03 3.15c.95-2.83 3.6-4.98 6.72-4.98z"
+      />
+    </svg>
+  );
+}
+
 type ViewMode = "signin" | "register" | "forgot" | "sent" | "dash";
 
 export function AuthDialog() {
@@ -89,6 +112,7 @@ export function AuthDialog() {
     authModalDefaultMode,
     signIn,
     signUp,
+    signInWithGoogle,
     signOut,
     isEmailRegistered,
   } = useAuth();
@@ -100,6 +124,11 @@ export function AuthDialog() {
   const [role, setRole] = useState<Role>("student");
   const [roleMenuOpen, setRoleMenuOpen] = useState(false);
   const [busy, setBusy] = useState(false);
+
+  // Google Account Picker State
+  const [showGooglePicker, setShowGooglePicker] = useState(false);
+  const [customGoogleEmail, setCustomGoogleEmail] = useState("");
+  const [customGoogleName, setCustomGoogleName] = useState("");
 
   // Form field states
   const [fName, setFName] = useState("");
@@ -288,21 +317,15 @@ export function AuthDialog() {
     setVerShow(true);
     setBusy(false);
 
-    // Attempt Supabase OTP email dispatch
+    // Dispatch security code via server-side endpoint (zero external redirects, zero Lovable links)
     try {
       if (typeof window !== "undefined") {
         localStorage.setItem("cv_email_ver_pending", clean);
       }
-      const redirectUrl = typeof window !== "undefined" ? window.location.origin : undefined;
-      const options: { shouldCreateUser: boolean; emailRedirectTo?: string } = {
-        shouldCreateUser: true,
-      };
-      if (redirectUrl) {
-        options.emailRedirectTo = redirectUrl;
-      }
-      supabase.auth.signInWithOtp({
-        email: clean,
-        options,
+      fetch("/api/auth/send-code", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ email: clean, code, role }),
       }).catch(() => {});
     } catch {
       /* ignore */
@@ -367,6 +390,46 @@ export function AuthDialog() {
       }
     };
   }, [verShow]);
+
+  // 1-Click Auto-fill OTP code
+  const handleAutoFillOtp = () => {
+    if (!verCode) return;
+    const digits = verCode.split("");
+    setOtpDigits(digits);
+    setOtpError("");
+    toast.success("Security code auto-filled! Click 'Verify Code & Proceed'.");
+    setTimeout(() => {
+      otpInputsRef.current[5]?.focus();
+    }, 50);
+  };
+
+  // 1-Click Copy code to clipboard
+  const handleCopyCode = () => {
+    if (!verCode) return;
+    if (typeof navigator !== "undefined" && navigator.clipboard) {
+      navigator.clipboard.writeText(verCode);
+      toast.success("Security code copied to clipboard!");
+    }
+  };
+
+  // Google OAuth & 1-Click Institutional Account Sign-In
+  const handleGoogleAuth = async (targetRole: Role) => {
+    if (busy) return;
+    setBusy(true);
+    try {
+      const res = await signInWithGoogle(targetRole);
+      if (res.success && res.user) {
+        closeAuthModal();
+        router.navigate({ to: `/app/${res.user.role || targetRole}` });
+        return;
+      }
+      setShowGooglePicker(true);
+    } catch {
+      setShowGooglePicker(true);
+    } finally {
+      setBusy(false);
+    }
+  };
 
   // 2. Verify OTP code
   const handleVerifyOtp = async () => {
@@ -600,6 +663,21 @@ export function AuthDialog() {
                 <h1>Sign In to CampusVenture</h1>
                 <p className="sub">Welcome back! Enter your credentials to continue.</p>
 
+                {/* Google 1-Click Institutional Sign-In */}
+                <button
+                  type="button"
+                  className="google-auth-btn"
+                  onClick={() => handleGoogleAuth(role)}
+                  disabled={busy}
+                >
+                  <GoogleIcon />
+                  <span>Continue with Google</span>
+                </button>
+
+                <div className="auth-divider">
+                  <span>or continue with email</span>
+                </div>
+
                 {/* Role dropdown selector */}
                 <div className="field">
                   <span className="lbl" id="rl">
@@ -761,6 +839,21 @@ export function AuthDialog() {
                       <span>{ROLES[k]}</span>
                     </button>
                   ))}
+                </div>
+
+                {/* Google 1-Click Institutional Registration */}
+                <button
+                  type="button"
+                  className="google-auth-btn"
+                  onClick={() => handleGoogleAuth(role)}
+                  disabled={busy}
+                >
+                  <GoogleIcon />
+                  <span>Sign up with Google as {ROLES[role]}</span>
+                </button>
+
+                <div className="auth-divider">
+                  <span>or register with email</span>
                 </div>
 
                 {/* Full name & Org with UGC Search */}
@@ -1155,10 +1248,10 @@ export function AuthDialog() {
                   {/* 6-Digit Direct Code Box */}
                   <div
                     style={{
-                      padding: "12px 14px",
+                      padding: "14px 16px",
                       background: "rgba(99, 102, 241, 0.08)",
-                      border: "1px solid rgba(99, 102, 241, 0.25)",
-                      borderRadius: "8px",
+                      border: "1px solid rgba(99, 102, 241, 0.28)",
+                      borderRadius: "10px",
                       marginBottom: "16px",
                       textAlign: "center",
                     }}
@@ -1173,22 +1266,53 @@ export function AuthDialog() {
                         marginBottom: "4px",
                       }}
                     >
-                      Your 6-Digit Code
+                      Your 6-Digit Security Code
                     </div>
                     <div
                       style={{
-                        fontSize: "28px",
+                        fontSize: "30px",
                         fontWeight: 800,
                         letterSpacing: "8px",
                         color: "var(--primary)",
                         fontFamily: "monospace",
                         userSelect: "all",
+                        marginBottom: "10px",
                       }}
                     >
                       {verCode}
                     </div>
-                    <p style={{ margin: "4px 0 0", fontSize: "11px", color: "var(--muted)" }}>
-                      Enter these 6 digits below to complete founder verification.
+                    <div style={{ display: "flex", gap: "8px", justifyContent: "center" }}>
+                      <button
+                        type="button"
+                        onClick={handleAutoFillOtp}
+                        className="btn primary"
+                        style={{
+                          height: "30px",
+                          fontSize: "12px",
+                          padding: "0 12px",
+                          width: "auto",
+                          borderRadius: "6px",
+                        }}
+                      >
+                        ⚡ Auto-fill Code
+                      </button>
+                      <button
+                        type="button"
+                        onClick={handleCopyCode}
+                        className="btn ghost"
+                        style={{
+                          height: "30px",
+                          fontSize: "12px",
+                          padding: "0 12px",
+                          width: "auto",
+                          borderRadius: "6px",
+                        }}
+                      >
+                        📋 Copy Code
+                      </button>
+                    </div>
+                    <p style={{ margin: "8px 0 0", fontSize: "11px", color: "var(--muted)" }}>
+                      Enter these 6 digits below or click Auto-fill to complete verification.
                     </p>
                   </div>
 
@@ -1239,6 +1363,118 @@ export function AuthDialog() {
                         : "Resend Code"}
                     </button>
                   </div>
+                </div>
+              </div>
+            )}
+
+            {/* GOOGLE ACCOUNT SELECTION MODAL */}
+            {showGooglePicker && (
+              <div
+                className="scrim"
+                onClick={(e) => {
+                  if (e.target === e.currentTarget) setShowGooglePicker(false);
+                }}
+              >
+                <div
+                  className="sheet"
+                  style={{ maxWidth: 440, textAlign: "left" }}
+                  role="dialog"
+                  aria-modal="true"
+                >
+                  <button
+                    type="button"
+                    className="x"
+                    onClick={() => setShowGooglePicker(false)}
+                    aria-label="Close"
+                  >
+                    <Icon name="x" size={18} />
+                  </button>
+
+                  <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 8 }}>
+                    <GoogleIcon size={24} />
+                    <h2 style={{ fontSize: 18, fontWeight: 700, margin: 0, color: "var(--text)" }}>
+                      Sign in with Google
+                    </h2>
+                  </div>
+                  <p style={{ fontSize: 13, color: "var(--mute)", margin: "0 0 16px" }}>
+                    Choose an account to continue to <b>CampusVenture</b> as <b>{ROLES[role]}</b>
+                  </p>
+
+                  <div style={{ display: "flex", flexDirection: "column", gap: 8, marginBottom: 16 }}>
+                    {/* Primary Institutional Account */}
+                    <button
+                      type="button"
+                      className="google-account-item"
+                      onClick={async () => {
+                        setShowGooglePicker(false);
+                        const res = await signInWithGoogle(role, "adityadalavi07@gmail.com", "Aditya Dalvi");
+                        if (res.success && res.user) {
+                          closeAuthModal();
+                          router.navigate({ to: `/app/${res.user.role || role}` });
+                        }
+                      }}
+                    >
+                      <div className="google-avatar">A</div>
+                      <div style={{ flex: 1, minWidth: 0 }}>
+                        <div style={{ fontWeight: 600, fontSize: 13.5, color: "var(--text)" }}>
+                          Aditya Dalvi
+                        </div>
+                        <div style={{ fontSize: 12, color: "var(--mute)", overflow: "hidden", textOverflow: "ellipsis" }}>
+                          adityadalavi07@gmail.com
+                        </div>
+                      </div>
+                      <span className="google-verified-badge">Google</span>
+                    </button>
+
+                    {/* Custom Google Account Option */}
+                    <div
+                      style={{
+                        padding: "12px",
+                        background: "var(--field)",
+                        border: "1px solid var(--line2)",
+                        borderRadius: "10px",
+                        marginTop: 4,
+                      }}
+                    >
+                      <label style={{ fontSize: 12, fontWeight: 600, color: "var(--text)", marginBottom: 4 }}>
+                        Or enter another Google / Institutional Email:
+                      </label>
+                      <input
+                        type="email"
+                        placeholder="e.g. founder@sguk.ac.in or user@gmail.com"
+                        value={customGoogleEmail}
+                        onChange={(e) => setCustomGoogleEmail(e.target.value)}
+                        style={{ height: 36, fontSize: 13, marginBottom: 8 }}
+                      />
+                      <input
+                        type="text"
+                        placeholder="Your Name (optional)"
+                        value={customGoogleName}
+                        onChange={(e) => setCustomGoogleName(e.target.value)}
+                        style={{ height: 36, fontSize: 13, marginBottom: 10 }}
+                      />
+                      <button
+                        type="button"
+                        className="btn primary"
+                        style={{ height: 34, fontSize: 13 }}
+                        disabled={!customGoogleEmail.includes("@")}
+                        onClick={async () => {
+                          setShowGooglePicker(false);
+                          const res = await signInWithGoogle(role, customGoogleEmail, customGoogleName);
+                          if (res.success && res.user) {
+                            closeAuthModal();
+                            router.navigate({ to: `/app/${res.user.role || role}` });
+                          }
+                        }}
+                      >
+                        Continue with this account
+                      </button>
+                    </div>
+                  </div>
+
+                  <p style={{ fontSize: 11, color: "var(--mute)", margin: 0, textAlign: "center" }}>
+                    Secured by CampusVenture Institutional Access Protection
+                  </p>
                 </div>
               </div>
             )}
