@@ -8,14 +8,14 @@ const procEnv = typeof process !== "undefined" && process.env ? (process.env as 
 export const SUPABASE_URL =
   env["VITE_SUPABASE_URL"] ||
   procEnv["VITE_SUPABASE_URL"] ||
-  "https://fhjkuwpbnlcxtvenpnqm.supabase.co";
+  "https://lirfkzpehmxtynjsjzib.supabase.co";
 
 export const SUPABASE_KEY =
   env["VITE_SUPABASE_ANON_KEY"] ||
   procEnv["VITE_SUPABASE_ANON_KEY"] ||
   env["VITE_SUPABASE_PUBLISHABLE_KEY"] ||
   procEnv["VITE_SUPABASE_PUBLISHABLE_KEY"] ||
-  "sb_publishable_gWHA_QY_TYQe1YGyYMTcIg_YM2NoCes";
+  "sb_publishable_CJjApu3rUsNReyUx7jW2Lg_NUM8oqR-";
 
 export const supabase = createClient<Database>(SUPABASE_URL, SUPABASE_KEY, {
   auth: {
@@ -53,7 +53,7 @@ export async function checkDatabaseConnection(): Promise<ConnectionStatus> {
         message: "Database and Auth service connected successfully",
         latencyMs,
         url: SUPABASE_URL,
-        projectId: "fhjkuwpbnlcxtvenpnqm",
+        projectId: "lirfkzpehmxtynjsjzib",
       };
     } else {
       return {
@@ -61,7 +61,7 @@ export async function checkDatabaseConnection(): Promise<ConnectionStatus> {
         message: `Connected with response status: ${res.status}`,
         latencyMs,
         url: SUPABASE_URL,
-        projectId: "fhjkuwpbnlcxtvenpnqm",
+        projectId: "lirfkzpehmxtynjsjzib",
       };
     }
   } catch (err) {
@@ -69,7 +69,7 @@ export async function checkDatabaseConnection(): Promise<ConnectionStatus> {
       connected: false,
       message: err instanceof Error ? err.message : "Failed to reach Supabase",
       url: SUPABASE_URL,
-      projectId: "fhjkuwpbnlcxtvenpnqm",
+      projectId: "lirfkzpehmxtynjsjzib",
     };
   }
 }
