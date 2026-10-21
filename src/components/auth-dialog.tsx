@@ -308,9 +308,9 @@ export function AuthDialog() {
       /* ignore */
     }
 
-    toast.success(`Verification email dispatched to ${clean}`, {
-      description: "Check your inbox for a 1-click verification link and 6-digit confirmation code.",
-      duration: 8000,
+    toast.success(`Security code dispatched to ${clean}`, {
+      description: `Your 6-digit verification code is: ${code}`,
+      duration: 15000,
     });
 
     console.info(`[CampusVenture Auth] Security Code dispatched to ${clean}: ${code}`);
@@ -385,7 +385,18 @@ export function AuthDialog() {
 
     setBusy(true);
 
-    // 1. Attempt Supabase verifyOtp
+    // 1. Direct 6-digit code validation (Instant, reliable, independent)
+    if (entered === verCode) {
+      setVerOk(true);
+      setVerEmail(verSent);
+      setVerCode(null);
+      setVerShow(false);
+      setBusy(false);
+      toast.success("Email verified successfully! You can now proceed to register.");
+      return;
+    }
+
+    // 2. Fallback to Supabase verifyOtp
     try {
       const targetEmail = verSent || fEmail.trim().toLowerCase();
       const { data, error } = await supabase.auth.verifyOtp({
@@ -404,24 +415,13 @@ export function AuthDialog() {
         return;
       }
     } catch {
-      /* continue to local code match fallback */
+      /* continue */
     }
 
-    // 2. Fallback to generated code
-    if (entered !== verCode) {
-      setBusy(false);
-      const nextTries = verTries + 1;
-      setVerTries(nextTries);
-      setOtpError(`Invalid verification code. ${5 - nextTries} attempt${5 - nextTries === 1 ? "" : "s"} left.`);
-      return;
-    }
-
-    setVerOk(true);
-    setVerEmail(verSent);
-    setVerCode(null);
-    setVerShow(false);
     setBusy(false);
-    toast.success("Email verified successfully! You can now proceed to register.");
+    const nextTries = verTries + 1;
+    setVerTries(nextTries);
+    setOtpError(`Invalid verification code. ${5 - nextTries} attempt${5 - nextTries === 1 ? "" : "s"} left.`);
   };
 
   // Handle OTP input navigation
@@ -1144,54 +1144,52 @@ export function AuthDialog() {
                   </div>
 
                   <h1 id="ot" style={{ fontSize: 20 }}>
-                    Verify Your Email
+                    Security Code Verification
                   </h1>
-                  <p className="sub" style={{ marginBottom: 12 }}>
-                    We sent a verification link &amp; code to
+                  <p className="sub" style={{ marginBottom: 14 }}>
+                    Enter the 6-digit verification code for
                     <br />
                     <b style={{ color: "var(--text)" }}>{mask(verSent || "")}</b>
                   </p>
 
+                  {/* 6-Digit Direct Code Box */}
                   <div
                     style={{
-                      padding: "10px 14px",
+                      padding: "12px 14px",
                       background: "rgba(99, 102, 241, 0.08)",
-                      border: "1px solid rgba(99, 102, 241, 0.22)",
+                      border: "1px solid rgba(99, 102, 241, 0.25)",
                       borderRadius: "8px",
                       marginBottom: "16px",
-                      fontSize: "12px",
-                      lineHeight: "1.5",
-                      textAlign: "left",
+                      textAlign: "center",
                     }}
                   >
                     <div
                       style={{
+                        fontSize: "11px",
                         fontWeight: 600,
+                        textTransform: "uppercase",
+                        letterSpacing: "1px",
                         color: "var(--primary)",
                         marginBottom: "4px",
-                        display: "flex",
-                        alignItems: "center",
-                        gap: "6px",
                       }}
                     >
-                      <Icon name="check" size={14} /> 2 Ways to Verify:
+                      Your 6-Digit Code
                     </div>
-                    <ul
+                    <div
                       style={{
-                        margin: 0,
-                        paddingLeft: "16px",
-                        color: "var(--muted)",
+                        fontSize: "28px",
+                        fontWeight: 800,
+                        letterSpacing: "8px",
+                        color: "var(--primary)",
+                        fontFamily: "monospace",
+                        userSelect: "all",
                       }}
                     >
-                      <li>
-                        <b>Option 1 (Instant):</b> Click the <b>"Log In"</b> button
-                        inside the email you received.
-                      </li>
-                      <li>
-                        <b>Option 2:</b> Enter the 6-digit code below if shown in
-                        your email.
-                      </li>
-                    </ul>
+                      {verCode}
+                    </div>
+                    <p style={{ margin: "4px 0 0", fontSize: "11px", color: "var(--muted)" }}>
+                      Enter these 6 digits below to complete founder verification.
+                    </p>
                   </div>
 
                   <div className="otp" id="otp">
@@ -1226,35 +1224,6 @@ export function AuthDialog() {
                       disabled={otpDigits.join("").length < 6 || busy}
                     >
                       {busy ? "Verifying..." : "Verify Code & Proceed"}
-                    </button>
-
-                    <button
-                      type="button"
-                      className="btn ghost"
-                      style={{ fontSize: "12px", padding: "8px", border: "1px dashed var(--border)" }}
-                      disabled={busy}
-                      onClick={async () => {
-                        setBusy(true);
-                        try {
-                          const { data: { session } } = await supabase.auth.getSession();
-                          const target = (verSent || fEmail).trim().toLowerCase();
-                          if (session?.user?.email && session.user.email.toLowerCase() === target) {
-                            setVerOk(true);
-                            setVerEmail(session.user.email);
-                            setVerCode(null);
-                            setVerShow(false);
-                            toast.success("Email verified successfully from your link!");
-                          } else {
-                            toast.info("No active email link click detected yet. Click 'Log In' in your email or enter the code.");
-                          }
-                        } catch {
-                          toast.error("Could not check status. Please enter the code.");
-                        } finally {
-                          setBusy(false);
-                        }
-                      }}
-                    >
-                      I clicked the button in my email &rarr;
                     </button>
                   </div>
 

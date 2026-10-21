@@ -1,6 +1,4 @@
-# Student Founder Connect
-
-# BUILD CAMPUSVENTURE — FULL-STACK PRODUCTION WEB APPLICATION
+# CampusVenture — Early-Stage Student Startup Discovery & AI Due Diligence
 
 Build a complete, production-ready, deployable web application called **CampusVenture**.
 
@@ -58,7 +56,7 @@ Do NOT build payment processing, investment transactions, securities trading, eq
 
 # 2. TECHNOLOGY STACK
 
-Use a practical stack optimized for Lovable:
+Use a modern, production full-stack SaaS architecture:
 
 Frontend:
 
@@ -2432,9 +2430,9 @@ Build the backend and database logic together with each feature so every screen 
 
 ---
 
-# FINAL INSTRUCTION TO LOVABLE
+# CORE ARCHITECTURE & PRODUCTION STANDARDS
 
-Treat this as a serious production MVP, not a landing-page prototype.
+Treat this as a serious production SaaS product.
 
 Prioritize:
 
