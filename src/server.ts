@@ -172,22 +172,27 @@ async function handleServerSendCode(request: Request, env: unknown): Promise<Res
       procEnv["RESEND_API_KEY"] ||
       "";
 
+    const resendFrom =
+      envObj["RESEND_FROM"] ||
+      procEnv["RESEND_FROM"] ||
+      "CampusVenture <onboarding@resend.dev>";
+
     if (resendApiKey) {
       try {
-        await fetch("https://api.resend.com/emails", {
+        const emailRes = await fetch("https://api.resend.com/emails", {
           method: "POST",
           headers: {
-            "Authorization": `Bearer ${resendApiKey}`,
+            "Authorization": `Bearer ${resendApiKey.trim()}`,
             "Content-Type": "application/json",
           },
           body: JSON.stringify({
-            from: "CampusVenture <security@campusventure.in>",
+            from: resendFrom,
             to: [cleanEmail],
             subject: `Your CampusVenture Verification Code: ${code}`,
             html: `
               <div style="font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif; max-width: 480px; margin: 0 auto; padding: 28px; border: 1px solid #e2e8f0; border-radius: 12px; background: #ffffff;">
-                <h2 style="color: #0f172a; margin-top: 0; font-size: 20px;">CampusVenture Verification Code</h2>
-                <p style="color: #475569; font-size: 15px; line-height: 1.5;">Use the 6-digit verification code below to verify your academic credentials and complete your account setup:</p>
+                <h2 style="color: #0f172a; margin-top: 0; font-size: 20px;">CampusVenture Security Verification</h2>
+                <p style="color: #475569; font-size: 15px; line-height: 1.5;">Use the 6-digit verification code below to verify your email and complete your account setup:</p>
                 <div style="margin: 24px 0; padding: 18px; background: #f8fafc; border-radius: 8px; text-align: center; border: 1px dashed #6366f1;">
                   <span style="font-size: 34px; font-weight: 800; letter-spacing: 8px; color: #4f46e5; font-family: monospace;">${code}</span>
                 </div>
@@ -198,6 +203,14 @@ async function handleServerSendCode(request: Request, env: unknown): Promise<Res
             `,
           }),
         });
+
+        if (!emailRes.ok) {
+          const errText = await emailRes.text();
+          console.warn("[CampusVenture Auth] Resend mail dispatch warning:", errText);
+        } else {
+          const resData = await emailRes.json();
+          console.info("[CampusVenture Auth] Resend email dispatched successfully:", resData);
+        }
       } catch (sendErr) {
         console.error("[CampusVenture Auth] Resend mail dispatch error:", sendErr);
       }
