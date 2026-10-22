@@ -318,6 +318,8 @@ export function AuthDialog() {
     setBusy(false);
 
     // 1. Dispatch real 6-digit verification code to user's real email inbox via Supabase Auth
+    let emailDispatchedSuccessfully = false;
+    let dispatchErrorMessage = "";
     try {
       if (typeof window !== "undefined") {
         localStorage.setItem("cv_email_ver_pending", clean);
@@ -330,9 +332,13 @@ export function AuthDialog() {
       });
 
       if (otpErr) {
+        dispatchErrorMessage = otpErr.message;
         console.warn("[CampusVenture Auth] Live Supabase email notice:", otpErr.message);
+      } else {
+        emailDispatchedSuccessfully = true;
       }
-    } catch (err) {
+    } catch (err: any) {
+      dispatchErrorMessage = err?.message || "Network error";
       console.error("[CampusVenture Auth] Live email dispatch error:", err);
     }
 
@@ -347,10 +353,17 @@ export function AuthDialog() {
       /* ignore */
     }
 
-    toast.success(`Verification code dispatched to ${clean}`, {
-      description: "Please check your email inbox and spam folder for your 6-digit security code.",
-      duration: 10000,
-    });
+    if (emailDispatchedSuccessfully) {
+      toast.success(`Verification code dispatched to ${clean}`, {
+        description: "Please check your email inbox and spam folder for your 6-digit security code.",
+        duration: 10000,
+      });
+    } else {
+      toast.error(`Email dispatch issue: ${dispatchErrorMessage || "Could not deliver email"}`, {
+        description: "Please check your Supabase SMTP settings (ensure Port is 587 and 16-character App Password is set).",
+        duration: 8000,
+      });
+    }
 
     console.info(`[CampusVenture Auth] Security Code dispatched to ${clean}: ${code}`);
 
