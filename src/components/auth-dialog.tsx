@@ -153,7 +153,8 @@ export function AuthDialog() {
   const [verShow, setVerShow] = useState(false);
   const [verOk, setVerOk] = useState(false);
   const [verEmail, setVerEmail] = useState<string | null>(null);
-  const [otpDigits, setOtpDigits] = useState<string[]>(["", "", "", "", "", ""]);
+  const [otpLength, setOtpLength] = useState<6 | 8>(8);
+  const [otpDigits, setOtpDigits] = useState<string[]>(new Array(8).fill(""));
   const [otpError, setOtpError] = useState("");
   const [resendCooldown, setResendCooldown] = useState(0);
 
@@ -312,7 +313,7 @@ export function AuthDialog() {
     setVerExp(Date.now() + 10 * 60000); // 10 minutes
     setVerTries(0);
     setVerCool(Date.now() + 30000); // 30 seconds cooldown
-    setOtpDigits(["", "", "", "", "", ""]);
+    setOtpDigits(new Array(otpLength).fill(""));
     setOtpError("");
     setVerShow(true);
     setBusy(false);
@@ -423,12 +424,13 @@ export function AuthDialog() {
   // 1-Click Auto-fill OTP code
   const handleAutoFillOtp = () => {
     if (!verCode) return;
-    const digits = verCode.split("");
+    const digits = verCode.slice(0, otpLength).split("");
+    while (digits.length < otpLength) digits.push("");
     setOtpDigits(digits);
     setOtpError("");
     toast.success("Security code auto-filled! Click 'Verify Code & Proceed'.");
     setTimeout(() => {
-      otpInputsRef.current[5]?.focus();
+      otpInputsRef.current[otpLength - 1]?.focus();
     }, 50);
   };
 
@@ -524,7 +526,7 @@ export function AuthDialog() {
     setOtpDigits(nextDigits);
     setOtpError("");
 
-    if (digit && index < 5) {
+    if (digit && index < otpLength - 1) {
       otpInputsRef.current[index + 1]?.focus();
     }
   };
@@ -536,22 +538,26 @@ export function AuthDialog() {
       nextDigits[index - 1] = "";
       setOtpDigits(nextDigits);
     }
-    if (e.key === "Enter" && otpDigits.join("").length === 6) {
+    if (e.key === "Enter" && otpDigits.join("").length === otpLength) {
       handleVerifyOtp();
     }
   };
 
   const handleOtpPaste = (e: React.ClipboardEvent<HTMLInputElement>) => {
     e.preventDefault();
-    const paste = (e.clipboardData.getData("text") || "").replace(/\D/g, "").slice(0, 6);
-    if (!paste) return;
-    const nextDigits = [...otpDigits];
-    for (let i = 0; i < 6; i++) {
-      nextDigits[i] = paste[i] || "";
+    const raw = (e.clipboardData.getData("text") || "").replace(/\D/g, "");
+    if (!raw) return;
+    const targetLen = raw.length >= 8 ? 8 : raw.length === 6 ? 6 : otpLength;
+    if (targetLen !== otpLength) {
+      setOtpLength(targetLen);
+    }
+    const nextDigits = new Array(targetLen).fill("");
+    for (let i = 0; i < targetLen; i++) {
+      nextDigits[i] = raw[i] || "";
     }
     setOtpDigits(nextDigits);
     setOtpError("");
-    const targetIdx = Math.min(paste.length, 5);
+    const targetIdx = Math.min(raw.length, targetLen - 1);
     otpInputsRef.current[targetIdx]?.focus();
   };
 
@@ -1269,7 +1275,7 @@ export function AuthDialog() {
                     Check Your Email
                   </h1>
                   <p className="sub" style={{ marginBottom: 14 }}>
-                    We have sent a 6-digit verification code to:
+                    We have sent an {otpLength}-digit verification code to:
                     <br />
                     <b style={{ color: "var(--text)" }}>{mask(verSent || "")}</b>
                   </p>
@@ -1277,22 +1283,22 @@ export function AuthDialog() {
                   {/* Clean Email Instructions */}
                   <div
                     style={{
-                      padding: "12px 14px",
+                      padding: "10px 14px",
                       background: "rgba(99, 102, 241, 0.08)",
                       border: "1px solid rgba(99, 102, 241, 0.22)",
                       borderRadius: "10px",
-                      marginBottom: "16px",
+                      marginBottom: "14px",
                       textAlign: "center",
                       fontSize: "12.5px",
                       lineHeight: "1.5",
                       color: "var(--text)",
                     }}
                   >
-                    📩 Open your email inbox (or spam folder), find your 6-digit security code, and enter it below.
+                    📩 Enter the {otpLength}-digit security code from your email inbox below.
                   </div>
 
                   <div className="otp" id="otp">
-                    {[0, 1, 2, 3, 4, 5].map((i) => (
+                    {Array.from({ length: otpLength }, (_, i) => (
                       <input
                         key={i}
                         ref={(el) => {
@@ -1302,13 +1308,30 @@ export function AuthDialog() {
                         maxLength={1}
                         autoComplete={i === 0 ? "one-time-code" : "off"}
                         aria-label={`Digit ${i + 1}`}
-                        value={otpDigits[i]}
+                        value={otpDigits[i] || ""}
                         onChange={(e) => handleOtpInput(i, e.target.value)}
                         onKeyDown={(e) => handleOtpKeyDown(i, e)}
                         onPaste={handleOtpPaste}
                         className={otpError ? "bad" : ""}
                       />
                     ))}
+                  </div>
+
+                  {/* Quick toggle between 8-digit and 6-digit */}
+                  <div style={{ textAlign: "center", marginBottom: 10 }}>
+                    <button
+                      type="button"
+                      className="link"
+                      style={{ fontSize: "11.5px", opacity: 0.8, textDecoration: "underline" }}
+                      onClick={() => {
+                        const nextLen = otpLength === 6 ? 8 : 6;
+                        setOtpLength(nextLen);
+                        setOtpDigits(new Array(nextLen).fill(""));
+                        setOtpError("");
+                      }}
+                    >
+                      {otpLength === 8 ? "Received a 6-digit code? Click to switch" : "Received an 8-digit code? Click to switch"}
+                    </button>
                   </div>
 
                   <div className="err" style={{ minHeight: 18, margin: "0 0 10px" }}>
@@ -1320,7 +1343,7 @@ export function AuthDialog() {
                       type="button"
                       className="btn primary"
                       onClick={handleVerifyOtp}
-                      disabled={otpDigits.join("").length < 6 || busy}
+                      disabled={otpDigits.join("").length < otpLength || busy}
                     >
                       {busy ? "Verifying..." : "Verify Code & Proceed"}
                     </button>
