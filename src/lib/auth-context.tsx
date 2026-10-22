@@ -334,8 +334,29 @@ export function AuthProvider({ children }: { children: ReactNode }) {
           /* ignore */
         }
 
-        // Try Supabase in background if credentials match
-        supabase.auth.signInWithPassword({ email: cleanEmail, password }).catch(() => {});
+        // Try Supabase in background if credentials match, or auto-sync if missing
+        supabase.auth.signInWithPassword({ email: cleanEmail, password })
+          .then(async ({ data, error }) => {
+            if (error && (error.message.toLowerCase().includes("invalid login credentials") || error.message.toLowerCase().includes("user not found"))) {
+              const { data: signUpData } = await supabase.auth.signUp({
+                email: cleanEmail,
+                password,
+                options: {
+                  data: { role: localAccount.role, name: localAccount.name, org: localAccount.org },
+                },
+              });
+              const newId = signUpData?.user?.id || localAccount.id;
+              await (supabase as any).from("profiles").upsert({
+                id: newId,
+                email: cleanEmail,
+                name: localAccount.name,
+                role: localAccount.role,
+                org: localAccount.org || null,
+                updated_at: new Date().toISOString(),
+              });
+            }
+          })
+          .catch(() => {});
 
         setIsAuthModalOpen(false);
         toast.success(`Welcome back, ${authUser.name}!`);
@@ -447,16 +468,42 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         /* ignore */
       }
 
-      // Also register on Supabase if connected
-      supabase.auth
-        .signUp({
-          email: cleanEmail,
-          password,
-          options: {
+      // Register or sync with Supabase Auth & public.profiles
+      try {
+        const { data: { session } } = await supabase.auth.getSession();
+        let targetId = newAccount.id;
+
+        if (session?.user && session.user.email?.toLowerCase() === cleanEmail) {
+          targetId = session.user.id;
+          await supabase.auth.updateUser({
+            password,
             data: { role, name: name.trim(), org: newAccount.org },
-          },
-        })
-        .catch(() => {});
+          });
+        } else {
+          const { data: authData } = await supabase.auth.signUp({
+            email: cleanEmail,
+            password,
+            options: {
+              data: { role, name: name.trim(), org: newAccount.org },
+            },
+          });
+          if (authData?.user) {
+            targetId = authData.user.id;
+          }
+        }
+
+        // Upsert profile into public.profiles
+        await (supabase as any).from("profiles").upsert({
+          id: targetId,
+          email: cleanEmail,
+          name: name.trim(),
+          role,
+          org: newAccount.org || null,
+          updated_at: new Date().toISOString(),
+        });
+      } catch (sbErr) {
+        console.warn("[CampusVenture Auth] Supabase sync notice:", sbErr);
+      }
 
       setIsAuthModalOpen(false);
       toast.success(`Account created! Welcome aboard, ${authUser.name}.`);
