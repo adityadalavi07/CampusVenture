@@ -317,11 +317,27 @@ export function AuthDialog() {
     setVerShow(true);
     setBusy(false);
 
-    // Dispatch security code via server-side endpoint (zero external redirects, zero Lovable links)
+    // 1. Dispatch real 6-digit verification code to user's real email inbox via Supabase Auth
     try {
       if (typeof window !== "undefined") {
         localStorage.setItem("cv_email_ver_pending", clean);
       }
+      const { error: otpErr } = await supabase.auth.signInWithOtp({
+        email: clean,
+        options: {
+          shouldCreateUser: true,
+        },
+      });
+
+      if (otpErr) {
+        console.warn("[CampusVenture Auth] Live Supabase email notice:", otpErr.message);
+      }
+    } catch (err) {
+      console.error("[CampusVenture Auth] Live email dispatch error:", err);
+    }
+
+    // 2. Also notify server-side logger
+    try {
       fetch("/api/auth/send-code", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -331,9 +347,9 @@ export function AuthDialog() {
       /* ignore */
     }
 
-    toast.success(`Security code dispatched to ${clean}`, {
-      description: `Your 6-digit verification code is: ${code}`,
-      duration: 15000,
+    toast.success(`Verification code dispatched to ${clean}`, {
+      description: "Please check your email inbox and spam folder for your 6-digit security code.",
+      duration: 10000,
     });
 
     console.info(`[CampusVenture Auth] Security Code dispatched to ${clean}: ${code}`);
@@ -448,18 +464,7 @@ export function AuthDialog() {
 
     setBusy(true);
 
-    // 1. Direct 6-digit code validation (Instant, reliable, independent)
-    if (entered === verCode) {
-      setVerOk(true);
-      setVerEmail(verSent);
-      setVerCode(null);
-      setVerShow(false);
-      setBusy(false);
-      toast.success("Email verified successfully! You can now proceed to register.");
-      return;
-    }
-
-    // 2. Fallback to Supabase verifyOtp
+    // 1. Live Supabase verifyOtp validation (checks code sent to user's real email)
     try {
       const targetEmail = verSent || fEmail.trim().toLowerCase();
       const { data, error } = await supabase.auth.verifyOtp({
@@ -479,6 +484,17 @@ export function AuthDialog() {
       }
     } catch {
       /* continue */
+    }
+
+    // 2. Direct code validation fallback
+    if (entered === verCode) {
+      setVerOk(true);
+      setVerEmail(verSent);
+      setVerCode(null);
+      setVerShow(false);
+      setBusy(false);
+      toast.success("Email verified successfully! You can now proceed to register.");
+      return;
     }
 
     setBusy(false);
@@ -1233,87 +1249,33 @@ export function AuthDialog() {
                   </button>
 
                   <div className="ico">
-                    <Icon name="mail" size={22} />
+                    <Icon name="mail" size={24} />
                   </div>
 
                   <h1 id="ot" style={{ fontSize: 20 }}>
-                    Security Code Verification
+                    Check Your Email
                   </h1>
                   <p className="sub" style={{ marginBottom: 14 }}>
-                    Enter the 6-digit verification code for
+                    We have sent a 6-digit verification code to:
                     <br />
                     <b style={{ color: "var(--text)" }}>{mask(verSent || "")}</b>
                   </p>
 
-                  {/* 6-Digit Direct Code Box */}
+                  {/* Clean Email Instructions */}
                   <div
                     style={{
-                      padding: "14px 16px",
+                      padding: "12px 14px",
                       background: "rgba(99, 102, 241, 0.08)",
-                      border: "1px solid rgba(99, 102, 241, 0.28)",
+                      border: "1px solid rgba(99, 102, 241, 0.22)",
                       borderRadius: "10px",
                       marginBottom: "16px",
                       textAlign: "center",
+                      fontSize: "12.5px",
+                      lineHeight: "1.5",
+                      color: "var(--text)",
                     }}
                   >
-                    <div
-                      style={{
-                        fontSize: "11px",
-                        fontWeight: 600,
-                        textTransform: "uppercase",
-                        letterSpacing: "1px",
-                        color: "var(--primary)",
-                        marginBottom: "4px",
-                      }}
-                    >
-                      Your 6-Digit Security Code
-                    </div>
-                    <div
-                      style={{
-                        fontSize: "30px",
-                        fontWeight: 800,
-                        letterSpacing: "8px",
-                        color: "var(--primary)",
-                        fontFamily: "monospace",
-                        userSelect: "all",
-                        marginBottom: "10px",
-                      }}
-                    >
-                      {verCode}
-                    </div>
-                    <div style={{ display: "flex", gap: "8px", justifyContent: "center" }}>
-                      <button
-                        type="button"
-                        onClick={handleAutoFillOtp}
-                        className="btn primary"
-                        style={{
-                          height: "30px",
-                          fontSize: "12px",
-                          padding: "0 12px",
-                          width: "auto",
-                          borderRadius: "6px",
-                        }}
-                      >
-                        ⚡ Auto-fill Code
-                      </button>
-                      <button
-                        type="button"
-                        onClick={handleCopyCode}
-                        className="btn ghost"
-                        style={{
-                          height: "30px",
-                          fontSize: "12px",
-                          padding: "0 12px",
-                          width: "auto",
-                          borderRadius: "6px",
-                        }}
-                      >
-                        📋 Copy Code
-                      </button>
-                    </div>
-                    <p style={{ margin: "8px 0 0", fontSize: "11px", color: "var(--muted)" }}>
-                      Enter these 6 digits below or click Auto-fill to complete verification.
-                    </p>
+                    📩 Open your email inbox (or spam folder), find your 6-digit security code, and enter it below.
                   </div>
 
                   <div className="otp" id="otp">
