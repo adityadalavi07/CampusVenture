@@ -8,6 +8,7 @@ import {
   type ReactNode,
 } from "react";
 import { DEMO_STARTUPS, type Role, type Startup } from "@/lib/demo-data";
+import { ventureService } from "@/services/ventureService";
 
 export type ReviewStatus = "draft" | "pending" | "approved" | "rejected";
 
@@ -25,8 +26,8 @@ export interface StartupRecord extends Startup {
   status: ReviewStatus;
   reviewNote: string;
   views: number;
-  founder?: string;
-  founderEmail?: string;
+  founder?: string | undefined;
+  founderEmail?: string | undefined;
 }
 
 export interface Notification {
@@ -124,330 +125,20 @@ interface State {
   students: StudentRecord[];
 }
 
-const STORAGE_KEY = "campusventure.state.v2";
-
-const SEED_EXTRAS: Record<string, Partial<StartupRecord>> = {
-  s1: {
-    problem:
-      "Engineering students get feedback on coursework days after submission, so misconceptions compound across an entire semester.",
-    solution:
-      "An adaptive AI tutor that grades submissions in minutes, explains every deduction and generates a personalised practice path.",
-    videoUrl: "https://www.youtube.com/watch?v=aqz-KE-bpKQ",
-    deckName: "lumen-labs-seed-deck.pdf",
-    githubUrl: "https://github.com/lumenlabs/adaptive-tutor",
-    githubStars: 412,
-    status: "approved",
-    views: 126,
-  },
-  s2: { status: "pending", views: 54 },
-  s3: { status: "draft", views: 18 },
-  s4: { status: "approved", views: 233 },
-  s5: { status: "pending", views: 61 },
-  s6: { status: "approved", views: 147 },
-};
+const STORAGE_KEY = "campusventure.saas.live.v3";
 
 function seed(): State {
-  const startups = DEMO_STARTUPS.map<StartupRecord>((s) => ({
-    ...s,
-    problem: "",
-    solution: "",
-    videoUrl: "",
-    deckName: "",
-    githubUrl: "",
-    githubStars: 0,
-    status: "draft",
-    reviewNote: "",
-    views: 0,
-    ...SEED_EXTRAS[s.id],
-  }));
-
-  const now = Date.now();
-  const at = (min: number) => new Date(now - min * 60000).toISOString();
-  const soon = (hours: number) => new Date(now + hours * 3600000).toISOString();
-
   return {
-    startups,
-    saved: ["s4"],
-    requests: [
-      {
-        id: "r-seed-1",
-        startupId: MY_STARTUP_ID,
-        investorId: "i1",
-        kind: "connection",
-        status: "accepted",
-        at: at(2600),
-      },
-      {
-        id: "r-seed-2",
-        startupId: "s4",
-        investorId: "i2",
-        kind: "dataroom",
-        status: "pending",
-        at: at(180),
-      },
-    ],
-    messages: [
-      {
-        id: "m1",
-        startupId: MY_STARTUP_ID,
-        investorId: "i1",
-        from: "investor",
-        text: "Loved the demo. What does retention look like after the first semester?",
-        at: at(220),
-        readByStudent: false,
-        readByInvestor: true,
-      },
-      {
-        id: "m2",
-        startupId: MY_STARTUP_ID,
-        investorId: "i1",
-        from: "student",
-        text: "Semester-2 retention is 71% across the three campus pilots. Happy to share the cohort chart.",
-        at: at(180),
-        readByStudent: true,
-        readByInvestor: false,
-      },
-      {
-        id: "m3",
-        startupId: MY_STARTUP_ID,
-        investorId: "i4",
-        from: "investor",
-        text: "We write first cheques for verified student teams — are you raising now?",
-        at: at(60),
-        readByStudent: false,
-        readByInvestor: true,
-      },
-      {
-        id: "m4",
-        startupId: "s4",
-        investorId: "i1",
-        from: "investor",
-        text: "Can you share the regulatory timeline for the wearable?",
-        at: at(500),
-        readByStudent: false,
-        readByInvestor: true,
-      },
-    ],
-    meetings: [
-      {
-        id: "mt1",
-        startupId: MY_STARTUP_ID,
-        investorId: "i1",
-        title: "Product deep dive",
-        at: soon(26),
-        minutes: 30,
-        status: "confirmed",
-        requestedBy: "investor",
-      },
-      {
-        id: "mt2",
-        startupId: MY_STARTUP_ID,
-        investorId: "i4",
-        title: "Intro call",
-        at: soon(72),
-        minutes: 20,
-        status: "requested",
-        requestedBy: "investor",
-      },
-    ],
-    docs: [
-      {
-        id: "d1",
-        startupId: MY_STARTUP_ID,
-        name: "Financial model FY26.xlsx",
-        category: "Financials",
-        size: "412 KB",
-        confidential: true,
-        addedAt: at(4000),
-      },
-      {
-        id: "d2",
-        startupId: MY_STARTUP_ID,
-        name: "Cap table (post-angel).pdf",
-        category: "Cap table",
-        size: "88 KB",
-        confidential: true,
-        addedAt: at(3800),
-      },
-      {
-        id: "d3",
-        startupId: MY_STARTUP_ID,
-        name: "Product roadmap 2026.pdf",
-        category: "Product",
-        size: "1.2 MB",
-        confidential: false,
-        addedAt: at(2200),
-      },
-      {
-        id: "d4",
-        startupId: "s4",
-        name: "Clinical trial summary.pdf",
-        category: "Metrics",
-        size: "760 KB",
-        confidential: true,
-        addedAt: at(900),
-      },
-    ],
-    access: [
-      {
-        id: "a1",
-        startupId: MY_STARTUP_ID,
-        investorId: "i1",
-        status: "granted",
-        ndaSigned: true,
-        ndaSignedName: "Anaya Krishnan",
-        requestedAt: at(2500),
-        downloads: 6,
-      },
-      {
-        id: "a2",
-        startupId: MY_STARTUP_ID,
-        investorId: "i3",
-        status: "pending",
-        ndaSigned: false,
-        ndaSignedName: "",
-        requestedAt: at(140),
-        downloads: 0,
-      },
-    ],
-    programs: [
-      {
-        id: "p1",
-        name: "Seed Sprint",
-        cohort: "Autumn 2026",
-        seats: 12,
-        enrolled: ["s1", "s2", "s5"],
-        mentor: "Dr. Meera Joshi",
-        status: "running",
-        startsOn: "2026-09-01",
-      },
-      {
-        id: "p2",
-        name: "Deep Tech Residency",
-        cohort: "Autumn 2026",
-        seats: 8,
-        enrolled: ["s4"],
-        mentor: "Prof. Alok Nair",
-        status: "open",
-        startsOn: "2026-10-05",
-      },
-      {
-        id: "p3",
-        name: "Investor Readiness Bootcamp",
-        cohort: "Summer 2026",
-        seats: 20,
-        enrolled: ["s3", "s6"],
-        mentor: "Kavya Rao",
-        status: "closed",
-        startsOn: "2026-05-12",
-      },
-    ],
-    students: [
-      {
-        id: "u1",
-        name: "Aayush Patil",
-        email: "aayush@coep.ac.in",
-        branch: "Computer Engineering",
-        year: "Final year",
-        startupId: "s1",
-        verified: true,
-      },
-      {
-        id: "u2",
-        name: "Ishita Rane",
-        email: "ishita@vjti.ac.in",
-        branch: "Electronics",
-        year: "Third year",
-        startupId: "s2",
-        verified: true,
-      },
-      {
-        id: "u3",
-        name: "Kabir Shah",
-        email: "kabir@iiitb.ac.in",
-        branch: "Information Technology",
-        year: "Second year",
-        startupId: "s3",
-        verified: false,
-      },
-      {
-        id: "u4",
-        name: "Neha Verma",
-        email: "neha@iitd.ac.in",
-        branch: "Biomedical",
-        year: "PhD",
-        startupId: "s4",
-        verified: true,
-      },
-      {
-        id: "u5",
-        name: "Rahul Iyer",
-        email: "rahul@iiith.ac.in",
-        branch: "Electrical",
-        year: "Final year",
-        startupId: "s5",
-        verified: true,
-      },
-      {
-        id: "u6",
-        name: "Sana Qureshi",
-        email: "sana@annauniv.edu",
-        branch: "Computer Science",
-        year: "Third year",
-        startupId: "s6",
-        verified: false,
-      },
-    ],
-    notifications: [
-      {
-        id: "n1",
-        role: "student",
-        title: "Northbridge Seed viewed your profile",
-        body: "Anaya Krishnan opened Lumen Labs twice this week.",
-        at: at(35),
-        read: false,
-      },
-      {
-        id: "n2",
-        role: "student",
-        title: "Your startup was approved",
-        body: "COEP Innovation Cell verified Lumen Labs.",
-        at: at(400),
-        read: false,
-      },
-      {
-        id: "n3",
-        role: "investor",
-        title: "3 new startups match your thesis",
-        body: "EdTech and SaaS founders published updates today.",
-        at: at(90),
-        read: false,
-      },
-      {
-        id: "n4",
-        role: "investor",
-        title: "Data-room access granted",
-        body: "NeuroPulse approved your request.",
-        at: at(600),
-        read: true,
-      },
-      {
-        id: "n5",
-        role: "university",
-        title: "2 startups awaiting review",
-        body: "CropSense and GridShift submitted profiles for verification.",
-        at: at(20),
-        read: false,
-      },
-      {
-        id: "n6",
-        role: "university",
-        title: "Investor interest is up 24%",
-        body: "Weekly ecosystem digest is ready.",
-        at: at(1500),
-        read: true,
-      },
-    ],
+    startups: [],
+    saved: [],
+    requests: [],
+    messages: [],
+    meetings: [],
+    docs: [],
+    access: [],
+    programs: [],
+    students: [],
+    notifications: [],
   };
 }
 
@@ -490,12 +181,36 @@ export function VentureProvider({ children }: { children: ReactNode }) {
 
   useEffect(() => {
     try {
+      window.localStorage.removeItem("campusventure.state.v1");
+      window.localStorage.removeItem("campusventure.state.v2");
+    } catch {}
+    try {
       const raw = window.localStorage.getItem(STORAGE_KEY);
-      if (raw) setState({ ...seed(), ...(JSON.parse(raw) as State) });
+      if (raw) {
+        const parsed = JSON.parse(raw);
+        if (parsed && typeof parsed === "object") {
+          setState((prev) => ({ ...prev, ...parsed }));
+        }
+      }
     } catch {
-      /* corrupt storage: keep seed */
+      /* corrupt storage: keep clean seed */
     }
     setHydrated(true);
+
+    const unsub = ventureService.subscribeToStartups((remoteStartups) => {
+      if (Array.isArray(remoteStartups) && remoteStartups.length > 0) {
+        setState((prev) => {
+          const map = new Map();
+          prev.startups.forEach((s) => map.set(s.id, s));
+          remoteStartups.forEach((s) => map.set(s.id, s));
+          return {
+            ...prev,
+            startups: Array.from(map.values()),
+          };
+        });
+      }
+    });
+    return () => unsub();
   }, []);
 
   // Cross-tab and multi-window live sync: updates in one role/tab immediately reflect across all roles
@@ -584,6 +299,10 @@ export function VentureProvider({ children }: { children: ReactNode }) {
       updateStartup: (id, patch) =>
         setState((prev) => {
           const nextStartups = prev.startups.map((s) => (s.id === id ? { ...s, ...patch } : s));
+          const updated = nextStartups.find((s) => s.id === id);
+          if (updated) {
+            ventureService.upsertStartup(updated);
+          }
           const nextStudents = prev.students.map((st) => {
             if (st.startupId === id) {
               return {
@@ -599,13 +318,15 @@ export function VentureProvider({ children }: { children: ReactNode }) {
             students: nextStudents,
           };
         }),
-      setReview: (id, status, note = "") =>
+      setReview: (id, status, note = "") => {
+        ventureService.updateStartupReview(id, status, note);
         setState((prev) => ({
           ...prev,
           startups: prev.startups.map((s) =>
             s.id === id ? { ...s, status, reviewNote: note, verified: status === "approved" } : s,
           ),
-        })),
+        }));
+      },
       toggleSaved: (id) => {
         let added = false;
         setState((prev) => {
@@ -790,23 +511,23 @@ export function VentureProvider({ children }: { children: ReactNode }) {
           };
         }),
       createStartup: (startupData) => {
-        const newId = rid("s");
+        const newId = `s-${Date.now().toString(36)}`;
         const newStartup: StartupRecord = {
           id: newId,
           name: startupData.name || "My Student Venture",
-          tagline: startupData.tagline || "Innovating from campus",
+          tagline: startupData.tagline || "",
           sector: startupData.sector || "AI",
-          stage: startupData.stage || "MVP",
-          location: startupData.location || "Maharashtra, India",
-          university: startupData.university || "University",
-          teamSize: startupData.teamSize || 2,
-          fundingRequired: startupData.fundingRequired || 25000,
+          stage: startupData.stage || "Idea",
+          location: startupData.location || "India",
+          university: startupData.university || "",
+          teamSize: startupData.teamSize || 1,
+          fundingRequired: startupData.fundingRequired || 0,
           revenue: startupData.revenue ?? false,
-          monthlyUsers: startupData.monthlyUsers || 100,
-          readiness: startupData.readiness || 65,
+          monthlyUsers: startupData.monthlyUsers || 0,
+          readiness: startupData.readiness || 50,
           verified: false,
-          traction: startupData.traction || "Beta testing on campus",
-          businessModel: startupData.businessModel || "B2B SaaS subscription",
+          traction: startupData.traction || "",
+          businessModel: startupData.businessModel || "",
           updatedAt: new Date().toISOString(),
           problem: startupData.problem || "",
           solution: startupData.solution || "",
@@ -814,14 +535,15 @@ export function VentureProvider({ children }: { children: ReactNode }) {
           deckName: startupData.deckName || "",
           githubUrl: startupData.githubUrl || "",
           githubStars: startupData.githubStars || 0,
-          status: "draft",
+          status: (startupData.status as ReviewStatus) || "draft",
           reviewNote: "",
-          views: 1,
+          views: 0,
           ...startupData,
         };
+        ventureService.upsertStartup(newStartup);
         setState((prev) => ({
           ...prev,
-          startups: [newStartup, ...prev.startups],
+          startups: [newStartup, ...prev.startups.filter((s) => s.id !== newId)],
         }));
         return newId;
       },

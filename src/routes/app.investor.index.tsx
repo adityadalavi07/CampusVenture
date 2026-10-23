@@ -46,7 +46,7 @@ function InvestorDashboard() {
 
   const results = useMemo(() => {
     const list = startups
-      .filter((s) => s.status === "approved" || s.status === "pending")
+      .filter((s) => s.status === "approved" || s.verified === true)
       .map((s) => ({ startup: s, ...matchScore(ME, s) }))
       .filter(({ startup }) => {
         const q = query.trim().toLowerCase();
@@ -190,14 +190,19 @@ function InvestorDashboard() {
         </Card>
 
         {results.length === 0 ? (
-          <div className="rounded-xl border border-dashed p-12 text-center">
-            <p className="font-medium">No startup matches yet.</p>
-            <p className="mt-1 text-sm text-muted-foreground">
-              Try widening your sector or stage filters.
+          <div className="rounded-xl border border-dashed p-12 text-center space-y-3">
+            <div className="mx-auto size-12 rounded-full bg-primary/10 flex items-center justify-center text-primary">
+              <BadgeCheck className="size-6" />
+            </div>
+            <h3 className="font-semibold text-lg">No Verified Campus Startups Live Yet</h3>
+            <p className="text-sm text-muted-foreground max-w-md mx-auto">
+              University incubation cells review and approve student startups before they appear in investor deal flow. Once a university incubator approves a student's idea, it will appear here in real time.
             </p>
-            <Button variant="outline" size="sm" className="mt-4" onClick={clearAll}>
-              Clear filters
-            </Button>
+            {hasFilters && (
+              <Button variant="outline" size="sm" onClick={clearAll} className="mt-2">
+                Clear filters
+              </Button>
+            )}
           </div>
         ) : (
           <div className="grid gap-5 md:grid-cols-2">

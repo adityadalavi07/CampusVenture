@@ -110,7 +110,10 @@ function ReviewCard({ id }: { id: string }) {
           <div>
             <CardTitle className="text-base">{s.name}</CardTitle>
             <CardDescription>
-              {s.sector} · {s.stage} · raising {formatMoney(s.fundingRequired)} · {s.teamSize} people
+              {s.sector} · {s.stage} · raising {formatMoney(s.fundingRequired)} · {s.teamSize} {s.teamSize === 1 ? "person" : "people"}
+              {s.founder ? ` · Founder: ${s.founder}` : ""}
+              {s.founderEmail ? ` (${s.founderEmail})` : ""}
+              {s.university ? ` · ${s.university}` : ""}
             </CardDescription>
           </div>
           <div className="flex items-center gap-2">

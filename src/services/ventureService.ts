@@ -1,144 +1,198 @@
 import { supabase } from "@/lib/supabase";
-import { DEMO_STARTUPS } from "@/lib/demo-data";
-import type { Startup, Venture, VentureApplication } from "@/types/database";
+import type { ReviewStatus, StartupRecord } from "@/lib/store";
+
+export function dbRowToStartupRecord(row: any): StartupRecord {
+  return {
+    id: String(row.id),
+    name: row.name || "Untitled Venture",
+    tagline: row.tagline || "",
+    sector: row.sector || "AI",
+    stage: row.stage || "Idea",
+    location: row.location || "India",
+    university: row.university || "",
+    teamSize: Number(row.team_size ?? row.teamSize ?? 1),
+    fundingRequired: Number(row.funding_required ?? row.fundingRequired ?? 0),
+    revenue: Boolean(row.revenue),
+    monthlyUsers: Number(row.monthly_users ?? row.monthlyUsers ?? 0),
+    readiness: Number(row.readiness ?? 50),
+    verified: Boolean(row.verified || row.status === "approved"),
+    traction: row.traction || "",
+    businessModel: row.business_model || row.businessModel || "",
+    updatedAt: row.updated_at || row.updatedAt || new Date().toISOString(),
+    problem: row.problem || "",
+    solution: row.solution || "",
+    videoUrl: row.video_url || row.videoUrl || "",
+    deckName: row.deck_name || row.deckName || "",
+    githubUrl: row.github_url || row.githubUrl || "",
+    githubStars: Number(row.github_stars ?? row.githubStars ?? 0),
+    status: (row.status as ReviewStatus) || (row.verified ? "approved" : "pending"),
+    reviewNote: row.review_note || row.reviewNote || "",
+    views: Number(row.views ?? 0),
+    founder: row.founder || undefined,
+    founderEmail: row.founder_email || row.founderEmail || undefined,
+  };
+}
+
+export function startupRecordToDbRow(s: StartupRecord, founderId?: string): Record<string, any> {
+  return {
+    id: s.id,
+    founder_id: founderId || undefined,
+    founder: s.founder || null,
+    founder_email: s.founderEmail || null,
+    name: s.name,
+    tagline: s.tagline || "",
+    sector: s.sector || "AI",
+    stage: s.stage || "Idea",
+    location: s.location || "India",
+    university: s.university || "",
+    team_size: s.teamSize || 1,
+    funding_required: s.fundingRequired || 0,
+    revenue: s.revenue ?? false,
+    monthly_users: s.monthlyUsers || 0,
+    readiness: s.readiness || 50,
+    verified: s.verified || s.status === "approved",
+    traction: s.traction || "",
+    business_model: s.businessModel || "",
+    problem: s.problem || "",
+    solution: s.solution || "",
+    video_url: s.videoUrl || "",
+    deck_name: s.deckName || "",
+    github_url: s.githubUrl || "",
+    github_stars: s.githubStars || 0,
+    status: s.status,
+    review_note: s.reviewNote || "",
+    views: s.views || 0,
+    updated_at: new Date().toISOString(),
+  };
+}
 
 export const ventureService = {
   /**
-   * Fetch all startups/ventures from Supabase, falling back to demo data if the table is empty
+   * Fetch all startups from Supabase. Returns empty array if none exist yet.
    */
-  async getVentures(sector?: string, stage?: string): Promise<Startup[]> {
-    try {
-      let query = supabase.from("startups").select("*");
-
-      if (sector && sector !== "All") {
-        query = query.eq("sector", sector);
-      }
-      if (stage && stage !== "All") {
-        query = query.eq("stage", stage);
-      }
-
-      const { data, error } = await query;
-
-      if (error) {
-        console.warn("Could not query startups table from Supabase, using demo data fallback:", error.message);
-        return filterDemoStartups(sector, stage);
-      }
-
-      if (data && data.length > 0) {
-        return data as Startup[];
-      }
-
-      // If remote table has no rows yet, return demo startups for rich preview
-      return filterDemoStartups(sector, stage);
-    } catch (err) {
-      console.error("Venture fetch error:", err);
-      return filterDemoStartups(sector, stage);
-    }
-  },
-
-  /**
-   * Fetch a single venture/startup by ID
-   */
-  async getVentureById(id: string): Promise<Startup | null> {
+  async getAllStartups(): Promise<StartupRecord[]> {
     try {
       const { data, error } = await (supabase as any)
         .from("startups")
         .select("*")
-        .eq("id", id)
-        .single();
+        .order("created_at", { ascending: false });
 
-      if (!error && data) {
-        return data as Startup;
+      if (error) {
+        console.warn("[VentureService] Supabase fetch notice:", error.message);
+        return [];
       }
-    } catch (e) {
-      // Fall through to demo data
-    }
 
-    const demo = DEMO_STARTUPS.find((s) => s.id === id);
-    return demo ? (demo as unknown as Startup) : null;
+      if (Array.isArray(data)) {
+        return data.map(dbRowToStartupRecord);
+      }
+      return [];
+    } catch (err) {
+      console.warn("[VentureService] Network error fetching startups:", err);
+      return [];
+    }
   },
 
   /**
-   * Create a new venture/startup in Supabase
+   * Upsert a startup in Supabase cloud database
    */
-  async createVenture(ventureData: Partial<Venture>): Promise<Venture> {
-    const payload = {
-      ...ventureData,
-      created_at: new Date().toISOString(),
-      updated_at: new Date().toISOString(),
+  async upsertStartup(startup: StartupRecord, founderId?: string): Promise<boolean> {
+    try {
+      const payload = startupRecordToDbRow(startup, founderId);
+      const { error } = await (supabase as any)
+        .from("startups")
+        .upsert(payload, { onConflict: "id" });
+
+      if (error) {
+        console.warn("[VentureService] Supabase upsert notice:", error.message);
+        return false;
+      }
+      return true;
+    } catch (err) {
+      console.warn("[VentureService] Supabase upsert error:", err);
+      return false;
+    }
+  },
+
+  /**
+   * Update review status and review note in Supabase
+   */
+  async updateStartupReview(id: string, status: ReviewStatus, reviewNote?: string): Promise<boolean> {
+    try {
+      const updates: Record<string, any> = {
+        status,
+        verified: status === "approved",
+        review_note: reviewNote ?? "",
+        updated_at: new Date().toISOString(),
+      };
+
+      const { error } = await (supabase as any)
+        .from("startups")
+        .update(updates)
+        .eq("id", id);
+
+      if (error) {
+        console.warn("[VentureService] Supabase review update notice:", error.message);
+        return false;
+      }
+      return true;
+    } catch (err) {
+      console.warn("[VentureService] Supabase review update error:", err);
+      return false;
+    }
+  },
+
+  /**
+   * Delete startup if needed
+   */
+  async deleteStartup(id: string): Promise<boolean> {
+    try {
+      const { error } = await (supabase as any)
+        .from("startups")
+        .delete()
+        .eq("id", id);
+      return !error;
+    } catch {
+      return false;
+    }
+  },
+
+  /**
+   * Subscribe to Supabase real-time postgres changes on table startups
+   */
+  subscribeToStartups(onStartupsUpdated: (startups: StartupRecord[]) => void) {
+    let pollingTimer: any = null;
+
+    // 1. Initial fetch
+    ventureService.getAllStartups().then((initial) => {
+      if (initial.length > 0) {
+        onStartupsUpdated(initial);
+      }
+    });
+
+    // 2. Real-time channel listener
+    const channel = supabase
+      .channel("public-startups-realtime")
+      .on(
+        "postgres_changes",
+        { event: "*", schema: "public", table: "startups" },
+        async () => {
+          const fresh = await ventureService.getAllStartups();
+          onStartupsUpdated(fresh);
+        }
+      )
+      .subscribe();
+
+    // 3. Periodic polling fallback every 6 seconds to ensure cross-device consistency
+    pollingTimer = setInterval(async () => {
+      const fresh = await ventureService.getAllStartups();
+      if (fresh.length > 0) {
+        onStartupsUpdated(fresh);
+      }
+    }, 6000);
+
+    return () => {
+      if (pollingTimer) clearInterval(pollingTimer);
+      supabase.removeChannel(channel);
     };
-
-    const { data, error } = await (supabase as any)
-      .from("startups")
-      .insert(payload as any)
-      .select()
-      .single();
-
-    if (error) {
-      console.error("Error creating startup in Supabase:", error.message);
-      throw error;
-    }
-
-    return data as Venture;
-  },
-
-  /**
-   * Update an existing venture
-   */
-  async updateVenture(id: string, updates: Partial<Venture>): Promise<Venture> {
-    const { data, error } = await (supabase as any)
-      .from("startups")
-      .update({ ...updates, updated_at: new Date().toISOString() } as any)
-      .eq("id", id)
-      .select()
-      .single();
-
-    if (error) {
-      console.error("Error updating startup in Supabase:", error.message);
-      throw error;
-    }
-
-    return data as Venture;
-  },
-
-  /**
-   * Submit an investment or mentorship application for a venture
-   */
-  async submitApplication(application: {
-    venture_id: string;
-    applicant_id: string;
-    type: "investment" | "mentorship" | "team_member" | "partnership";
-    message: string;
-  }): Promise<VentureApplication> {
-    const payload = {
-      ...application,
-      status: "pending" as const,
-      created_at: new Date().toISOString(),
-    };
-
-    const { data, error } = await (supabase as any)
-      .from("venture_applications")
-      .insert(payload as any)
-      .select()
-      .single();
-
-    if (error) {
-      console.warn("Venture applications table insertion notice:", error.message);
-      // Return optimistic record so UI flow succeeds
-      return { id: `app-${Date.now()}`, ...payload };
-    }
-
-    return data as VentureApplication;
   },
 };
-
-function filterDemoStartups(sector?: string, stage?: string): Startup[] {
-  let list = DEMO_STARTUPS as unknown as Startup[];
-  if (sector && sector !== "All") {
-    list = list.filter((s) => s.sector.toLowerCase() === sector.toLowerCase());
-  }
-  if (stage && stage !== "All") {
-    list = list.filter((s) => s.stage === stage);
-  }
-  return list;
-}

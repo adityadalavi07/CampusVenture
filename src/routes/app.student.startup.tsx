@@ -2,7 +2,9 @@ import { createFileRoute, Link } from "@tanstack/react-router";
 import { useRef, useState, useEffect } from "react";
 import { useDebouncedField } from "@/hooks/use-debounced-field";
 import {
+  AlertTriangle,
   CheckCircle2,
+  Clock,
   FileUp,
   Github,
   Lightbulb,
@@ -22,7 +24,7 @@ import { Label } from "@/components/ui/label";
 import { Progress } from "@/components/ui/progress";
 import { Textarea } from "@/components/ui/textarea";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { STATUS_LABEL, completeness, useVenture } from "@/lib/store";
+import { STATUS_LABEL, completeness, useVenture, type StartupRecord, type ReviewStatus } from "@/lib/store";
 import { useAuth } from "@/lib/auth-context";
 import { SECTORS, STAGES, type Stage } from "@/lib/demo-data";
 
@@ -52,51 +54,109 @@ function embedUrl(url: string) {
 }
 
 function MyStartup() {
-  const { startups, updateStartup, notify } = useVenture();
+  const { startups, updateStartup, createStartup, notify } = useVenture();
   const { user } = useAuth();
-  const startup =
-    startups.find(
-      (s) =>
-        (user?.email && s.founderEmail?.toLowerCase() === user.email.toLowerCase()) ||
-        (user?.name && s.founder === user.name)
-    ) || startups[0]!;
+  const studentStartup = startups.find(
+    (s) =>
+      (user?.email && s.founderEmail?.toLowerCase() === user.email.toLowerCase()) ||
+      (user?.name && s.founder === user.name)
+  );
+
+  const [localStartup, setLocalStartup] = useState<StartupRecord>(() => {
+    return (
+      studentStartup || {
+        id: `s-${Date.now().toString(36)}`,
+        name: "",
+        tagline: "",
+        sector: "AI",
+        stage: "Idea",
+        location: "India",
+        university: user?.org || "University",
+        teamSize: 1,
+        fundingRequired: 25000,
+        revenue: false,
+        monthlyUsers: 0,
+        readiness: 50,
+        verified: false,
+        traction: "",
+        businessModel: "",
+        updatedAt: new Date().toISOString(),
+        problem: "",
+        solution: "",
+        videoUrl: "",
+        deckName: "",
+        githubUrl: "",
+        githubStars: 0,
+        status: "draft",
+        reviewNote: "",
+        views: 0,
+        founder: user?.name || "Student Founder",
+        founderEmail: user?.email || "",
+      }
+    );
+  });
+
+  const startup = studentStartup || localStartup;
   const fileRef = useRef<HTMLInputElement>(null);
   const [github, setGithub] = useState(startup.githubUrl);
 
+  function saveOrUpdate(patch: Partial<StartupRecord>) {
+    setLocalStartup((prev) => ({ ...prev, ...patch }));
+    if (studentStartup) {
+      saveOrUpdate( patch);
+    } else {
+      const createdId = createStartup({
+        ...startup,
+        founder: user?.name || startup.founder,
+        founderEmail: user?.email || startup.founderEmail,
+        university: user?.org || startup.university,
+        ...patch,
+      });
+      setLocalStartup((prev) => ({ ...prev, id: createdId, ...patch }));
+    }
+  }
+
   // Sync startup founder and university with authenticated user
   useEffect(() => {
-    if (user?.name && user?.org && (startup.founder !== user.name || startup.university !== user.org || startup.founderEmail !== user.email)) {
-      updateStartup(startup.id, {
+    if (
+      user?.name &&
+      user?.org &&
+      studentStartup &&
+      (studentStartup.founder !== user.name ||
+        studentStartup.university !== user.org ||
+        studentStartup.founderEmail !== user.email)
+    ) {
+      updateStartup(studentStartup.id, {
         founder: user.name,
         university: user.org,
         founderEmail: user.email,
       });
     }
-  }, [user, startup.id, startup.founder, startup.university, startup.founderEmail, updateStartup]);
+  }, [user, studentStartup, updateStartup]);
 
   const [stName, setStName] = useDebouncedField(startup.name, (v) =>
-    updateStartup(startup.id, { name: v })
+    saveOrUpdate({ name: v })
   );
   const [stTagline, setStTagline] = useDebouncedField(startup.tagline || "", (v) =>
-    updateStartup(startup.id, { tagline: v })
+    saveOrUpdate({ tagline: v })
   );
   const [stLocation, setStLocation] = useDebouncedField(startup.location || "", (v) =>
-    updateStartup(startup.id, { location: v })
+    saveOrUpdate({ location: v })
   );
   const [problem, setProblem] = useDebouncedField(startup.problem, (v) =>
-    updateStartup(startup.id, { problem: v }),
+    saveOrUpdate({ problem: v })
   );
   const [solution, setSolution] = useDebouncedField(startup.solution, (v) =>
-    updateStartup(startup.id, { solution: v }),
+    saveOrUpdate({ solution: v })
   );
   const [model, setModel] = useDebouncedField(startup.businessModel, (v) =>
-    updateStartup(startup.id, { businessModel: v }),
+    saveOrUpdate({ businessModel: v })
   );
   const [traction, setTraction] = useDebouncedField(startup.traction, (v) =>
-    updateStartup(startup.id, { traction: v }),
+    saveOrUpdate({ traction: v })
   );
   const [videoUrl, setVideoUrl] = useDebouncedField(startup.videoUrl, (v) =>
-    updateStartup(startup.id, { videoUrl: v }),
+    saveOrUpdate({ videoUrl: v })
   );
 
   const pct = completeness(startup);
@@ -108,7 +168,7 @@ function MyStartup() {
       toast.error("Pitch decks must be under 20 MB.");
       return;
     }
-    updateStartup(startup.id, { deckName: file.name });
+    saveOrUpdate({ deckName: file.name });
     toast.success(`${file.name} attached to your data room`);
   }
 
@@ -119,21 +179,48 @@ function MyStartup() {
       return;
     }
     const stars = 40 + (github.length * 17) % 900;
-    updateStartup(startup.id, { githubUrl: github.trim(), githubStars: stars });
+    saveOrUpdate({ githubUrl: github.trim(), githubStars: stars });
     toast.success("GitHub project connected", {
       description: `Repository verified · ${stars} stars indexed.`,
     });
   }
 
   function submitForReview() {
-    if (pct < 60) {
-      toast.error("Complete at least 60% of your profile before submitting.");
+    if (!startup.name || startup.name.trim().length < 2) {
+      toast.error("Please enter a name for your startup.");
       return;
     }
-    updateStartup(startup.id, { status: "pending" });
-    notify("university", "New startup submitted", `${startup.name} is awaiting verification.`);
-    notify("student", "Submitted for review", "Your university cell will respond within 48 hours.");
-    toast.success("Submitted to your university for verification");
+    if (!startup.tagline || startup.tagline.trim().length < 5) {
+      toast.error("Please enter a one-line tagline for your startup.");
+      return;
+    }
+    if (!startup.problem || startup.problem.trim().length < 10) {
+      toast.error("Please explain the problem your startup solves (at least 10 characters).");
+      return;
+    }
+    if (!startup.solution || startup.solution.trim().length < 10) {
+      toast.error("Please describe your solution (at least 10 characters).");
+      return;
+    }
+
+    saveOrUpdate({
+      status: "pending",
+      updatedAt: new Date().toISOString(),
+    });
+
+    notify(
+      "university",
+      "New Startup Submitted for Incubator Review",
+      `${startup.name} (${startup.sector}) by ${startup.founder || user?.name || "Student"} was submitted for verification.`
+    );
+    notify(
+      "student",
+      "Submitted for University Review",
+      `Your startup ${startup.name} has been submitted to your university incubator. Status: Pending University Approval.`
+    );
+    toast.success("Submitted for university review! 🚀", {
+      description: "Your university incubation cell has received your submission. Status is now Pending Approval.",
+    });
   }
 
   return (
@@ -159,6 +246,77 @@ function MyStartup() {
             </Button>
           </div>
         </div>
+
+        {/* Dynamic Institutional Status Banner */}
+        {startup.status === "pending" && (
+          <div className="rounded-xl border border-amber-500/40 bg-amber-500/10 p-4 text-amber-900 dark:text-amber-200 animate-in fade-in-50">
+            <div className="flex items-center justify-between gap-3 flex-wrap">
+              <div className="flex items-center gap-2.5">
+                <Clock className="size-5 text-amber-600 dark:text-amber-400 shrink-0" />
+                <div>
+                  <h3 className="font-semibold text-sm">Status: Pending University Approval</h3>
+                  <p className="text-xs text-amber-800/80 dark:text-amber-300/80 mt-0.5">
+                    Your startup idea has been submitted to {startup.university || "your university incubation cell"} for official verification. Once approved, it will be published to accredited investors.
+                  </p>
+                </div>
+              </div>
+              <Badge className="bg-amber-500 text-white shrink-0">In Review</Badge>
+            </div>
+          </div>
+        )}
+
+        {startup.status === "approved" && (
+          <div className="rounded-xl border border-emerald-500/40 bg-emerald-500/10 p-4 text-emerald-900 dark:text-emerald-200 animate-in fade-in-50">
+            <div className="flex items-center justify-between gap-3 flex-wrap">
+              <div className="flex items-center gap-2.5">
+                <CheckCircle2 className="size-5 text-emerald-600 dark:text-emerald-400 shrink-0" />
+                <div>
+                  <h3 className="font-semibold text-sm">Status: Approved & Verified by {startup.university}</h3>
+                  <p className="text-xs text-emerald-800/80 dark:text-emerald-300/80 mt-0.5">
+                    🎉 Officially verified and live in the investor deal flow!
+                    {startup.reviewNote ? ` Endorsement: "${startup.reviewNote}"` : ""}
+                  </p>
+                </div>
+              </div>
+              <Badge className="bg-emerald-600 text-white shrink-0">Verified Live</Badge>
+            </div>
+          </div>
+        )}
+
+        {startup.status === "rejected" && (
+          <div className="rounded-xl border border-rose-500/40 bg-rose-500/10 p-4 text-rose-900 dark:text-rose-200 animate-in fade-in-50">
+            <div className="flex items-center justify-between gap-3 flex-wrap">
+              <div className="flex items-center gap-2.5">
+                <AlertTriangle className="size-5 text-rose-600 dark:text-rose-400 shrink-0" />
+                <div>
+                  <h3 className="font-semibold text-sm">Status: Revisions Requested by University</h3>
+                  <p className="text-xs text-rose-800/80 dark:text-rose-300/80 mt-0.5">
+                    {startup.reviewNote || "Your university requested updates. Please review and resubmit."}
+                  </p>
+                </div>
+              </div>
+              <Button size="sm" onClick={submitForReview} className="shrink-0 bg-rose-600 hover:bg-rose-700 text-white">
+                Resubmit for Review
+              </Button>
+            </div>
+          </div>
+        )}
+
+        {startup.status === "draft" && (
+          <div className="rounded-xl border border-slate-200 bg-slate-50 dark:border-slate-800 dark:bg-slate-900 p-4">
+            <div className="flex items-center justify-between gap-3 flex-wrap">
+              <div>
+                <h3 className="font-semibold text-sm">Status: Draft (Not Submitted Yet)</h3>
+                <p className="text-xs text-muted-foreground mt-0.5">
+                  Complete your startup overview, problem, solution, and funding ask, then submit it to your university incubator for verification.
+                </p>
+              </div>
+              <Button size="sm" onClick={submitForReview} className="gap-1.5">
+                <Send className="size-3.5" /> Submit for University Approval
+              </Button>
+            </div>
+          </div>
+        )}
 
         <Card>
           <CardContent className="flex flex-wrap items-center gap-4 py-5">
@@ -228,7 +386,7 @@ function MyStartup() {
                     <select
                       id="st-sector"
                       value={startup.sector}
-                      onChange={(e) => updateStartup(startup.id, { sector: e.target.value })}
+                      onChange={(e) => saveOrUpdate( { sector: e.target.value })}
                       className="flex h-9 w-full rounded-md border border-input bg-background px-3 py-1 text-sm shadow-xs transition-colors focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
                     >
                       {SECTORS.map((s) => (
@@ -244,7 +402,7 @@ function MyStartup() {
                     <select
                       id="st-stage"
                       value={startup.stage}
-                      onChange={(e) => updateStartup(startup.id, { stage: e.target.value as Stage })}
+                      onChange={(e) => saveOrUpdate( { stage: e.target.value as Stage })}
                       className="flex h-9 w-full rounded-md border border-input bg-background px-3 py-1 text-sm shadow-xs transition-colors focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
                     >
                       {STAGES.map((st) => (
@@ -272,7 +430,7 @@ function MyStartup() {
                     <Input
                       id="st-univ"
                       value={user?.org || startup.university}
-                      onChange={(e) => updateStartup(startup.id, { university: e.target.value })}
+                      onChange={(e) => saveOrUpdate( { university: e.target.value })}
                       placeholder="e.g. Sanjay Ghodawat University (SGU)"
                     />
                   </div>
@@ -281,7 +439,7 @@ function MyStartup() {
                     <Input
                       id="st-founder"
                       value={user?.name || startup.founder || "Founder"}
-                      onChange={(e) => updateStartup(startup.id, { founder: e.target.value })}
+                      onChange={(e) => saveOrUpdate( { founder: e.target.value })}
                       placeholder="e.g. Aditya Dalvi"
                     />
                   </div>
@@ -360,7 +518,7 @@ function MyStartup() {
                       min={0}
                       value={startup.fundingRequired}
                       onChange={(e) =>
-                        updateStartup(startup.id, { fundingRequired: Number(e.target.value) })
+                        saveOrUpdate( { fundingRequired: Number(e.target.value) })
                       }
                     />
                   </div>
@@ -371,7 +529,7 @@ function MyStartup() {
                       type="number"
                       min={1}
                       value={startup.teamSize}
-                      onChange={(e) => updateStartup(startup.id, { teamSize: Number(e.target.value) })}
+                      onChange={(e) => saveOrUpdate( { teamSize: Number(e.target.value) })}
                     />
                   </div>
                 </div>
@@ -455,7 +613,7 @@ function MyStartup() {
                       variant="ghost"
                       size="sm"
                       onClick={() => {
-                        updateStartup(startup.id, { deckName: "" });
+                        saveOrUpdate( { deckName: "" });
                         toast.success("Deck removed");
                       }}
                     >

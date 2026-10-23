@@ -52,7 +52,7 @@ function StudentsPage() {
             email: reg.email,
             branch: "Computer Science & Engineering",
             year: "Final year",
-            startupId: matchingStartup?.id || "s1",
+            startupId: matchingStartup?.id || null,
             verified: false,
           });
         }

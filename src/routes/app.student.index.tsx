@@ -3,6 +3,7 @@ import { useState, useEffect } from "react";
 import {
   ArrowUpRight,
   Sparkles,
+  Rocket,
   TriangleAlert,
   CalendarCheck,
   UserPlus,
@@ -133,34 +134,40 @@ const AVAILABLE_TAGS = ["ShippedFeature", "MetricGrowth", "CustomerFeedback", "B
 function StudentDashboard() {
   const { startups, saved, requests, updateStartup, notify } = useVenture();
   const { user } = useAuth();
-  const STARTUP =
-    startups.find(
-      (s) =>
-        (user?.email && s.founderEmail?.toLowerCase() === user.email.toLowerCase()) ||
-        (user?.name && s.founder === user.name)
-    ) || startups[0]!;
+  const STARTUP = startups.find(
+    (s) =>
+      (user?.email && s.founderEmail?.toLowerCase() === user.email.toLowerCase()) ||
+      (user?.name && s.founder === user.name)
+  );
   const [analyzing, setAnalyzing] = useState(false);
   const [analysisStep, setAnalysisStep] = useState("");
   const [expandedCategory, setExpandedCategory] = useState<string | null>(null);
   const [aiConfig, setAiConfig] = useState(() => getAIConfig());
   const [assessmentResult, setAssessmentResult] = useState<AIReadinessResult | null>(() => {
-    return getSavedAssessment() || evaluateStartupLocally(STARTUP, getAIConfig().honestyLevel);
+    return getSavedAssessment() || (STARTUP ? evaluateStartupLocally(STARTUP, getAIConfig().honestyLevel) : null);
   });
 
   // Dynamic founder name and university from authenticated user
-  const founderName = user?.name || STARTUP.founder || "Founder";
-  const universityName = user?.org || STARTUP.university || "University";
+  const founderName = user?.name || STARTUP?.founder || "Founder";
+  const universityName = user?.org || STARTUP?.university || "University";
 
   // Auto-sync startup founder & university with authenticated user
   useEffect(() => {
-    if (user?.name && user?.org && (STARTUP.founder !== user.name || STARTUP.university !== user.org || STARTUP.founderEmail !== user.email)) {
+    if (
+      user?.name &&
+      user?.org &&
+      STARTUP &&
+      (STARTUP.founder !== user.name ||
+        STARTUP.university !== user.org ||
+        STARTUP.founderEmail !== user.email)
+    ) {
       updateStartup(STARTUP.id, {
         founder: user.name,
         university: user.org,
         founderEmail: user.email,
       });
     }
-  }, [user, STARTUP.id, STARTUP.founder, STARTUP.university, STARTUP.founderEmail, updateStartup]);
+  }, [user, STARTUP, updateStartup]);
 
   // Weekly updates state
   const [weeklyUpdates, setWeeklyUpdates] = useState<WeeklyUpdate[]>(() => {
@@ -297,12 +304,13 @@ function StudentDashboard() {
     }
 
     const acceptedCount = updated.filter((c) => c.status === "accepted").length;
-    updateStartup(STARTUP.id, { teamSize: 1 + acceptedCount });
-
-    notify("student", "Co-Founder Accepted!", `🎉 ${target.name} joined ${STARTUP.name} as ${target.role}.`);
-    toast.success(`🎉 ${target.name} is now an active Co-Founder!`, {
-      description: `They are officially linked to ${STARTUP.name} as ${target.role}.`,
-    });
+    if (STARTUP) {
+      updateStartup(STARTUP.id, { teamSize: 1 + acceptedCount });
+      notify("student", "Co-Founder Accepted!", `🎉 ${target.name} joined ${STARTUP.name} as ${target.role}.`);
+      toast.success(`🎉 ${target.name} is now an active Co-Founder!`, {
+        description: `They are officially linked to ${STARTUP.name} as ${target.role}.`,
+      });
+    }
   }
 
   function handleRemoveCoFounder(id: string) {
@@ -314,8 +322,69 @@ function StudentDashboard() {
       /* ignore */
     }
     const acceptedCount = updated.filter((c) => c.status === "accepted").length;
-    updateStartup(STARTUP.id, { teamSize: 1 + acceptedCount });
+    if (STARTUP) {
+      updateStartup(STARTUP.id, { teamSize: 1 + acceptedCount });
+    }
     toast.info("Co-founder removed from startup roster.");
+  }
+
+  if (!STARTUP) {
+    return (
+      <AppShell role="student">
+        <div className="mx-auto max-w-4xl space-y-8 py-8 animate-in fade-in-50">
+          <div className="text-center space-y-2">
+            <Badge variant="outline" className="text-primary border-primary/30 text-xs">
+              CampusVenture Student Incubator
+            </Badge>
+            <h1 className="text-3xl font-bold tracking-tight">
+              Welcome, {founderName}!
+            </h1>
+            <p className="text-muted-foreground text-sm max-w-lg mx-auto">
+              Start building your university startup profile, submit for incubator review, and get verified for accredited investor deal flow.
+            </p>
+          </div>
+
+          <Card className="border-2 border-primary/20 bg-gradient-to-b from-primary/5 to-background shadow-lg">
+            <CardHeader className="text-center pb-2">
+              <div className="mx-auto size-14 rounded-2xl bg-primary/10 flex items-center justify-center text-primary mb-3">
+                <Rocket className="size-7" />
+              </div>
+              <CardTitle className="text-xl">Launch Your University Startup</CardTitle>
+              <CardDescription className="text-sm">
+                You haven't submitted a startup idea yet. Document your problem, solution, sector, and pitch deck to begin.
+              </CardDescription>
+            </CardHeader>
+            <CardContent className="space-y-6 pt-4">
+              <div className="grid gap-4 sm:grid-cols-3">
+                <div className="rounded-xl border p-4 bg-background/50 space-y-2">
+                  <div className="size-8 rounded-lg bg-indigo-500/10 text-indigo-600 flex items-center justify-center font-bold text-sm">1</div>
+                  <h3 className="font-semibold text-sm">1. Document Idea</h3>
+                  <p className="text-xs text-muted-foreground">Detail your problem statement, solution, target market, and traction.</p>
+                </div>
+                <div className="rounded-xl border p-4 bg-background/50 space-y-2">
+                  <div className="size-8 rounded-lg bg-amber-500/10 text-amber-600 flex items-center justify-center font-bold text-sm">2</div>
+                  <h3 className="font-semibold text-sm">2. University Review</h3>
+                  <p className="text-xs text-muted-foreground">Your campus incubator verifies your team and endorses your venture.</p>
+                </div>
+                <div className="rounded-xl border p-4 bg-background/50 space-y-2">
+                  <div className="size-8 rounded-lg bg-emerald-500/10 text-emerald-600 flex items-center justify-center font-bold text-sm">3</div>
+                  <h3 className="font-semibold text-sm">3. Investor Deal Flow</h3>
+                  <p className="text-xs text-muted-foreground">Once verified, your startup is published directly to accredited investors.</p>
+                </div>
+              </div>
+
+              <div className="flex justify-center pt-2">
+                <Button asChild size="lg" className="gap-2 px-8 shadow-md">
+                  <Link to="/app/student/startup">
+                    <Plus className="size-4" /> Create Startup Profile & Submit Idea
+                  </Link>
+                </Button>
+              </div>
+            </CardContent>
+          </Card>
+        </div>
+      </AppShell>
+    );
   }
 
   const fallbackScores = categoryScores(STARTUP);
@@ -343,6 +412,10 @@ function StudentDashboard() {
   ].filter(Boolean) as string[];
 
   async function runAnalysis() {
+    if (!STARTUP) {
+      toast.error("Please create your startup profile before running an AI audit.");
+      return;
+    }
     setAnalyzing(true);
     setAnalysisStep("Connecting to AI Due Diligence Engine...");
 
@@ -400,6 +473,74 @@ function StudentDashboard() {
     <AppShell role="student">
       <div className="mx-auto max-w-6xl space-y-6">
         {/* Top Header Bar */}
+        {/* Institutional Verification Status Banner */}
+        {STARTUP.status === "pending" && (
+          <div className="rounded-xl border border-amber-500/40 bg-amber-500/10 p-5 text-amber-900 dark:text-amber-200 shadow-sm animate-in fade-in-50">
+            <div className="flex items-center justify-between gap-4 flex-wrap">
+              <div className="flex items-start gap-3">
+                <div className="size-9 rounded-lg bg-amber-500/20 flex items-center justify-center text-amber-600 dark:text-amber-400 shrink-0 mt-0.5">
+                  <Clock className="size-5" />
+                </div>
+                <div>
+                  <div className="flex items-center gap-2">
+                    <h3 className="font-semibold text-base">Pending University Approval</h3>
+                    <Badge className="bg-amber-500 text-white text-[10px]">In Review</Badge>
+                  </div>
+                  <p className="text-xs text-amber-800/90 dark:text-amber-300/90 mt-1 max-w-2xl">
+                    Your startup idea <strong>{STARTUP.name}</strong> was submitted to <strong>{STARTUP.university || "your university incubation cell"}</strong>. The incubation committee is currently reviewing your submission. Once approved, it will be automatically published to accredited investors.
+                  </p>
+                </div>
+              </div>
+              <Button asChild variant="outline" size="sm" className="border-amber-500/40 text-xs">
+                <Link to="/app/student/startup">View / Update Submission</Link>
+              </Button>
+            </div>
+          </div>
+        )}
+
+        {STARTUP.status === "approved" && (
+          <div className="rounded-xl border border-emerald-500/40 bg-emerald-500/10 p-5 text-emerald-900 dark:text-emerald-200 shadow-sm animate-in fade-in-50">
+            <div className="flex items-center justify-between gap-4 flex-wrap">
+              <div className="flex items-start gap-3">
+                <div className="size-9 rounded-lg bg-emerald-500/20 flex items-center justify-center text-emerald-600 dark:text-emerald-400 shrink-0 mt-0.5">
+                  <CheckCircle2 className="size-5" />
+                </div>
+                <div>
+                  <div className="flex items-center gap-2">
+                    <h3 className="font-semibold text-base">Approved & Verified by {STARTUP.university}</h3>
+                    <Badge className="bg-emerald-600 text-white text-[10px]">Verified Live</Badge>
+                  </div>
+                  <p className="text-xs text-emerald-800/90 dark:text-emerald-300/90 mt-1 max-w-2xl">
+                    🎉 Your startup is officially endorsed and published in the live accredited investor deal flow!
+                    {STARTUP.reviewNote ? ` University Endorsement Note: "${STARTUP.reviewNote}"` : ""}
+                  </p>
+                </div>
+              </div>
+              <Badge variant="outline" className="border-emerald-500/40 text-emerald-700 dark:text-emerald-300">
+                Active in Deal Flow
+              </Badge>
+            </div>
+          </div>
+        )}
+
+        {STARTUP.status === "draft" && (
+          <div className="rounded-xl border border-slate-200 bg-slate-50 dark:border-slate-800 dark:bg-slate-900/60 p-4">
+            <div className="flex items-center justify-between gap-4 flex-wrap">
+              <div>
+                <h3 className="font-semibold text-sm">Status: Draft (Not Submitted Yet)</h3>
+                <p className="text-xs text-muted-foreground mt-0.5">
+                  Complete your problem, solution, and pitch materials, then submit for university incubator approval.
+                </p>
+              </div>
+              <Button asChild size="sm" className="gap-1.5 text-xs">
+                <Link to="/app/student/startup">
+                  <Send className="size-3.5" /> Submit to University
+                </Link>
+              </Button>
+            </div>
+          </div>
+        )}
+
         <div className="flex flex-wrap items-end justify-between gap-4">
           <div>
             <h1 className="text-2xl font-semibold">Welcome back, {founderName}</h1>

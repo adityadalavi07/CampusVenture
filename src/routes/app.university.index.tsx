@@ -60,9 +60,10 @@ function UniversityDashboard() {
     }, {}),
   ).map(([name, value]) => ({ name, value }));
 
-  const avgReadiness = Math.round(
-    DEMO_STARTUPS.reduce((sum, s) => sum + s.readiness, 0) / DEMO_STARTUPS.length,
-  );
+  const avgReadiness =
+    DEMO_STARTUPS.length > 0
+      ? Math.round(DEMO_STARTUPS.reduce((sum, s) => sum + s.readiness, 0) / DEMO_STARTUPS.length)
+      : 0;
 
   const top = [...DEMO_STARTUPS].sort((a, b) => b.readiness - a.readiness).slice(0, 3);
 
