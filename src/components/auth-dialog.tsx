@@ -284,10 +284,10 @@ export function AuthDialog() {
       return;
     }
 
-    if (role === "student" && !isUniversityEmail(clean)) {
+    if ((role === "student" || role === "university") && !isUniversityEmail(clean)) {
       setFieldError(
         "email",
-        "Student registration requires an official university email (e.g. 252921389@sguk.ac.in or ending with .ac.in / .edu). Personal emails like Gmail/Yahoo are not allowed."
+        `${ROLES[role]} registration requires an official university/institutional email (e.g. 252921389@sguk.ac.in, .ac.in, .edu). Personal emails like Gmail/Yahoo are not allowed.`
       );
       return;
     }
@@ -447,6 +447,10 @@ export function AuthDialog() {
     if (busy) return;
     setBusy(true);
     try {
+      if (typeof window !== "undefined") {
+        window.localStorage.setItem("cv_oauth_pending_role", targetRole);
+        window.sessionStorage.setItem("cv_oauth_pending_role", targetRole);
+      }
       const res = await signInWithGoogle(targetRole);
       if (res.success) {
         // Live Google OAuth redirect initiated or user session active
@@ -610,8 +614,8 @@ export function AuthDialog() {
     if (!emailOk(cleanEmail)) {
       setFieldError("email", "Enter a valid email address.");
       bad = true;
-    } else if (role === "student" && !isUniversityEmail(cleanEmail)) {
-      setFieldError("email", "Student registration requires an official university email (e.g. 252921389@sguk.ac.in).");
+    } else if ((role === "student" || role === "university") && !isUniversityEmail(cleanEmail)) {
+      setFieldError("email", `${ROLES[role]} registration requires an official university email (e.g. 252921389@sguk.ac.in, .ac.in, .edu).`);
       bad = true;
     }
     if (!pwOk(fPw)) {
@@ -704,8 +708,17 @@ export function AuthDialog() {
                   disabled={busy}
                 >
                   <GoogleIcon />
-                  <span>Continue with Google</span>
+                  <span>
+                    {role === "student" || role === "university"
+                      ? `Continue with Google (${ROLES[role]} Account)`
+                      : "Continue with Google"}
+                  </span>
                 </button>
+                {(role === "student" || role === "university") && (
+                  <div style={{ fontSize: 11.5, color: "var(--mute)", textAlign: "center", marginTop: -6, marginBottom: 12 }}>
+                    🔒 Official university Google Workspace account required (@sguk.ac.in, .ac.in, .edu)
+                  </div>
+                )}
 
                 <div className="auth-divider">
                   <span>or continue with email</span>
@@ -882,8 +895,17 @@ export function AuthDialog() {
                   disabled={busy}
                 >
                   <GoogleIcon />
-                  <span>Sign up with Google as {ROLES[role]}</span>
+                  <span>
+                    {role === "student" || role === "university"
+                      ? `Sign up with Google (${ROLES[role]} Account)`
+                      : `Sign up with Google as ${ROLES[role]}`}
+                  </span>
                 </button>
+                {(role === "student" || role === "university") && (
+                  <div style={{ fontSize: 11.5, color: "var(--mute)", textAlign: "center", marginTop: -6, marginBottom: 12 }}>
+                    🔒 Official university Google Workspace account required (@sguk.ac.in, .ac.in, .edu)
+                  </div>
+                )}
 
                 <div className="auth-divider">
                   <span>or register with email</span>
@@ -988,9 +1010,9 @@ export function AuthDialog() {
                     <label htmlFor="auth-reg-email" style={{ margin: 0 }}>
                       {role === "student" ? "University Student Email" : role === "university" ? "Official University Email" : "Email Address"}
                     </label>
-                    {role === "student" && (
+                    {(role === "student" || role === "university") && (
                       <span style={{ fontSize: 11, color: "var(--mute)" }}>
-                        .ac.in / .edu required
+                        .ac.in / .edu / @sguk.ac.in required
                       </span>
                     )}
                   </div>
@@ -1010,7 +1032,7 @@ export function AuthDialog() {
                       onClick={handleSendOtp}
                       disabled={
                         isEmailVerified ||
-                        (role === "student" ? !isUniversityEmail(fEmail.trim()) : !emailOk(fEmail.trim())) ||
+                        ((role === "student" || role === "university") ? !isUniversityEmail(fEmail.trim()) : !emailOk(fEmail.trim())) ||
                         busy
                       }
                     >
@@ -1029,11 +1051,11 @@ export function AuthDialog() {
                   </div>
                   {errors["email"] && <div className="err">{errors["email"]}</div>}
 
-                  {/* Student email domain guidance alerts */}
-                  {role === "student" && fEmail.trim().length > 0 && !errors["email"] && (
+                  {/* Institutional email domain guidance alerts */}
+                  {(role === "student" || role === "university") && fEmail.trim().length > 0 && !errors["email"] && (
                     !isUniversityEmail(fEmail.trim()) ? (
                       <div style={{ fontSize: 11.5, color: "#fca5a5", marginTop: 4 }}>
-                        ⚠️ Only official university emails are allowed (e.g. 252921389@sguk.ac.in or .ac.in / .edu). Personal emails like Gmail/Yahoo are not permitted.
+                        ⚠️ Only official university/institutional emails are allowed (e.g. 252921389@sguk.ac.in or .ac.in / .edu). Personal emails like Gmail/Yahoo are not permitted.
                       </div>
                     ) : !isEmailVerified ? (
                       <div style={{ fontSize: 11.5, color: "var(--ok)", marginTop: 4, display: "flex", alignItems: "center", gap: 4 }}>
@@ -1380,55 +1402,59 @@ export function AuthDialog() {
                   </p>
 
                   <div style={{ display: "flex", flexDirection: "column", gap: 8, marginBottom: 16 }}>
-                    {/* Verified Investor Account */}
-                    <button
-                      type="button"
-                      className="google-account-item"
-                      onClick={async () => {
-                        setShowGooglePicker(false);
-                        const res = await signInWithGoogle(role, "dalaviaditya07@gmail.com", "Aditya Dalvi");
-                        if (res.success && res.user) {
-                          closeAuthModal();
-                          router.navigate({ to: `/app/${res.user.role || role}` });
-                        }
-                      }}
-                    >
-                      <div className="google-avatar">A</div>
-                      <div style={{ flex: 1, minWidth: 0 }}>
-                        <div style={{ fontWeight: 600, fontSize: 13.5, color: "var(--text)" }}>
-                          Aditya Dalvi
+                    {/* Show Verified Investor only for Investor role */}
+                    {role === "investor" && (
+                      <button
+                        type="button"
+                        className="google-account-item"
+                        onClick={async () => {
+                          setShowGooglePicker(false);
+                          const res = await signInWithGoogle(role, "dalaviaditya07@gmail.com", "Aditya Dalvi");
+                          if (res.success && res.user) {
+                            closeAuthModal();
+                            router.navigate({ to: `/app/${res.user.role || role}` });
+                          }
+                        }}
+                      >
+                        <div className="google-avatar">A</div>
+                        <div style={{ flex: 1, minWidth: 0 }}>
+                          <div style={{ fontWeight: 600, fontSize: 13.5, color: "var(--text)" }}>
+                            Aditya Dalvi
+                          </div>
+                          <div style={{ fontSize: 12, color: "var(--mute)", overflow: "hidden", textOverflow: "ellipsis" }}>
+                            dalaviaditya07@gmail.com
+                          </div>
                         </div>
-                        <div style={{ fontSize: 12, color: "var(--mute)", overflow: "hidden", textOverflow: "ellipsis" }}>
-                          dalaviaditya07@gmail.com
-                        </div>
-                      </div>
-                      <span className="google-verified-badge">Verified</span>
-                    </button>
+                        <span className="google-verified-badge">Verified Investor</span>
+                      </button>
+                    )}
 
-                    {/* Verified Student Account */}
-                    <button
-                      type="button"
-                      className="google-account-item"
-                      onClick={async () => {
-                        setShowGooglePicker(false);
-                        const res = await signInWithGoogle(role, "252921378@sguk.ac.in", "Student (SGU)");
-                        if (res.success && res.user) {
-                          closeAuthModal();
-                          router.navigate({ to: `/app/${res.user.role || role}` });
-                        }
-                      }}
-                    >
-                      <div className="google-avatar" style={{ background: "linear-gradient(135deg, #10b981, #059669)" }}>S</div>
-                      <div style={{ flex: 1, minWidth: 0 }}>
-                        <div style={{ fontWeight: 600, fontSize: 13.5, color: "var(--text)" }}>
-                          SGU Institutional Student
+                    {/* Show Verified Student only for Student / University roles */}
+                    {(role === "student" || role === "university") && (
+                      <button
+                        type="button"
+                        className="google-account-item"
+                        onClick={async () => {
+                          setShowGooglePicker(false);
+                          const res = await signInWithGoogle(role, "252921378@sguk.ac.in", "Student (SGU)");
+                          if (res.success && res.user) {
+                            closeAuthModal();
+                            router.navigate({ to: `/app/${res.user.role || role}` });
+                          }
+                        }}
+                      >
+                        <div className="google-avatar" style={{ background: "linear-gradient(135deg, #10b981, #059669)" }}>S</div>
+                        <div style={{ flex: 1, minWidth: 0 }}>
+                          <div style={{ fontWeight: 600, fontSize: 13.5, color: "var(--text)" }}>
+                            SGU Institutional Student
+                          </div>
+                          <div style={{ fontSize: 12, color: "var(--mute)", overflow: "hidden", textOverflow: "ellipsis" }}>
+                            252921378@sguk.ac.in
+                          </div>
                         </div>
-                        <div style={{ fontSize: 12, color: "var(--mute)", overflow: "hidden", textOverflow: "ellipsis" }}>
-                          252921378@sguk.ac.in
-                        </div>
-                      </div>
-                      <span className="google-verified-badge" style={{ background: "rgba(16, 185, 129, 0.15)", color: "#10b981" }}>SGU</span>
-                    </button>
+                        <span className="google-verified-badge" style={{ background: "rgba(16, 185, 129, 0.15)", color: "#10b981" }}>Official SGU</span>
+                      </button>
+                    )}
 
                     {/* Custom Google Account Option */}
                     <div
@@ -1441,15 +1467,28 @@ export function AuthDialog() {
                       }}
                     >
                       <label style={{ fontSize: 12, fontWeight: 600, color: "var(--text)", marginBottom: 4 }}>
-                        Or enter another Google / Institutional Email:
+                        {role === "student" || role === "university"
+                          ? "Or enter your official university email:"
+                          : "Or enter another Google / Firm Email:"}
                       </label>
                       <input
                         type="email"
-                        placeholder="e.g. founder@sguk.ac.in or user@gmail.com"
+                        placeholder={
+                          role === "student" || role === "university"
+                            ? "e.g. 252921378@sguk.ac.in or student@university.edu"
+                            : "e.g. partner@fund.vc or user@gmail.com"
+                        }
                         value={customGoogleEmail}
                         onChange={(e) => setCustomGoogleEmail(e.target.value)}
                         style={{ height: 36, fontSize: 13, marginBottom: 8 }}
                       />
+                      {(role === "student" || role === "university") &&
+                        customGoogleEmail.includes("@") &&
+                        !isUniversityEmail(customGoogleEmail) && (
+                          <div style={{ color: "#ef4444", fontSize: 11.5, marginBottom: 8, lineHeight: 1.4 }}>
+                            ⚠️ Personal email addresses (@gmail.com) are strictly prohibited for {ROLES[role]}. You must use an official university domain (.ac.in, .edu, @sguk.ac.in).
+                          </div>
+                        )}
                       <input
                         type="text"
                         placeholder="Your Name (optional)"
@@ -1461,7 +1500,10 @@ export function AuthDialog() {
                         type="button"
                         className="btn primary"
                         style={{ height: 34, fontSize: 13 }}
-                        disabled={!customGoogleEmail.includes("@")}
+                        disabled={
+                          !customGoogleEmail.includes("@") ||
+                          ((role === "student" || role === "university") && !isUniversityEmail(customGoogleEmail))
+                        }
                         onClick={async () => {
                           setShowGooglePicker(false);
                           const res = await signInWithGoogle(role, customGoogleEmail, customGoogleName);

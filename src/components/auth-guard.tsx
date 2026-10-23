@@ -14,6 +14,7 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { useAuth } from "@/lib/auth-context";
+import { isUniversityEmail } from "@/lib/universities";
 import type { Role } from "@/lib/demo-data";
 
 interface AuthGuardProps {
@@ -43,7 +44,7 @@ const ROLE_INFO: Record<Role, { title: string; badge: string; icon: typeof Gradu
 };
 
 export function AuthGuard({ requiredRole, children }: AuthGuardProps) {
-  const { user, isAuthenticated, isLoading, openAuthModal } = useAuth();
+  const { user, isAuthenticated, isLoading, openAuthModal, signOut } = useAuth();
 
   if (isLoading) {
     return (
@@ -100,6 +101,69 @@ export function AuthGuard({ requiredRole, children }: AuthGuardProps) {
                 <UserPlus className="size-4" />
                 Create {targetRole.title} Account
               </Button>
+              <Button variant="ghost" asChild className="w-full text-xs text-muted-foreground">
+                <Link to="/">Return to Homepage</Link>
+              </Button>
+            </div>
+          </CardContent>
+        </Card>
+      </div>
+    );
+  }
+
+  // 1.5. Institutional Domain Guard for Student and University Roles
+  if (
+    (requiredRole === "student" || requiredRole === "university") &&
+    user.email &&
+    !isUniversityEmail(user.email)
+  ) {
+    return (
+      <div className="mx-auto max-w-lg py-12 px-4">
+        <Card className="border-destructive/40 bg-card shadow-elevated">
+          <CardHeader className="text-center pb-2">
+            <div className="mx-auto mb-3 grid size-12 place-items-center rounded-xl bg-destructive/10 text-destructive">
+              <ShieldAlert className="size-6" />
+            </div>
+            <div className="flex justify-center">
+              <Badge variant="destructive" className="mb-2 text-xs">
+                Official University Email Required
+              </Badge>
+            </div>
+            <CardTitle className="text-xl">Institutional Access Only</CardTitle>
+            <CardDescription className="text-xs">
+              The {targetRole.title} portal strictly requires an official university or college email (@sguk.ac.in, .ac.in, .edu).
+            </CardDescription>
+          </CardHeader>
+          <CardContent className="space-y-4 pt-4">
+            <div className="rounded-lg border border-destructive/20 bg-destructive/5 p-3.5 space-y-2 text-xs">
+              <div className="flex items-center justify-between">
+                <span className="text-muted-foreground">Signed In Account:</span>
+                <span className="font-semibold text-foreground">{user.email}</span>
+              </div>
+              <p className="text-destructive font-medium">
+                Personal email providers (@gmail.com, @yahoo.com) are not allowed for {targetRole.title} accounts. Personal accounts may only be used by Investors.
+              </p>
+            </div>
+
+            <div className="flex flex-col gap-2.5">
+              <Button
+                onClick={() => {
+                  signOut();
+                  openAuthModal(requiredRole, "signin");
+                }}
+                className="w-full flex items-center justify-center gap-2"
+              >
+                <LogIn className="size-4" />
+                Sign In with Official University Email
+              </Button>
+              {user.role === "investor" && (
+                <Button variant="secondary" asChild className="w-full">
+                  <Link to="/app/investor">
+                    Return to Investor Portal
+                    <ArrowRight className="ml-1 size-4" />
+                  </Link>
+                </Button>
+              )}
               <Button variant="ghost" asChild className="w-full text-xs text-muted-foreground">
                 <Link to="/">Return to Homepage</Link>
               </Button>

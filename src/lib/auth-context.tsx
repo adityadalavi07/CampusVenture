@@ -8,6 +8,7 @@ import {
 } from "react";
 import type { Role } from "@/lib/demo-data";
 import { supabase, checkDatabaseConnection, type ConnectionStatus } from "@/lib/supabase";
+import { isUniversityEmail } from "@/lib/universities";
 import { toast } from "sonner";
 
 export interface AuthUser {
@@ -132,10 +133,11 @@ function extractUserData(supabaseUser: {
 }): AuthUser {
   const meta = supabaseUser.user_metadata || {};
   const rawRole = meta["role"];
+  const userEmail = (supabaseUser.email || "").toLowerCase().trim();
   const role: Role =
     rawRole === "student" || rawRole === "investor" || rawRole === "university"
       ? rawRole
-      : "student";
+      : (userEmail && isUniversityEmail(userEmail) ? "student" : "investor");
 
   const rawName = meta["name"] || meta["full_name"];
   const name =
@@ -158,6 +160,134 @@ function extractUserData(supabaseUser: {
     avatarInitials: getInitials(name),
     isDemo: false,
   };
+}
+
+function getOAuthPendingRole(): Role | null {
+  if (typeof window === "undefined") return null;
+  try {
+    const urlParams = new URLSearchParams(window.location.search);
+    const fromParam = urlParams.get("oauth_role") as Role | null;
+    if (fromParam && (fromParam === "student" || fromParam === "investor" || fromParam === "university")) {
+      return fromParam;
+    }
+    const fromLocal = window.localStorage.getItem("cv_oauth_pending_role") as Role | null;
+    if (fromLocal && (fromLocal === "student" || fromLocal === "investor" || fromLocal === "university")) {
+      return fromLocal;
+    }
+    const fromSession = window.sessionStorage.getItem("cv_oauth_pending_role") as Role | null;
+    if (fromSession && (fromSession === "student" || fromSession === "investor" || fromSession === "university")) {
+      return fromSession;
+    }
+    const path = window.location.pathname;
+    if (path.includes("/app/student")) return "student";
+    if (path.includes("/app/university")) return "university";
+    if (path.includes("/app/investor")) return "investor";
+  } catch {
+    /* ignore */
+  }
+  return null;
+}
+
+function clearOAuthPendingRole(): void {
+  if (typeof window === "undefined") return;
+  try {
+    window.localStorage.removeItem("cv_oauth_pending_role");
+    window.sessionStorage.removeItem("cv_oauth_pending_role");
+    const url = new URL(window.location.href);
+    if (url.searchParams.has("oauth_role")) {
+      url.searchParams.delete("oauth_role");
+      window.history.replaceState({}, document.title, url.pathname + (url.search ? url.search : "") + url.hash);
+    }
+  } catch {
+    /* ignore */
+  }
+}
+
+async function validateAndEnforceInstitutionalRole(
+  sessionUser: { id: string; email?: string; user_metadata?: Record<string, unknown> },
+  pendingRole: Role | null
+): Promise<{ allowed: boolean; authUser?: AuthUser; error?: string }> {
+  const userEmail = (sessionUser.email || "").toLowerCase().trim();
+  const meta = sessionUser.user_metadata || {};
+  const rawRole = meta["role"] as Role | undefined;
+
+  const intendedRole: Role =
+    pendingRole ||
+    (rawRole && (rawRole === "student" || rawRole === "university" || rawRole === "investor")
+      ? rawRole
+      : (isUniversityEmail(userEmail) ? "student" : "investor"));
+
+  // STRICT RULE: If intended role is student or university, email MUST be an official university email
+  if (intendedRole === "student" || intendedRole === "university") {
+    if (!isUniversityEmail(userEmail)) {
+      clearOAuthPendingRole();
+      try {
+        await supabase.auth.signOut();
+      } catch {
+        /* ignore */
+      }
+      try {
+        window.localStorage.removeItem(AUTH_STORAGE_KEY);
+      } catch {
+        /* ignore */
+      }
+
+      const errMsg = `Institutional Access Denied: "${userEmail}" is a personal email address. Student and University accounts strictly require an official university email (@sguk.ac.in, .ac.in, .edu). Personal emails are only permitted for Investors.`;
+
+      toast.error(errMsg, { duration: 10000 });
+      return { allowed: false, error: errMsg };
+    }
+  }
+
+  // Allowed! Build auth user
+  const name =
+    (typeof meta["full_name"] === "string" && (meta["full_name"] as string).trim()) ||
+    (typeof meta["name"] === "string" && (meta["name"] as string).trim()) ||
+    userEmail.split("@")[0] ||
+    "User";
+
+  const defaultOrg = ROLE_PROFILES[intendedRole]?.org || "CampusVenture";
+  const org =
+    (typeof meta["org"] === "string" && (meta["org"] as string).trim()) ||
+    defaultOrg;
+
+  const authUser: AuthUser = {
+    id: sessionUser.id,
+    email: userEmail,
+    name,
+    role: intendedRole,
+    org,
+    avatarInitials: getInitials(name),
+    isDemo: false,
+  };
+
+  // Sync role to Supabase user_metadata if changed or missing
+  if (rawRole !== intendedRole) {
+    try {
+      await supabase.auth.updateUser({
+        data: { role: intendedRole, name, org },
+      });
+    } catch {
+      /* ignore */
+    }
+  }
+
+  // Sync to public.profiles table in Supabase
+  try {
+    await (supabase as any).from("profiles").upsert({
+      id: sessionUser.id,
+      email: userEmail,
+      name,
+      role: intendedRole,
+      org,
+      updated_at: new Date().toISOString(),
+    });
+  } catch (profErr) {
+    console.warn("[CampusVenture Auth] Profile upsert notice:", profErr);
+  }
+
+  clearOAuthPendingRole();
+  return { allowed: true, authUser };
 }
 
 function loadRegisteredUsers(): RegisteredAccount[] {
@@ -239,18 +369,44 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         const { data: { session } } = await supabase.auth.getSession();
 
         if (session?.user && mounted) {
-          const authUser = extractUserData(session.user);
-          setUser(authUser);
+          const pendingRole = getOAuthPendingRole();
+          const check = await validateAndEnforceInstitutionalRole(session.user, pendingRole);
+          if (check.allowed && check.authUser) {
+            setUser(check.authUser);
+            try {
+              window.localStorage.setItem(AUTH_STORAGE_KEY, JSON.stringify(check.authUser));
+            } catch {
+              /* ignore */
+            }
+          } else {
+            setUser(null);
+            if (
+              typeof window !== "undefined" &&
+              (window.location.pathname.includes("/app/student") ||
+                window.location.pathname.includes("/app/university"))
+            ) {
+              window.location.href = "/";
+            }
+          }
         } else if (mounted) {
           // Check cached local auth
           const cached = window.localStorage.getItem(AUTH_STORAGE_KEY);
           if (cached) {
             try {
               const parsed = JSON.parse(cached) as AuthUser;
-              setUser({
-                ...parsed,
-                avatarInitials: getInitials(parsed.name),
-              });
+              // Strict verification on cached credentials
+              if (
+                (parsed.role === "student" || parsed.role === "university") &&
+                !isUniversityEmail(parsed.email)
+              ) {
+                window.localStorage.removeItem(AUTH_STORAGE_KEY);
+                setUser(null);
+              } else {
+                setUser({
+                  ...parsed,
+                  avatarInitials: getInitials(parsed.name),
+                });
+              }
             } catch {
               // Corrupt cache - leave user null
             }
@@ -266,13 +422,32 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     initialize();
 
     // Listen to Supabase auth state changes
-    const { data: { subscription } } = supabase.auth.onAuthStateChange((_event, session) => {
+    const { data: { subscription } } = supabase.auth.onAuthStateChange(async (event, session) => {
       if (!mounted) return;
       if (session?.user) {
-        const authUser = extractUserData(session.user);
-        setUser(authUser);
+        const pendingRole = getOAuthPendingRole();
+        const check = await validateAndEnforceInstitutionalRole(session.user, pendingRole);
+        if (check.allowed && check.authUser) {
+          setUser(check.authUser);
+          try {
+            window.localStorage.setItem(AUTH_STORAGE_KEY, JSON.stringify(check.authUser));
+          } catch {
+            /* ignore */
+          }
+        } else {
+          setUser(null);
+          if (
+            typeof window !== "undefined" &&
+            (window.location.pathname.includes("/app/student") ||
+              window.location.pathname.includes("/app/university"))
+          ) {
+            window.location.href = "/";
+          }
+        }
+      } else if (event === "SIGNED_OUT") {
+        setUser(null);
         try {
-          window.localStorage.setItem(AUTH_STORAGE_KEY, JSON.stringify(authUser));
+          window.localStorage.removeItem(AUTH_STORAGE_KEY);
         } catch {
           /* ignore */
         }
@@ -293,6 +468,14 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       expectedRole?: Role
     ): Promise<{ success: boolean; error?: string; user?: AuthUser }> => {
       const cleanEmail = email.trim().toLowerCase();
+
+      // 1. Strict institutional verification for Student & University
+      if ((expectedRole === "student" || expectedRole === "university") && !isUniversityEmail(cleanEmail)) {
+        return {
+          success: false,
+          error: `Institutional Access Denied: ${cleanEmail} is a personal email. ${expectedRole === "student" ? "Student" : "University"} accounts require an official university email (@sguk.ac.in, .ac.in, .edu).`,
+        };
+      }
 
       // 1. Check local registered accounts first
       const currentAccounts = loadRegisteredUsers();
@@ -427,6 +610,14 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     }): Promise<{ success: boolean; error?: string; user?: AuthUser }> => {
       const cleanEmail = email.trim().toLowerCase();
 
+      // Strict institutional check for Student & University
+      if ((role === "student" || role === "university") && !isUniversityEmail(cleanEmail)) {
+        return {
+          success: false,
+          error: `Institutional Access Denied: ${cleanEmail} is a personal email. ${role === "student" ? "Student" : "University"} registration requires an official university email (@sguk.ac.in, .ac.in, .edu).`,
+        };
+      }
+
       // Check if already registered
       const currentAccounts = loadRegisteredUsers();
       if (currentAccounts.some((a) => a.email.toLowerCase() === cleanEmail)) {
@@ -534,6 +725,12 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const switchRole = useCallback(
     (newRole: Role) => {
       if (user) {
+        if ((newRole === "student" || newRole === "university") && !isUniversityEmail(user.email)) {
+          toast.error(
+            `Cannot switch to ${newRole}: official university email required. Personal emails are only permitted for Investors.`
+          );
+          return;
+        }
         const updated: AuthUser = {
           ...user,
           role: newRole,
@@ -591,6 +788,17 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       // If a specific Google account email is provided (1-click institutional access)
       if (customGoogleEmail && customGoogleEmail.includes("@")) {
         const cleanEmail = customGoogleEmail.trim().toLowerCase();
+
+        // 1. Strict institutional verification for Student & University
+        if ((role === "student" || role === "university") && !isUniversityEmail(cleanEmail)) {
+          const errMsg = `Institutional Access Denied: ${cleanEmail} is a personal email. ${role === "student" ? "Student" : "University"} registration requires an official university email (e.g. @sguk.ac.in, .ac.in, .edu). Personal emails are only permitted for Investors.`;
+          toast.error(errMsg, { duration: 8000 });
+          return {
+            success: false,
+            error: errMsg,
+          };
+        }
+
         const cleanName = (customGoogleName || cleanEmail.split("@")[0] || "Google User").trim();
         const defaultOrg = ROLE_PROFILES[role]?.org || "CampusVenture";
 
@@ -675,6 +883,11 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
       // Try live Supabase Google OAuth
       try {
+        if (typeof window !== "undefined") {
+          window.localStorage.setItem("cv_oauth_pending_role", role);
+          window.sessionStorage.setItem("cv_oauth_pending_role", role);
+        }
+
         const oauthOptions: {
           redirectTo?: string;
           queryParams?: { [key: string]: string };
@@ -685,7 +898,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
           },
         };
         if (redirectUrl) {
-          oauthOptions.redirectTo = redirectUrl;
+          oauthOptions.redirectTo = `${redirectUrl}?oauth_role=${role}`;
         }
 
         const { error } = await supabase.auth.signInWithOAuth({
