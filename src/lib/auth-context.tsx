@@ -622,6 +622,45 @@ export function AuthProvider({ children }: { children: ReactNode }) {
           isDemo: false,
         };
 
+        // Sync directly to Supabase profiles
+        let targetId = existing.id;
+        try {
+          const { data: existingProf } = await (supabase as any)
+            .from("profiles")
+            .select("id")
+            .eq("email", cleanEmail)
+            .maybeSingle();
+
+          if ((existingProf as any)?.id) {
+            targetId = (existingProf as any).id;
+          } else {
+            const { data: authData } = await supabase.auth.signUp({
+              email: cleanEmail,
+              password: "google_oauth_auth_" + cleanEmail,
+              options: {
+                data: { role, name: cleanName, org: defaultOrg },
+              },
+            });
+            if (authData?.user?.id) {
+              targetId = authData.user.id;
+            }
+          }
+
+          if (targetId && targetId.includes("-")) {
+            await (supabase as any).from("profiles").upsert({
+              id: targetId,
+              email: cleanEmail,
+              name: cleanName,
+              role,
+              org: defaultOrg,
+              updated_at: new Date().toISOString(),
+            });
+            authUser.id = targetId;
+          }
+        } catch (syncErr) {
+          console.warn("[CampusVenture Auth] Google profile sync notice:", syncErr);
+        }
+
         setUser(authUser);
         try {
           window.localStorage.setItem(AUTH_STORAGE_KEY, JSON.stringify(authUser));
