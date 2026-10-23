@@ -103,7 +103,7 @@ function MyStartup() {
   function saveOrUpdate(patch: Partial<StartupRecord>) {
     setLocalStartup((prev) => ({ ...prev, ...patch }));
     if (studentStartup) {
-      saveOrUpdate( patch);
+      updateStartup(startup.id, patch);
     } else {
       const createdId = createStartup({
         ...startup,
@@ -185,38 +185,70 @@ function MyStartup() {
     });
   }
 
+  function saveDraft() {
+    const currentName = stName.trim() || "Untitled Campus Startup";
+    saveOrUpdate({
+      name: currentName,
+      tagline: stTagline.trim(),
+      location: stLocation.trim() || startup.location,
+      problem: problem.trim(),
+      solution: solution.trim(),
+      businessModel: model.trim() || startup.businessModel,
+      traction: traction.trim() || startup.traction,
+      videoUrl: videoUrl.trim() || startup.videoUrl,
+      status: "draft",
+      updatedAt: new Date().toISOString(),
+    });
+    toast.success("Draft saved successfully!");
+  }
+
   function submitForReview() {
-    if (!startup.name || startup.name.trim().length < 2) {
+    const currentName = stName.trim();
+    const currentTagline = stTagline.trim();
+    const currentProblem = problem.trim();
+    const currentSolution = solution.trim();
+
+    if (!currentName || currentName.length < 2) {
       toast.error("Please enter a name for your startup.");
       return;
     }
-    if (!startup.tagline || startup.tagline.trim().length < 5) {
+    if (!currentTagline || currentTagline.length < 3) {
       toast.error("Please enter a one-line tagline for your startup.");
       return;
     }
-    if (!startup.problem || startup.problem.trim().length < 10) {
-      toast.error("Please explain the problem your startup solves (at least 10 characters).");
+    if (!currentProblem || currentProblem.length < 5) {
+      toast.error("Please explain the problem your startup solves (at least 5 characters).");
       return;
     }
-    if (!startup.solution || startup.solution.trim().length < 10) {
-      toast.error("Please describe your solution (at least 10 characters).");
+    if (!currentSolution || currentSolution.length < 5) {
+      toast.error("Please describe your solution (at least 5 characters).");
       return;
     }
 
-    saveOrUpdate({
+    const payload: Partial<StartupRecord> = {
+      name: currentName,
+      tagline: currentTagline,
+      location: stLocation.trim() || startup.location,
+      problem: currentProblem,
+      solution: currentSolution,
+      businessModel: model.trim() || startup.businessModel,
+      traction: traction.trim() || startup.traction,
+      videoUrl: videoUrl.trim() || startup.videoUrl,
       status: "pending",
       updatedAt: new Date().toISOString(),
-    });
+    };
+
+    saveOrUpdate(payload);
 
     notify(
       "university",
       "New Startup Submitted for Incubator Review",
-      `${startup.name} (${startup.sector}) by ${startup.founder || user?.name || "Student"} was submitted for verification.`
+      `${currentName} (${startup.sector}) by ${startup.founder || user?.name || "Student"} was submitted for verification.`
     );
     notify(
       "student",
       "Submitted for University Review",
-      `Your startup ${startup.name} has been submitted to your university incubator. Status: Pending University Approval.`
+      `Your startup idea ${currentName} has been submitted to your university incubator. Status: Pending University Approval.`
     );
     toast.success("Submitted for university review! 🚀", {
       description: "Your university incubation cell has received your submission. Status is now Pending Approval.",
@@ -229,20 +261,23 @@ function MyStartup() {
         <div className="flex flex-wrap items-end justify-between gap-4">
           <div>
             <div className="flex items-center gap-2.5">
-              <h1 className="text-2xl font-semibold">{startup.name}</h1>
-              <Badge variant="outline" className="text-xs">{startup.sector}</Badge>
+              <h1 className="text-2xl font-semibold">{stName.trim() || startup.name || "My Startup"}</h1>
+              <Badge variant="outline" className="text-xs">{startup.sector || "General"}</Badge>
             </div>
             <p className="text-sm text-muted-foreground mt-0.5">
-              {startup.tagline || "Campus-incubated venture"} · {startup.stage} · {user?.org || startup.university}
+              {stTagline.trim() || startup.tagline || "Describe your startup in one compelling sentence"} · {startup.stage} · {user?.org || startup.university}
             </p>
           </div>
           <div className="flex items-center gap-2">
-            <Badge variant={startup.status === "approved" ? "default" : "secondary"}>
-              {STATUS_LABEL[startup.status]}
+            <Badge variant={startup.status === "approved" ? "default" : "secondary"} className={startup.status === "pending" ? "bg-amber-500 text-white" : startup.status === "approved" ? "bg-emerald-600 text-white" : ""}>
+              {startup.status === "pending" ? "⏳ Pending University Approval" : startup.status === "approved" ? "✓ Verified Live" : STATUS_LABEL[startup.status]}
             </Badge>
+            <Button variant="outline" size="sm" onClick={saveDraft}>
+              Save Draft
+            </Button>
             <Button onClick={submitForReview} disabled={startup.status === "pending"}>
               <Send className="size-4" aria-hidden="true" />
-              {startup.status === "pending" ? "Awaiting review" : "Submit for review"}
+              {startup.status === "pending" ? "Pending Approval" : "Submit for University Review"}
             </Button>
           </div>
         </div>
