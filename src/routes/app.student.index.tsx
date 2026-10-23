@@ -133,7 +133,12 @@ const AVAILABLE_TAGS = ["ShippedFeature", "MetricGrowth", "CustomerFeedback", "B
 function StudentDashboard() {
   const { startups, saved, requests, updateStartup, notify } = useVenture();
   const { user } = useAuth();
-  const STARTUP = startups[0]!;
+  const STARTUP =
+    startups.find(
+      (s) =>
+        (user?.email && s.founderEmail?.toLowerCase() === user.email.toLowerCase()) ||
+        (user?.name && s.founder === user.name)
+    ) || startups[0]!;
   const [analyzing, setAnalyzing] = useState(false);
   const [analysisStep, setAnalysisStep] = useState("");
   const [expandedCategory, setExpandedCategory] = useState<string | null>(null);
@@ -148,10 +153,14 @@ function StudentDashboard() {
 
   // Auto-sync startup founder & university with authenticated user
   useEffect(() => {
-    if (user?.name && user?.org && (STARTUP.founder !== user.name || STARTUP.university !== user.org)) {
-      updateStartup(STARTUP.id, { founder: user.name, university: user.org });
+    if (user?.name && user?.org && (STARTUP.founder !== user.name || STARTUP.university !== user.org || STARTUP.founderEmail !== user.email)) {
+      updateStartup(STARTUP.id, {
+        founder: user.name,
+        university: user.org,
+        founderEmail: user.email,
+      });
     }
-  }, [user, STARTUP.id, STARTUP.founder, STARTUP.university, updateStartup]);
+  }, [user, STARTUP.id, STARTUP.founder, STARTUP.university, STARTUP.founderEmail, updateStartup]);
 
   // Weekly updates state
   const [weeklyUpdates, setWeeklyUpdates] = useState<WeeklyUpdate[]>(() => {

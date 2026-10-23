@@ -37,9 +37,10 @@ const DEFAULTS: Record<Role, { name: string; email: string; org: string; bio: st
 const KEY = (role: Role) => `campusventure.profile.${role}`;
 
 export function SettingsView({ role }: { role: Role }) {
-  const { resetDemo } = useVenture();
-  const { user, signOut } = useAuth();
+  const { resetDemo, startups, updateStartup, updateStudent } = useVenture();
+  const { user, signOut, updateProfile } = useAuth();
   const router = useRouter();
+  const [saving, setSaving] = useState(false);
 
   const [profile, setProfile] = useState(() => {
     let saved: Partial<{ name: string; email: string; org: string; bio: string }> = {};
@@ -73,13 +74,47 @@ export function SettingsView({ role }: { role: Role }) {
   const [emailAlerts, setEmailAlerts] = useState(true);
   const [weeklyDigest, setWeeklyDigest] = useState(role === "university");
 
-  function save() {
+  async function save() {
+    setSaving(true);
     try {
       window.localStorage.setItem(KEY(role), JSON.stringify(profile));
     } catch {
       /* ignore */
     }
-    toast.success("Profile saved");
+
+    // 1. Sync to AuthContext & Supabase profiles
+    if (updateProfile) {
+      await updateProfile({
+        name: profile.name,
+        org: profile.org,
+        email: profile.email,
+        bio: profile.bio,
+      });
+    }
+
+    // 2. If student, update startup founder name & university in Venture store
+    if (role === "student") {
+      const myStartup =
+        startups.find((s) => s.founderEmail === profile.email || s.founder === profile.name) ||
+        startups[0];
+      if (myStartup) {
+        updateStartup(myStartup.id, {
+          founder: profile.name,
+          founderEmail: profile.email,
+          university: profile.org,
+        });
+      }
+      if (updateStudent) {
+        updateStudent(user?.id || profile.email, {
+          name: profile.name,
+          email: profile.email,
+          branch: profile.bio ? profile.bio.slice(0, 40) : "Engineering",
+        });
+      }
+    }
+
+    setSaving(false);
+    toast.success("Profile updated and synced across all roles!");
   }
 
   const handleLogout = async () => {
@@ -129,8 +164,8 @@ export function SettingsView({ role }: { role: Role }) {
               onChange={(e) => setProfile({ ...profile, bio: e.target.value })}
             />
           </div>
-          <Button onClick={save}>
-            <Save className="size-4" aria-hidden="true" /> Save changes
+          <Button onClick={save} disabled={saving}>
+            <Save className="size-4" aria-hidden="true" /> {saving ? "Saving..." : "Save changes"}
           </Button>
         </CardContent>
       </Card>

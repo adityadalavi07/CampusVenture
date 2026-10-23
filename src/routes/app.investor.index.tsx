@@ -82,6 +82,9 @@ function InvestorDashboard() {
 
   function toggleSave(id: string, name: string) {
     const added = toggleSaved(id);
+    if (added) {
+      notify("student", "Investor saved your startup! ⭐", `${ME.name} (${ME.organization}) added ${name} to their portfolio watchlist.`);
+    }
     toast.success(added ? `Saved ${name} to your watchlist` : `Removed ${name}`);
   }
 

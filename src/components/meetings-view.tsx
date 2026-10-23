@@ -15,11 +15,22 @@ import {
 } from "@/components/ui/select";
 import { DEMO_INVESTORS } from "@/lib/demo-data";
 import { MY_INVESTOR_ID, MY_STARTUP_ID, formatWhen, useVenture } from "@/lib/store";
+import { useAuth } from "@/lib/auth-context";
 
 export function MeetingsView({ as }: { as: "student" | "investor" }) {
   const { meetings, startups, requestMeeting, setMeetingStatus, notify } = useVenture();
+  const { user } = useAuth();
+  const currentStartupId =
+    startups.find(
+      (s) =>
+        (user?.email && s.founderEmail?.toLowerCase() === user.email.toLowerCase()) ||
+        (user?.name && s.founder === user.name)
+    )?.id || MY_STARTUP_ID;
+
   const mine = meetings.filter((m) =>
-    as === "student" ? m.startupId === MY_STARTUP_ID : m.investorId === MY_INVESTOR_ID,
+    as === "student"
+      ? m.startupId === currentStartupId || m.startupId === MY_STARTUP_ID
+      : m.investorId === MY_INVESTOR_ID,
   );
 
   const [target, setTarget] = useState(
@@ -35,7 +46,7 @@ export function MeetingsView({ as }: { as: "student" | "investor" }) {
       return;
     }
     requestMeeting({
-      startupId: as === "student" ? MY_STARTUP_ID : target,
+      startupId: as === "student" ? currentStartupId : target,
       investorId: as === "student" ? target : MY_INVESTOR_ID,
       title: title.trim() || "Meeting",
       at: new Date(when).toISOString(),

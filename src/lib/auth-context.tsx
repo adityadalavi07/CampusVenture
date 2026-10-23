@@ -112,6 +112,12 @@ interface AuthContextType {
   hasRole: (requiredRole: Role) => boolean;
   registeredUsers: RegisteredAccount[];
   isEmailRegistered: (email: string) => boolean;
+  updateProfile: (updates: {
+    name?: string;
+    org?: string;
+    email?: string;
+    bio?: string;
+  }) => Promise<{ success: boolean; error?: string; user?: AuthUser }>;
 }
 
 const AuthContext = createContext<AuthContextType | null>(null);
@@ -927,6 +933,70 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     [user]
   );
 
+  // Profile update and cross-system sync
+  const updateProfile = useCallback(
+    async (updates: {
+      name?: string;
+      org?: string;
+      email?: string;
+      bio?: string;
+    }): Promise<{ success: boolean; error?: string; user?: AuthUser }> => {
+      if (!user) return { success: false, error: "No user authenticated" };
+      const newName =
+        updates.name !== undefined && updates.name.trim().length > 0
+          ? updates.name.trim()
+          : user.name;
+      const newOrg =
+        updates.org !== undefined && updates.org.trim().length > 0
+          ? updates.org.trim()
+          : user.org;
+      const updatedUser: AuthUser = {
+        ...user,
+        name: newName,
+        org: newOrg,
+        avatarInitials: getInitials(newName),
+      };
+
+      setUser(updatedUser);
+      try {
+        window.localStorage.setItem(AUTH_STORAGE_KEY, JSON.stringify(updatedUser));
+      } catch {
+        /* ignore */
+      }
+
+      // Update registered accounts list in storage if present
+      const currentAccounts = loadRegisteredUsers();
+      const updatedAccounts = currentAccounts.map((a) =>
+        a.email.toLowerCase() === user.email.toLowerCase()
+          ? { ...a, name: newName, org: newOrg }
+          : a
+      );
+      saveRegisteredUsers(updatedAccounts);
+      setRegisteredUsers(updatedAccounts);
+
+      // Sync to Supabase Auth & public.profiles
+      try {
+        await supabase.auth.updateUser({
+          data: { name: newName, org: newOrg, bio: updates.bio },
+        });
+        await (supabase as any).from("profiles").upsert({
+          id: user.id,
+          email: user.email,
+          name: newName,
+          org: newOrg,
+          role: user.role,
+          bio: updates.bio,
+          updated_at: new Date().toISOString(),
+        });
+      } catch (err) {
+        console.warn("[CampusVenture Auth] Profile update sync notice:", err);
+      }
+
+      return { success: true, user: updatedUser };
+    },
+    [user]
+  );
+
   return (
     <AuthContext.Provider
       value={{
@@ -949,6 +1019,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         hasRole,
         registeredUsers,
         isEmailRegistered,
+        updateProfile,
       }}
     >
       {children}

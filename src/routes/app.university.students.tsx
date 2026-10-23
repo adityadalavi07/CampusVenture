@@ -1,5 +1,5 @@
 import { createFileRoute } from "@tanstack/react-router";
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { Search, ShieldCheck, ShieldX } from "lucide-react";
 import { toast } from "sonner";
 import { AppShell } from "@/components/app-shell";
@@ -16,6 +16,7 @@ import {
   TableRow,
 } from "@/components/ui/table";
 import { useVenture } from "@/lib/store";
+import { useAuth } from "@/lib/auth-context";
 
 const TITLE = "Students — CampusVenture University";
 const DESCRIPTION = "Verify student founders, see their startups and manage campus enrolment.";
@@ -33,8 +34,31 @@ export const Route = createFileRoute("/app/university/students")({
 });
 
 function StudentsPage() {
-  const { students, startups, setStudentVerified, notify } = useVenture();
+  const { students, startups, setStudentVerified, notify, updateStudent } = useVenture();
+  const { registeredUsers } = useAuth();
   const [q, setQ] = useState("");
+
+  // Auto-sync registered student accounts with the university roster
+  useEffect(() => {
+    registeredUsers.forEach((reg) => {
+      if (reg.role === "student") {
+        const found = students.some((st) => st.email.toLowerCase() === reg.email.toLowerCase());
+        if (!found) {
+          const matchingStartup = startups.find(
+            (s) => s.founderEmail?.toLowerCase() === reg.email.toLowerCase() || s.founder === reg.name
+          );
+          updateStudent(reg.email, {
+            name: reg.name,
+            email: reg.email,
+            branch: "Computer Science & Engineering",
+            year: "Final year",
+            startupId: matchingStartup?.id || "s1",
+            verified: false,
+          });
+        }
+      }
+    });
+  }, [registeredUsers, students, startups, updateStudent]);
 
   const rows = students.filter((s) =>
     `${s.name} ${s.email} ${s.branch}`.toLowerCase().includes(q.toLowerCase()),

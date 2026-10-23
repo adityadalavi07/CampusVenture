@@ -26,6 +26,7 @@ export interface StartupRecord extends Startup {
   reviewNote: string;
   views: number;
   founder?: string;
+  founderEmail?: string;
 }
 
 export interface Notification {
@@ -476,6 +477,8 @@ interface Ctx extends State {
   setProgramStatus: (id: string, status: Program["status"]) => void;
   addProgram: (p: Omit<Program, "id" | "enrolled">) => void;
   setStudentVerified: (id: string, verified: boolean) => void;
+  updateStudent: (idOrEmail: string, patch: Partial<StudentRecord>) => void;
+  createStartup: (startupData: Partial<StartupRecord>) => string;
   resetDemo: () => void;
 }
 
@@ -493,6 +496,25 @@ export function VentureProvider({ children }: { children: ReactNode }) {
       /* corrupt storage: keep seed */
     }
     setHydrated(true);
+  }, []);
+
+  // Cross-tab and multi-window live sync: updates in one role/tab immediately reflect across all roles
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    const handleStorageChange = (e: StorageEvent) => {
+      if (e.key === STORAGE_KEY && e.newValue) {
+        try {
+          const fresh = JSON.parse(e.newValue) as Partial<State>;
+          if (fresh && Array.isArray(fresh.startups)) {
+            setState((prev) => ({ ...prev, ...fresh }));
+          }
+        } catch {
+          /* ignore */
+        }
+      }
+    };
+    window.addEventListener("storage", handleStorageChange);
+    return () => window.removeEventListener("storage", handleStorageChange);
   }, []);
 
   // Persist off the critical path: typing shouldn't pay for a full serialise.
@@ -560,10 +582,23 @@ export function VentureProvider({ children }: { children: ReactNode }) {
           ),
         })),
       updateStartup: (id, patch) =>
-        setState((prev) => ({
-          ...prev,
-          startups: prev.startups.map((s) => (s.id === id ? { ...s, ...patch } : s)),
-        })),
+        setState((prev) => {
+          const nextStartups = prev.startups.map((s) => (s.id === id ? { ...s, ...patch } : s));
+          const nextStudents = prev.students.map((st) => {
+            if (st.startupId === id) {
+              return {
+                ...st,
+                name: patch.founder || st.name,
+              };
+            }
+            return st;
+          });
+          return {
+            ...prev,
+            startups: nextStartups,
+            students: nextStudents,
+          };
+        }),
       setReview: (id, status, note = "") =>
         setState((prev) => ({
           ...prev,
@@ -724,6 +759,72 @@ export function VentureProvider({ children }: { children: ReactNode }) {
           ...prev,
           students: prev.students.map((s) => (s.id === id ? { ...s, verified } : s)),
         })),
+      updateStudent: (idOrEmail, patch) =>
+        setState((prev) => {
+          const clean = idOrEmail.toLowerCase().trim();
+          const exists = prev.students.some(
+            (s) => s.id === idOrEmail || s.email.toLowerCase().trim() === clean
+          );
+          if (exists) {
+            return {
+              ...prev,
+              students: prev.students.map((s) =>
+                s.id === idOrEmail || s.email.toLowerCase().trim() === clean
+                  ? { ...s, ...patch }
+                  : s
+              ),
+            };
+          }
+          const newStudent: StudentRecord = {
+            id: rid("u"),
+            name: patch.name || "Student Founder",
+            email: patch.email || idOrEmail,
+            branch: patch.branch || "Computer Engineering",
+            year: patch.year || "Final year",
+            startupId: patch.startupId || MY_STARTUP_ID,
+            verified: patch.verified ?? false,
+          };
+          return {
+            ...prev,
+            students: [newStudent, ...prev.students],
+          };
+        }),
+      createStartup: (startupData) => {
+        const newId = rid("s");
+        const newStartup: StartupRecord = {
+          id: newId,
+          name: startupData.name || "My Student Venture",
+          tagline: startupData.tagline || "Innovating from campus",
+          sector: startupData.sector || "AI",
+          stage: startupData.stage || "MVP",
+          location: startupData.location || "Maharashtra, India",
+          university: startupData.university || "University",
+          teamSize: startupData.teamSize || 2,
+          fundingRequired: startupData.fundingRequired || 25000,
+          revenue: startupData.revenue ?? false,
+          monthlyUsers: startupData.monthlyUsers || 100,
+          readiness: startupData.readiness || 65,
+          verified: false,
+          traction: startupData.traction || "Beta testing on campus",
+          businessModel: startupData.businessModel || "B2B SaaS subscription",
+          updatedAt: new Date().toISOString(),
+          problem: startupData.problem || "",
+          solution: startupData.solution || "",
+          videoUrl: startupData.videoUrl || "",
+          deckName: startupData.deckName || "",
+          githubUrl: startupData.githubUrl || "",
+          githubStars: startupData.githubStars || 0,
+          status: "draft",
+          reviewNote: "",
+          views: 1,
+          ...startupData,
+        };
+        setState((prev) => ({
+          ...prev,
+          startups: [newStartup, ...prev.startups],
+        }));
+        return newId;
+      },
       resetDemo: () => setState(seed()),
     }),
     [state, hydrated, notify],

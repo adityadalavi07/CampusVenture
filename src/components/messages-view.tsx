@@ -8,17 +8,26 @@ import { ScrollArea } from "@/components/ui/scroll-area";
 import { cn } from "@/lib/utils";
 import { DEMO_INVESTORS } from "@/lib/demo-data";
 import { MY_INVESTOR_ID, MY_STARTUP_ID, timeAgo, useVenture } from "@/lib/store";
+import { useAuth } from "@/lib/auth-context";
 
 /** Shared two-pane inbox. `as` decides which side of the thread you speak from. */
 export function MessagesView({ as }: { as: "student" | "investor" }) {
   const { messages, startups, sendMessage, markThreadRead, notify } = useVenture();
+  const { user } = useAuth();
+  const currentStartupId =
+    startups.find(
+      (s) =>
+        (user?.email && s.founderEmail?.toLowerCase() === user.email.toLowerCase()) ||
+        (user?.name && s.founder === user.name)
+    )?.id || MY_STARTUP_ID;
+
   const [active, setActive] = useState<string | null>(null);
   const [draft, setDraft] = useState("");
 
   const threads = useMemo(() => {
     const map = new Map<string, { startupId: string; investorId: string; last: string; unread: number }>();
     for (const m of messages) {
-      if (as === "student" && m.startupId !== MY_STARTUP_ID) continue;
+      if (as === "student" && m.startupId !== currentStartupId && m.startupId !== MY_STARTUP_ID) continue;
       if (as === "investor" && m.investorId !== MY_INVESTOR_ID) continue;
       const key = `${m.startupId}:${m.investorId}`;
       const prev = map.get(key) ?? { startupId: m.startupId, investorId: m.investorId, last: m.at, unread: 0 };

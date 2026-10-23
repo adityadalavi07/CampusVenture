@@ -6,6 +6,7 @@ import {
   FileUp,
   Github,
   Lightbulb,
+  Rocket,
   Send,
   Star,
   Target,
@@ -23,6 +24,7 @@ import { Textarea } from "@/components/ui/textarea";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { STATUS_LABEL, completeness, useVenture } from "@/lib/store";
 import { useAuth } from "@/lib/auth-context";
+import { SECTORS, STAGES, type Stage } from "@/lib/demo-data";
 
 const TITLE = "My Startup — CampusVenture";
 const DESCRIPTION =
@@ -52,17 +54,35 @@ function embedUrl(url: string) {
 function MyStartup() {
   const { startups, updateStartup, notify } = useVenture();
   const { user } = useAuth();
-  const startup = startups[0]!;
+  const startup =
+    startups.find(
+      (s) =>
+        (user?.email && s.founderEmail?.toLowerCase() === user.email.toLowerCase()) ||
+        (user?.name && s.founder === user.name)
+    ) || startups[0]!;
   const fileRef = useRef<HTMLInputElement>(null);
   const [github, setGithub] = useState(startup.githubUrl);
 
   // Sync startup founder and university with authenticated user
   useEffect(() => {
-    if (user?.name && user?.org && (startup.founder !== user.name || startup.university !== user.org)) {
-      updateStartup(startup.id, { founder: user.name, university: user.org });
+    if (user?.name && user?.org && (startup.founder !== user.name || startup.university !== user.org || startup.founderEmail !== user.email)) {
+      updateStartup(startup.id, {
+        founder: user.name,
+        university: user.org,
+        founderEmail: user.email,
+      });
     }
-  }, [user, startup.id, startup.founder, startup.university, updateStartup]);
+  }, [user, startup.id, startup.founder, startup.university, startup.founderEmail, updateStartup]);
 
+  const [stName, setStName] = useDebouncedField(startup.name, (v) =>
+    updateStartup(startup.id, { name: v })
+  );
+  const [stTagline, setStTagline] = useDebouncedField(startup.tagline || "", (v) =>
+    updateStartup(startup.id, { tagline: v })
+  );
+  const [stLocation, setStLocation] = useDebouncedField(startup.location || "", (v) =>
+    updateStartup(startup.id, { location: v })
+  );
   const [problem, setProblem] = useDebouncedField(startup.problem, (v) =>
     updateStartup(startup.id, { problem: v }),
   );
@@ -121,9 +141,12 @@ function MyStartup() {
       <div className="mx-auto max-w-5xl space-y-6">
         <div className="flex flex-wrap items-end justify-between gap-4">
           <div>
-            <h1 className="text-2xl font-semibold">{startup.name}</h1>
-            <p className="text-sm text-muted-foreground">
-              {startup.sector} · {startup.stage} · {user?.org || startup.university}
+            <div className="flex items-center gap-2.5">
+              <h1 className="text-2xl font-semibold">{startup.name}</h1>
+              <Badge variant="outline" className="text-xs">{startup.sector}</Badge>
+            </div>
+            <p className="text-sm text-muted-foreground mt-0.5">
+              {startup.tagline || "Campus-incubated venture"} · {startup.stage} · {user?.org || startup.university}
             </p>
           </div>
           <div className="flex items-center gap-2">
@@ -147,6 +170,7 @@ function MyStartup() {
               <Progress value={pct} className="mt-2" />
             </div>
             <div className="flex flex-wrap gap-2 text-xs">
+              <Chip done={Boolean(startup.name)} label="Identity" />
               <Chip done={Boolean(startup.problem)} label="Problem" />
               <Chip done={Boolean(startup.solution)} label="Solution" />
               <Chip done={Boolean(startup.videoUrl)} label="Video pitch" />
@@ -156,14 +180,115 @@ function MyStartup() {
           </CardContent>
         </Card>
 
-        <Tabs defaultValue="problem">
+        <Tabs defaultValue="overview">
           <TabsList className="flex-wrap">
+            <TabsTrigger value="overview">Overview & Identity</TabsTrigger>
             <TabsTrigger value="problem">Problem</TabsTrigger>
             <TabsTrigger value="solution">Solution</TabsTrigger>
             <TabsTrigger value="video">Video pitch</TabsTrigger>
             <TabsTrigger value="deck">Pitch deck</TabsTrigger>
             <TabsTrigger value="github">GitHub</TabsTrigger>
           </TabsList>
+
+          <TabsContent value="overview">
+            <Card>
+              <CardHeader>
+                <CardTitle className="flex items-center gap-2 text-base">
+                  <Rocket className="size-4" aria-hidden="true" /> Venture identity & details
+                </CardTitle>
+                <CardDescription>
+                  Your venture's public brand shown to investors and university incubation cells. Changes save automatically in real-time.
+                </CardDescription>
+              </CardHeader>
+              <CardContent className="space-y-4">
+                <div className="grid gap-4 sm:grid-cols-2">
+                  <div className="space-y-2">
+                    <Label htmlFor="st-name">Startup / Venture Name</Label>
+                    <Input
+                      id="st-name"
+                      value={stName}
+                      onChange={(e) => setStName(e.target.value)}
+                      placeholder="e.g. Lumen Labs or NeuroPulse"
+                    />
+                  </div>
+                  <div className="space-y-2">
+                    <Label htmlFor="st-tagline">One-line Tagline / Pitch</Label>
+                    <Input
+                      id="st-tagline"
+                      value={stTagline}
+                      onChange={(e) => setStTagline(e.target.value)}
+                      placeholder="e.g. AI-powered adaptive tutor for engineering students"
+                    />
+                  </div>
+                </div>
+
+                <div className="grid gap-4 sm:grid-cols-3">
+                  <div className="space-y-2">
+                    <Label htmlFor="st-sector">Industry / Sector</Label>
+                    <select
+                      id="st-sector"
+                      value={startup.sector}
+                      onChange={(e) => updateStartup(startup.id, { sector: e.target.value })}
+                      className="flex h-9 w-full rounded-md border border-input bg-background px-3 py-1 text-sm shadow-xs transition-colors focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
+                    >
+                      {SECTORS.map((s) => (
+                        <option key={s} value={s}>
+                          {s}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+
+                  <div className="space-y-2">
+                    <Label htmlFor="st-stage">Current Stage</Label>
+                    <select
+                      id="st-stage"
+                      value={startup.stage}
+                      onChange={(e) => updateStartup(startup.id, { stage: e.target.value as Stage })}
+                      className="flex h-9 w-full rounded-md border border-input bg-background px-3 py-1 text-sm shadow-xs transition-colors focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
+                    >
+                      {STAGES.map((st) => (
+                        <option key={st} value={st}>
+                          {st}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+
+                  <div className="space-y-2">
+                    <Label htmlFor="st-location">Campus Location / City</Label>
+                    <Input
+                      id="st-location"
+                      value={stLocation}
+                      onChange={(e) => setStLocation(e.target.value)}
+                      placeholder="e.g. Kolhapur, Maharashtra"
+                    />
+                  </div>
+                </div>
+
+                <div className="grid gap-4 sm:grid-cols-2">
+                  <div className="space-y-2">
+                    <Label htmlFor="st-univ">Affiliated University / College</Label>
+                    <Input
+                      id="st-univ"
+                      value={user?.org || startup.university}
+                      onChange={(e) => updateStartup(startup.id, { university: e.target.value })}
+                      placeholder="e.g. Sanjay Ghodawat University (SGU)"
+                    />
+                  </div>
+                  <div className="space-y-2">
+                    <Label htmlFor="st-founder">Lead Founder Name</Label>
+                    <Input
+                      id="st-founder"
+                      value={user?.name || startup.founder || "Founder"}
+                      onChange={(e) => updateStartup(startup.id, { founder: e.target.value })}
+                      placeholder="e.g. Aditya Dalvi"
+                    />
+                  </div>
+                </div>
+              </CardContent>
+            </Card>
+          </TabsContent>
 
           <TabsContent value="problem">
             <Card>

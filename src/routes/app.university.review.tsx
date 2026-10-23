@@ -88,11 +88,18 @@ function ReviewCard({ id }: { id: string }) {
     setReview(s.id, status, note.trim());
     notify(
       "student",
-      status === "approved" ? "Startup verified" : "Changes requested",
+      status === "approved" ? "Startup verified! 🎉" : "Changes requested",
       status === "approved"
-        ? `${s.name} is now visible to investors.`
+        ? `${s.name} is verified by your university and now visible to accredited investors.`
         : `${s.name}: ${note.trim()}`,
     );
+    if (status === "approved") {
+      notify(
+        "investor",
+        "New verified startup on campus",
+        `${s.name} (${s.sector}, ${s.stage}) was just verified by ${s.university}.`,
+      );
+    }
     toast.success(status === "approved" ? `${s.name} approved` : `Feedback sent to ${s.name}`);
   }
 
