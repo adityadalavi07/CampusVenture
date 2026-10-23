@@ -444,8 +444,24 @@ export function AuthDialog() {
 
   // Google OAuth & 1-Click Institutional Account Sign-In
   const handleGoogleAuth = async (targetRole: Role) => {
-    // Open Google institutional account picker directly
-    setShowGooglePicker(true);
+    if (busy) return;
+    setBusy(true);
+    try {
+      const res = await signInWithGoogle(targetRole);
+      if (res.success) {
+        // Live Google OAuth redirect initiated or user session active
+        if (res.user) {
+          closeAuthModal();
+          router.navigate({ to: `/app/${res.user.role || targetRole}` });
+        }
+        return;
+      }
+      setShowGooglePicker(true);
+    } catch {
+      setShowGooglePicker(true);
+    } finally {
+      setBusy(false);
+    }
   };
 
   // 2. Verify OTP code
