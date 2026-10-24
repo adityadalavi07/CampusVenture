@@ -41,8 +41,39 @@ export interface ConnectionRequestRecord {
   updatedAt: string;
 }
 
+export interface DataRoomDocRecord {
+  id: string;
+  startupId: string;
+  name: string;
+  category: "Financials" | "Legal" | "Product" | "Metrics" | "Cap table";
+  size: string;
+  confidential: boolean;
+  fileUrl?: string | undefined;
+  createdAt: string;
+}
+
 const LOCAL_DR_KEY = "campusventure.dataroom.requests.v2";
 const LOCAL_CONN_KEY = "campusventure.connections.requests.v2";
+const LOCAL_DOCS_KEY = "campusventure.dataroom.docs.v2";
+
+function getLocalDocs(): DataRoomDocRecord[] {
+  if (typeof window === "undefined") return [];
+  try {
+    const raw = localStorage.getItem(LOCAL_DOCS_KEY);
+    return raw ? JSON.parse(raw) : [];
+  } catch {
+    return [];
+  }
+}
+
+function saveLocalDocs(items: DataRoomDocRecord[]): void {
+  if (typeof window === "undefined") return;
+  try {
+    localStorage.setItem(LOCAL_DOCS_KEY, JSON.stringify(items));
+  } catch {
+    /* ignore */
+  }
+}
 
 function getLocalDrRequests(): DataRoomRequestRecord[] {
   if (typeof window === "undefined") return [];
@@ -261,11 +292,13 @@ export const requestService = {
         }));
 
         const map = new Map<string, DataRoomRequestRecord>();
-        local.forEach((l) => map.set(l.id, l));
-        dbRecords.forEach((d) => map.set(d.id, d));
-        return Array.from(map.values()).sort(
+        local.forEach((l) => map.set(`${l.startupId}:${l.investorId}`, l));
+        dbRecords.forEach((d) => map.set(`${d.startupId}:${d.investorId}`, d));
+        const merged = Array.from(map.values()).sort(
           (a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime()
         );
+        saveLocalDrRequests(merged);
+        return merged;
       }
     } catch (err) {
       console.warn("[RequestService] Error fetching investor data room requests:", err);
@@ -418,12 +451,14 @@ export const requestService = {
         }));
 
         const map = new Map<string, DataRoomRequestRecord>();
-        local.forEach((l) => map.set(l.id, l));
-        dbRecords.forEach((r) => map.set(r.id, r));
+        local.forEach((l) => map.set(`${l.startupId}:${l.investorId}`, l));
+        dbRecords.forEach((r) => map.set(`${r.startupId}:${r.investorId}`, r));
 
-        return Array.from(map.values()).sort(
+        const merged = Array.from(map.values()).sort(
           (a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime()
         );
+        saveLocalDrRequests(merged);
+        return merged;
       }
     } catch (err) {
       console.warn("[RequestService] Error in getDataRoomRequestsForStudent:", err);
@@ -633,12 +668,13 @@ export const requestService = {
         }));
 
         const map = new Map<string, ConnectionRequestRecord>();
-        local.forEach((l) => map.set(l.id, l));
-        dbRecords.forEach((d) => map.set(d.id, d));
-
-        return Array.from(map.values()).sort(
+        local.forEach((l) => map.set(`${l.senderId}:${l.receiverId}:${l.startupId || "global"}`, l));
+        dbRecords.forEach((d) => map.set(`${d.senderId}:${d.receiverId}:${d.startupId || "global"}`, d));
+        const merged = Array.from(map.values()).sort(
           (a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime()
         );
+        saveLocalConnRequests(merged);
+        return merged;
       }
     } catch (err) {
       console.warn("[RequestService] Error fetching incoming connection requests:", err);
@@ -699,11 +735,13 @@ export const requestService = {
         }));
 
         const map = new Map<string, ConnectionRequestRecord>();
-        local.forEach((l) => map.set(l.id, l));
-        dbRecords.forEach((d) => map.set(d.id, d));
-        return Array.from(map.values()).sort(
+        local.forEach((l) => map.set(`${l.senderId}:${l.receiverId}:${l.startupId || "global"}`, l));
+        dbRecords.forEach((d) => map.set(`${d.senderId}:${d.receiverId}:${d.startupId || "global"}`, d));
+        const merged = Array.from(map.values()).sort(
           (a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime()
         );
+        saveLocalConnRequests(merged);
+        return merged;
       }
     } catch (err) {
       console.warn("[RequestService] Error fetching sent connection requests:", err);
@@ -862,5 +900,205 @@ export const requestService = {
     }
 
     return { dataRoomRequests: localDr, connectionRequests: localConn };
+  },
+
+  /**
+   * Get all accepted connection requests for a user (either sender or receiver)
+   */
+  async getAllAcceptedConnectionsForUser(
+    userId?: string,
+    userEmail?: string,
+    startupIds?: string[]
+  ): Promise<ConnectionRequestRecord[]> {
+    const cleanEmail = userEmail?.toLowerCase().trim();
+    const local = getLocalConnRequests().filter(
+      (c) =>
+        c.status === "accepted" &&
+        ((userId && (c.senderId === userId || c.receiverId === userId)) ||
+          (cleanEmail &&
+            (c.senderEmail?.toLowerCase() === cleanEmail ||
+              c.receiverEmail?.toLowerCase() === cleanEmail)) ||
+          (startupIds && c.startupId && startupIds.includes(c.startupId)))
+    );
+
+    try {
+      const orClauses: string[] = [];
+      if (userId) {
+        orClauses.push(`sender_id.eq.${userId}`, `receiver_id.eq.${userId}`);
+      }
+      if (cleanEmail) {
+        orClauses.push(`sender_email.ilike.${cleanEmail}`, `receiver_email.ilike.${cleanEmail}`);
+      }
+      if (startupIds && startupIds.length > 0) {
+        orClauses.push(`startup_id.in.(${startupIds.join(",")})`);
+      }
+
+      let query = (supabase as any)
+        .from("connection_requests")
+        .select("*")
+        .eq("status", "accepted");
+
+      if (orClauses.length > 0) {
+        query = query.or(orClauses.join(","));
+      }
+
+      const { data, error } = await query;
+      if (!error && Array.isArray(data)) {
+        const dbRecords: ConnectionRequestRecord[] = data.map((d: any) => ({
+          id: d.id,
+          senderId: d.sender_id,
+          senderName: d.sender_name || "Member",
+          senderEmail: d.sender_email || "",
+          senderRole: d.sender_role || "investor",
+          senderOrg: d.sender_org || "",
+          receiverId: d.receiver_id,
+          receiverName: d.receiver_name || "Member",
+          receiverEmail: d.receiver_email || "",
+          startupId: d.startup_id,
+          startupName: d.startup_name || "",
+          message: d.message,
+          status: d.status,
+          discussionTerms: d.discussion_terms || undefined,
+          nextSteps: d.next_steps || undefined,
+          declineReason: d.decline_reason || undefined,
+          createdAt: d.created_at,
+          updatedAt: d.updated_at,
+        }));
+
+        const map = new Map<string, ConnectionRequestRecord>();
+        local.forEach((l) => map.set(`${l.senderId}:${l.receiverId}:${l.startupId || "global"}`, l));
+        dbRecords.forEach((d) => map.set(`${d.senderId}:${d.receiverId}:${d.startupId || "global"}`, d));
+        return Array.from(map.values()).sort(
+          (a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime()
+        );
+      }
+    } catch (err) {
+      console.warn("[RequestService] DB getAllAcceptedConnectionsForUser exception:", err);
+    }
+
+    return local;
+  },
+
+  // ============================================================================
+  // DATA ROOM DOCUMENTS
+  // ============================================================================
+
+  async uploadDataRoomDoc(params: {
+    startupId: string;
+    name: string;
+    category: "Financials" | "Legal" | "Product" | "Metrics" | "Cap table";
+    size: string;
+    confidential?: boolean;
+    fileUrl?: string;
+  }): Promise<{ success: boolean; doc: DataRoomDocRecord }> {
+    const { startupId, name, category, size, confidential = true, fileUrl } = params;
+    const safeId = generateUUID();
+    const now = new Date().toISOString();
+
+    const record: DataRoomDocRecord = {
+      id: safeId,
+      startupId,
+      name: name.trim(),
+      category,
+      size,
+      confidential,
+      fileUrl,
+      createdAt: now,
+    };
+
+    const local = getLocalDocs();
+    saveLocalDocs([record, ...local]);
+
+    try {
+      const { data, error } = await (supabase as any).from("data_room_docs").insert({
+        id: safeId,
+        startup_id: startupId,
+        name: record.name,
+        category: record.category,
+        size: record.size,
+        confidential: record.confidential,
+        file_url: fileUrl || null,
+        created_at: now,
+      }).select().single();
+
+      if (data) {
+        record.id = data.id;
+      }
+      if (error) {
+        console.warn("[RequestService] Notice inserting data room doc to DB:", error.message);
+      }
+    } catch (err) {
+      console.warn("[RequestService] DB uploadDataRoomDoc exception:", err);
+    }
+
+    return { success: true, doc: record };
+  },
+
+  async getDataRoomDocsForStartup(startupId: string): Promise<DataRoomDocRecord[]> {
+    const local = getLocalDocs().filter((d) => d.startupId === startupId);
+
+    try {
+      const { data, error } = await (supabase as any)
+        .from("data_room_docs")
+        .select("*")
+        .eq("startup_id", startupId)
+        .order("created_at", { ascending: false });
+
+      if (!error && Array.isArray(data)) {
+        const dbRecords: DataRoomDocRecord[] = data.map((d: any) => ({
+          id: d.id,
+          startupId: d.startup_id,
+          name: d.name,
+          category: d.category,
+          size: d.size,
+          confidential: Boolean(d.confidential),
+          fileUrl: d.file_url || undefined,
+          createdAt: d.created_at,
+        }));
+
+        const map = new Map<string, DataRoomDocRecord>();
+        local.forEach((l) => map.set(l.id, l));
+        dbRecords.forEach((d) => map.set(d.id, d));
+        const merged = Array.from(map.values()).sort(
+          (a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime()
+        );
+        saveLocalDocs(merged);
+        return merged;
+      }
+    } catch (err) {
+      console.warn("[RequestService] DB getDataRoomDocsForStartup exception:", err);
+    }
+
+    return local;
+  },
+
+  async deleteDataRoomDoc(docId: string): Promise<{ success: boolean }> {
+    const local = getLocalDocs().filter((d) => d.id !== docId);
+    saveLocalDocs(local);
+
+    try {
+      await (supabase as any).from("data_room_docs").delete().eq("id", docId);
+    } catch (err) {
+      console.warn("[RequestService] DB deleteDataRoomDoc exception:", err);
+    }
+
+    return { success: true };
+  },
+
+  subscribeToDataRoomDocs(onUpdate: () => void): () => void {
+    const channel = supabase
+      .channel("public-dr-docs-realtime")
+      .on(
+        "postgres_changes",
+        { event: "*", schema: "public", table: "data_room_docs" },
+        () => {
+          onUpdate();
+        }
+      )
+      .subscribe();
+
+    return () => {
+      supabase.removeChannel(channel);
+    };
   },
 };

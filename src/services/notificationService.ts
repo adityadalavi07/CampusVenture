@@ -53,16 +53,12 @@ export const notificationService = {
       id: safeId,
       role,
       recipientEmail: recipientEmail ? recipientEmail.toLowerCase().trim() : undefined,
-      recipientUserId: recipientUserId && isValidUUID(recipientUserId) ? recipientUserId : undefined,
+      recipientUserId: recipientUserId ? String(recipientUserId) : undefined,
       title,
       body,
       read: false,
       createdAt: now,
     };
-
-    // Save locally immediately
-    const existing = getLocalNotifications();
-    saveLocalNotifications([record, ...existing.filter((n) => n.id !== safeId)]);
 
     // Persist to Supabase
     try {
@@ -78,8 +74,8 @@ export const notificationService = {
       if (recipientEmail) {
         payload["recipient_email"] = recipientEmail.toLowerCase().trim();
       }
-      if (recipientUserId && isValidUUID(recipientUserId)) {
-        payload["user_id"] = recipientUserId;
+      if (recipientUserId) {
+        payload["user_id"] = String(recipientUserId);
       }
 
       const { error } = await (supabase as any).from("notifications").insert(payload);
@@ -101,25 +97,39 @@ export const notificationService = {
     userEmail?: string | undefined,
     userId?: string | undefined
   ): Promise<NotificationRecord[]> {
+    const cleanEmail = userEmail?.toLowerCase().trim();
+
     const local = getLocalNotifications().filter((n) => {
-      if (n.role === role) return true;
-      if (userEmail && n.recipientEmail && n.recipientEmail.toLowerCase() === userEmail.toLowerCase()) return true;
-      if (userId && n.recipientUserId && n.recipientUserId === userId) return true;
+      if (n.role !== role) return false;
+      if (n.recipientEmail && cleanEmail) {
+        return n.recipientEmail.toLowerCase() === cleanEmail;
+      }
+      if (n.recipientUserId && userId) {
+        return n.recipientUserId === userId;
+      }
       return false;
     });
 
     try {
-      const query = (supabase as any)
+      let query = (supabase as any)
         .from("notifications")
         .select("*")
+        .eq("role", role)
         .order("created_at", { ascending: false })
         .limit(40);
 
-      // Filter by role or matching recipient email
-      if (userEmail) {
-        query.or(`role.eq.${role},recipient_email.ilike.${userEmail.trim()}`);
+      const orClauses: string[] = [];
+      if (cleanEmail) {
+        orClauses.push(`recipient_email.ilike.${cleanEmail}`);
+      }
+      if (userId) {
+        orClauses.push(`user_id.eq.${userId}`);
+      }
+
+      if (orClauses.length > 0) {
+        query = query.or(orClauses.join(","));
       } else {
-        query.eq("role", role);
+        query = query.is("recipient_email", null).is("user_id", null);
       }
 
       const { data, error } = await query;
@@ -135,12 +145,9 @@ export const notificationService = {
           createdAt: d.created_at,
         }));
 
-        // Merge DB records with local
         const map = new Map<string, NotificationRecord>();
+        local.forEach((l) => map.set(l.id, l));
         dbRecords.forEach((r) => map.set(r.id, r));
-        local.forEach((l) => {
-          if (!map.has(l.id)) map.set(l.id, l);
-        });
 
         const merged = Array.from(map.values()).sort(
           (a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime()
@@ -149,7 +156,7 @@ export const notificationService = {
         return merged;
       }
     } catch (err) {
-      console.warn("[NotificationService] Fetch error:", err);
+      console.warn("[NotificationService] DB getNotificationsForUser exception:", err);
     }
 
     return local;

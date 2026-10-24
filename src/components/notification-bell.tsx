@@ -18,8 +18,16 @@ export function NotificationBell({ role }: { role: Role }) {
 
   const items = notifications.filter((n) => {
     if (n.role !== role) return false;
-    if (n.recipientEmail && user?.email) {
-      return n.recipientEmail.toLowerCase() === user.email.toLowerCase();
+    const cleanEmail = user?.email?.toLowerCase().trim();
+    if (n.recipientEmail && cleanEmail) {
+      return n.recipientEmail.toLowerCase() === cleanEmail;
+    }
+    if (n.recipientUserId && user?.id) {
+      return n.recipientUserId === user.id;
+    }
+    // If notification was targeted to a specific email/user and user does not match, do not show
+    if (n.recipientEmail || n.recipientUserId) {
+      return false;
     }
     return true;
   });

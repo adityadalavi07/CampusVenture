@@ -115,18 +115,23 @@ export const messageService = {
       console.warn("[MessageService] Broadcast notice:", bcErr);
     }
 
-    // 3. Persist to Supabase DB (supports both legacy schema and expanded schema)
+    // 3. Persist to Supabase DB
     try {
       const payload: Record<string, any> = {
         id: safeId,
+        sender_id: String(senderId),
+        recipient_id: String(recipientId),
         content: record.content,
         read: false,
         created_at: now,
       };
 
-      if (isValidUUID(senderId)) payload["sender_id"] = senderId;
-      if (isValidUUID(recipientId)) payload["recipient_id"] = recipientId;
-      if (isValidUUID(startupId)) payload["startup_id"] = startupId;
+      if (startupId) payload["startup_id"] = String(startupId);
+      if (senderName) payload["sender_name"] = senderName;
+      if (senderRole) payload["sender_role"] = senderRole;
+      if (senderEmail) payload["sender_email"] = senderEmail.toLowerCase().trim();
+      if (recipientName) payload["recipient_name"] = recipientName;
+      if (recipientEmail) payload["recipient_email"] = recipientEmail.toLowerCase().trim();
 
       const { error } = await (supabase as any).from("messages").insert(payload);
       if (error) {
@@ -162,8 +167,9 @@ export const messageService = {
     currentUserId?: string | undefined;
     currentUserEmail?: string | undefined;
   }): Promise<ChatMessageRecord[]> {
-    const { startupId, investorId, currentUserId } = params;
+    const { startupId, investorId, currentUserId, currentUserEmail } = params;
     const conversationId = `${startupId}:${investorId}`;
+    const cleanEmail = currentUserEmail?.toLowerCase().trim();
 
     const local = getLocalMessages().filter(
       (m) =>
@@ -172,39 +178,55 @@ export const messageService = {
     );
 
     try {
-      if (currentUserId && isValidUUID(currentUserId) && isValidUUID(investorId)) {
-        const { data, error } = await (supabase as any)
-          .from("messages")
-          .select("*")
-          .or(
-            `and(sender_id.eq.${currentUserId},recipient_id.eq.${investorId}),and(sender_id.eq.${investorId},recipient_id.eq.${currentUserId})`
-          )
-          .order("created_at", { ascending: true });
+      let query = (supabase as any)
+        .from("messages")
+        .select("*")
+        .order("created_at", { ascending: true });
 
-        if (!error && Array.isArray(data)) {
-          const dbRecords: ChatMessageRecord[] = data.map((d: any) => ({
-            id: d.id,
-            conversationId,
-            startupId: d.startup_id || startupId,
-            senderId: d.sender_id,
-            senderName: d.sender_id === currentUserId ? "You" : "Partner",
-            senderRole: d.sender_id === investorId ? "investor" : "student",
-            recipientId: d.recipient_id,
-            content: d.content,
-            read: d.read || false,
-            createdAt: d.created_at,
-          }));
+      const orClauses: string[] = [];
+      if (startupId) {
+        orClauses.push(`startup_id.eq.${startupId}`);
+      }
+      if (currentUserId && investorId) {
+        orClauses.push(
+          `and(sender_id.eq.${currentUserId},recipient_id.eq.${investorId})`,
+          `and(sender_id.eq.${investorId},recipient_id.eq.${currentUserId})`
+        );
+      }
+      if (cleanEmail) {
+        orClauses.push(`sender_email.ilike.${cleanEmail}`, `recipient_email.ilike.${cleanEmail}`);
+      }
 
-          const map = new Map<string, ChatMessageRecord>();
-          local.forEach((m) => map.set(m.id, m));
-          dbRecords.forEach((m) => {
-            if (!map.has(m.id)) map.set(m.id, m);
-          });
+      if (orClauses.length > 0) {
+        query = query.or(orClauses.join(","));
+      }
 
-          return Array.from(map.values()).sort(
-            (a, b) => new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime()
-          );
-        }
+      const { data, error } = await query;
+
+      if (!error && Array.isArray(data)) {
+        const dbRecords: ChatMessageRecord[] = data.map((d: any) => ({
+          id: d.id,
+          conversationId,
+          startupId: d.startup_id || startupId,
+          senderId: d.sender_id,
+          senderName: d.sender_name || (d.sender_id === currentUserId ? "You" : "Partner"),
+          senderRole: d.sender_role || (d.sender_id === investorId ? "investor" : "student"),
+          senderEmail: d.sender_email || undefined,
+          recipientId: d.recipient_id,
+          recipientName: d.recipient_name || undefined,
+          recipientEmail: d.recipient_email || undefined,
+          content: d.content,
+          read: d.read || false,
+          createdAt: d.created_at,
+        }));
+
+        const map = new Map<string, ChatMessageRecord>();
+        local.forEach((m) => map.set(m.id, m));
+        dbRecords.forEach((m) => map.set(m.id, m));
+
+        return Array.from(map.values()).sort(
+          (a, b) => new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime()
+        );
       }
     } catch (err) {
       console.warn("[MessageService] DB fetch thread error:", err);
@@ -221,49 +243,69 @@ export const messageService = {
   async getAllMessagesForUser(params: {
     userId?: string | undefined;
     userEmail?: string | undefined;
+    startupIds?: string[] | undefined;
   }): Promise<ChatMessageRecord[]> {
-    const { userId, userEmail } = params;
+    const { userId, userEmail, startupIds } = params;
     const cleanEmail = userEmail?.toLowerCase().trim();
+    const cleanStartupIds = (startupIds || []).filter(Boolean);
 
     const local = getLocalMessages().filter((m) => {
-      if (!userId && !cleanEmail) return true;
+      if (!userId && !cleanEmail && cleanStartupIds.length === 0) return true;
       if (userId && (m.senderId === userId || m.recipientId === userId)) return true;
       if (cleanEmail && (m.senderEmail?.toLowerCase() === cleanEmail || m.recipientEmail?.toLowerCase() === cleanEmail)) return true;
+      if (m.startupId && cleanStartupIds.includes(m.startupId)) return true;
       return false;
     });
 
     try {
-      if (userId && isValidUUID(userId)) {
-        const { data, error } = await (supabase as any)
-          .from("messages")
-          .select("*")
-          .or(`sender_id.eq.${userId},recipient_id.eq.${userId}`)
-          .order("created_at", { ascending: true });
+      const orClauses: string[] = [];
+      if (userId) {
+        orClauses.push(`sender_id.eq.${userId}`, `recipient_id.eq.${userId}`);
+      }
+      if (cleanEmail) {
+        orClauses.push(`sender_email.ilike.${cleanEmail}`, `recipient_email.ilike.${cleanEmail}`);
+      }
+      if (cleanStartupIds.length > 0) {
+        orClauses.push(`startup_id.in.(${cleanStartupIds.join(",")})`);
+      }
 
-        if (!error && Array.isArray(data)) {
-          const dbRecords: ChatMessageRecord[] = data.map((d: any) => ({
-            id: d.id,
-            conversationId: `${d.startup_id || "s1"}:${d.sender_id === userId ? d.recipient_id : d.sender_id}`,
-            startupId: d.startup_id || "s1",
-            senderId: d.sender_id,
-            senderName: d.sender_id === userId ? "You" : "Partner",
-            senderRole: "student",
-            recipientId: d.recipient_id,
-            content: d.content,
-            read: d.read || false,
-            createdAt: d.created_at,
-          }));
+      let query = (supabase as any)
+        .from("messages")
+        .select("*")
+        .order("created_at", { ascending: true });
 
-          const map = new Map<string, ChatMessageRecord>();
-          local.forEach((m) => map.set(m.id, m));
-          dbRecords.forEach((m) => {
-            if (!map.has(m.id)) map.set(m.id, m);
-          });
+      if (orClauses.length > 0) {
+        query = query.or(orClauses.join(","));
+      }
 
-          return Array.from(map.values()).sort(
-            (a, b) => new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime()
-          );
-        }
+      const { data, error } = await query;
+
+      if (!error && Array.isArray(data)) {
+        const dbRecords: ChatMessageRecord[] = data.map((d: any) => ({
+          id: d.id,
+          conversationId: `${d.startup_id || "global"}:${d.sender_role === "investor" ? d.sender_id : d.recipient_id}`,
+          startupId: d.startup_id || "",
+          senderId: d.sender_id,
+          senderName: d.sender_name || (d.sender_id === userId ? "You" : "Partner"),
+          senderRole: d.sender_role || "student",
+          senderEmail: d.sender_email || undefined,
+          recipientId: d.recipient_id,
+          recipientName: d.recipient_name || undefined,
+          recipientEmail: d.recipient_email || undefined,
+          content: d.content,
+          read: d.read || false,
+          createdAt: d.created_at,
+        }));
+
+        const map = new Map<string, ChatMessageRecord>();
+        local.forEach((m) => map.set(m.id, m));
+        dbRecords.forEach((m) => map.set(m.id, m));
+
+        const merged = Array.from(map.values()).sort(
+          (a, b) => new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime()
+        );
+        saveLocalMessages(merged);
+        return merged;
       }
     } catch (err) {
       console.warn("[MessageService] DB fetch all messages error:", err);
@@ -293,12 +335,15 @@ export const messageService = {
             const raw = payload.new;
             onNewMessage({
               id: raw.id,
-              conversationId: `${raw.startup_id || "s1"}:${raw.sender_id}`,
-              startupId: raw.startup_id || "s1",
+              conversationId: `${raw.startup_id || "global"}:${raw.sender_id}`,
+              startupId: raw.startup_id || "",
               senderId: raw.sender_id,
-              senderName: "Partner",
-              senderRole: "investor",
+              senderName: raw.sender_name || "Partner",
+              senderRole: raw.sender_role || "investor",
+              senderEmail: raw.sender_email || undefined,
               recipientId: raw.recipient_id,
+              recipientName: raw.recipient_name || undefined,
+              recipientEmail: raw.recipient_email || undefined,
               content: raw.content,
               read: raw.read || false,
               createdAt: raw.created_at,
@@ -308,13 +353,7 @@ export const messageService = {
       )
       .subscribe();
 
-    // Secondary fallback polling (every 3 seconds) for network resilience
-    pollingTimer = setInterval(() => {
-      // triggers caller refresh if needed
-    }, 3000);
-
     return () => {
-      if (pollingTimer) clearInterval(pollingTimer);
       supabase.removeChannel(channel);
     };
   },

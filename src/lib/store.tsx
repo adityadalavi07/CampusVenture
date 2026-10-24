@@ -398,21 +398,6 @@ export function VentureProvider({ children }: { children: ReactNode }) {
         recipientEmail: meta?.recipientEmail,
         recipientUserId: meta?.recipientUserId,
       });
-
-      setState((prev) => ({
-        ...prev,
-        notifications: [
-          {
-            id: rid("n"),
-            role,
-            title,
-            body,
-            at: new Date().toISOString(),
-            read: false,
-          },
-          ...prev.notifications,
-        ],
-      }));
     },
     []
   );

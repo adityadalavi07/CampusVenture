@@ -41,7 +41,7 @@ import {
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { MY_STARTUP_ID, timeAgo, useVenture, type DataRoomDoc } from "@/lib/store";
 import { useAuth } from "@/lib/auth-context";
-import { requestService, type DataRoomRequestRecord, type ConnectionRequestRecord } from "@/services/requestService";
+import { requestService, type DataRoomRequestRecord, type ConnectionRequestRecord, type DataRoomDocRecord } from "@/services/requestService";
 import { messageService, type ChatMessageRecord } from "@/services/messageService";
 
 const TITLE = "Data Room & Requests — CampusVenture Founder";
@@ -78,6 +78,7 @@ function StudentDataRoom() {
   const [liveRequests, setLiveRequests] = useState<DataRoomRequestRecord[]>([]);
   const [connRequests, setConnRequests] = useState<ConnectionRequestRecord[]>([]);
   const [recentMessages, setRecentMessages] = useState<ChatMessageRecord[]>([]);
+  const [realDocs, setRealDocs] = useState<DataRoomDocRecord[]>([]);
 
   const userStartups = startups.filter(
     (s) =>
@@ -95,7 +96,22 @@ function StudentDataRoom() {
   );
   const currentStartupId = currentStartup?.id || user?.id || MY_STARTUP_ID;
 
-  const myDocs = docs.filter((d) => d.startupId === currentStartupId || d.startupId === MY_STARTUP_ID);
+  // Real-time synchronization of confidential documents from Supabase
+  useEffect(() => {
+    let active = true;
+    const fetchDocs = () => {
+      requestService.getDataRoomDocsForStartup(currentStartupId).then((files) => {
+        if (active) setRealDocs(files);
+      });
+    };
+
+    fetchDocs();
+    const unsubDocs = requestService.subscribeToDataRoomDocs(fetchDocs);
+    return () => {
+      active = false;
+      unsubDocs();
+    };
+  }, [currentStartupId]);
 
   // 1. Synchronize Data Room access requests
   useEffect(() => {
@@ -234,24 +250,27 @@ function StudentDataRoom() {
     if (!selectedReq) return;
     const reqId = selectedReq.id;
     const invName = selectedReq.investorName || "Investor";
+    const newStatus = selectedReq.status === "granted" ? "revoked" : "rejected";
 
-    await requestService.updateDataRoomRequestStatus(reqId, "rejected", {
+    await requestService.updateDataRoomRequestStatus(reqId, newStatus, {
       declineReason,
     });
     setAccessStatus(reqId, "revoked");
     setLiveRequests((prev) =>
-      prev.map((r) => (r.id === reqId ? { ...r, status: "rejected", declineReason } : r))
+      prev.map((r) => (r.id === reqId ? { ...r, status: newStatus, declineReason } : r))
     );
     notify(
       "investor",
-      "Data-room request declined",
-      `Founder declined data-room access for ${selectedReq.startupName || "Startup"}. Feedback: "${declineReason}"`,
+      newStatus === "revoked" ? "Data-room access revoked" : "Data-room request declined",
+      newStatus === "revoked"
+        ? `Founder revoked data-room access for ${selectedReq.startupName || "Startup"}. Feedback: "${declineReason}"`
+        : `Founder declined data-room access for ${selectedReq.startupName || "Startup"}. Feedback: "${declineReason}"`,
       {
         recipientEmail: selectedReq.investorEmail,
         recipientUserId: selectedReq.investorId,
       }
     );
-    toast.info(`Request declined with feedback note sent to ${invName}`);
+    toast.info(newStatus === "revoked" ? `Access revoked for ${invName}` : `Request declined with feedback note sent to ${invName}`);
     setDeclineModalOpen(false);
   };
 
@@ -381,7 +400,7 @@ function StudentDataRoom() {
             </TabsTrigger>
             <TabsTrigger value="documents" className="gap-1.5 text-xs">
               <FileLock2 className="size-3.5" />
-              Confidential Files ({myDocs.length})
+              Confidential Files ({realDocs.length})
             </TabsTrigger>
           </TabsList>
 
@@ -409,7 +428,7 @@ function StudentDataRoom() {
                   const displayName = req.investorName || "Accredited Investor";
                   const displayOrg = req.investorOrg || "Venture Fund";
                   const isGranted = req.status === "granted";
-                  const isRejected = req.status === "rejected";
+                  const isRejected = req.status === "rejected" || req.status === "revoked";
 
                   return (
                     <div key={req.id} className="rounded-lg border p-4 space-y-3 bg-card">
@@ -465,7 +484,11 @@ function StudentDataRoom() {
                               size="sm"
                               variant="outline"
                               className="h-8 text-xs text-muted-foreground hover:text-destructive"
-                              onClick={() => openDeclineDialog(req)}
+                              onClick={() => {
+                                setSelectedReq(req);
+                                setDeclineReason("Access revoked by founder.");
+                                setDeclineModalOpen(true);
+                              }}
                             >
                               Revoke Access
                             </Button>
@@ -510,11 +533,13 @@ function StudentDataRoom() {
                         </div>
                       )}
 
-                      {/* DECLINED FEEDBACK NOTE */}
+                      {/* DECLINED OR REVOKED FEEDBACK NOTE */}
                       {isRejected && (
                         <div className="rounded-md border border-destructive/20 bg-destructive/5 p-3 text-xs text-muted-foreground space-y-1">
-                          <span className="font-semibold text-destructive">Decline Feedback Sent:</span>
-                          <p>{req.declineReason || "Round fully subscribed or stage mismatch."}</p>
+                          <span className="font-semibold text-destructive">
+                            {req.status === "revoked" ? "Access Revoked by Founder:" : "Decline Feedback Sent:"}
+                          </span>
+                          <p>{req.declineReason || (req.status === "revoked" ? "Founder revoked access to data room files." : "Round fully subscribed or stage mismatch.")}</p>
                         </div>
                       )}
                     </div>
@@ -726,17 +751,30 @@ function StudentDataRoom() {
                       ref={fileRef}
                       type="file"
                       className="hidden"
-                      onChange={(e) => {
+                      onChange={async (e) => {
                         const file = e.target.files?.[0];
                         if (!file) return;
-                        addDoc({
+                        const docSize = `${Math.max(1, Math.round(file.size / 1024))} KB`;
+                        await requestService.uploadDataRoomDoc({
                           startupId: currentStartupId,
                           name: file.name,
                           category,
-                          size: `${Math.max(1, Math.round(file.size / 1024))} KB`,
+                          size: docSize,
                           confidential: true,
                         });
-                        toast.success(`${file.name} added to the data room`);
+                        setRealDocs((prev) => [
+                          {
+                            id: `temp-${Date.now()}`,
+                            startupId: currentStartupId,
+                            name: file.name,
+                            category,
+                            size: docSize,
+                            confidential: true,
+                            createdAt: new Date().toISOString(),
+                          },
+                          ...prev,
+                        ]);
+                        toast.success(`${file.name} uploaded to the data room`);
                         e.target.value = "";
                       }}
                     />
@@ -747,19 +785,19 @@ function StudentDataRoom() {
                 </div>
               </CardHeader>
               <CardContent className="space-y-2">
-                {myDocs.length === 0 && (
+                {realDocs.length === 0 && (
                   <p className="rounded-lg border border-dashed p-8 text-center text-sm text-muted-foreground">
                     No documents yet. Upload confidential files to share with verified investors under NDA.
                   </p>
                 )}
-                {myDocs.map((d) => (
+                {realDocs.map((d) => (
                   <div key={d.id} className="flex items-center justify-between gap-3 rounded-lg border p-3 bg-card">
                     <div className="flex items-center gap-3">
                       <FileLock2 className="size-4 text-muted-foreground" aria-hidden="true" />
                       <div>
                         <p className="text-sm font-medium">{d.name}</p>
                         <p className="text-xs text-muted-foreground">
-                          {d.category} · {d.size} · added {timeAgo(d.addedAt)}
+                          {d.category} · {d.size} · uploaded {timeAgo(d.createdAt)}
                         </p>
                       </div>
                     </div>
@@ -771,9 +809,10 @@ function StudentDataRoom() {
                         size="icon"
                         variant="ghost"
                         aria-label={`Remove ${d.name}`}
-                        onClick={() => {
-                          removeDoc(d.id);
-                          toast("Document removed");
+                        onClick={async () => {
+                          await requestService.deleteDataRoomDoc(d.id);
+                          setRealDocs((prev) => prev.filter((doc) => doc.id !== d.id));
+                          toast.success(`${d.name} removed from data room`);
                         }}
                       >
                         <Trash2 className="size-4" aria-hidden="true" />

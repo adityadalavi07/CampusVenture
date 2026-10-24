@@ -88,10 +88,15 @@ function ReviewQueue() {
 
 function ReviewCard({ id }: { id: string }) {
   const { startups, setReview, notify } = useVenture();
+  const { user } = useAuth();
   const s = startups.find((x) => x.id === id)!;
   const [note, setNote] = useState(s.reviewNote);
 
   function decide(status: ReviewStatus) {
+    if (user && !isSameUniversity({ org: user.org, email: user.email }, { university: s.university, email: s.founderEmail })) {
+      toast.error("Unauthorized: You can only review startups from your university.");
+      return;
+    }
     if (status === "rejected" && note.trim().length < 10) {
       toast.error("Add a short note so the founder knows what to fix.");
       return;

@@ -24,9 +24,9 @@ import {
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { DEMO_INVESTORS } from "@/lib/demo-data";
-import { MY_INVESTOR_ID, timeAgo, useVenture } from "@/lib/store";
+import { timeAgo, useVenture } from "@/lib/store";
 import { useAuth } from "@/lib/auth-context";
-import { requestService, type DataRoomRequestRecord } from "@/services/requestService";
+import { requestService, type DataRoomRequestRecord, type DataRoomDocRecord } from "@/services/requestService";
 
 const TITLE = "Data Rooms — CampusVenture Investor";
 const DESCRIPTION =
@@ -45,11 +45,12 @@ export const Route = createFileRoute("/app/investor/dataroom")({
 });
 
 function InvestorDataRooms() {
-  const { access, docs, startups, signNda, registerDownload, notify } = useVenture();
+  const { startups, signNda, registerDownload, notify } = useVenture();
   const { user } = useAuth();
-  const myInvestorId = user?.id || MY_INVESTOR_ID;
+  const myInvestorId = user?.id || "usr-investor";
   const investorName = user?.name || DEMO_INVESTORS[0]?.name || "Investor";
   const [liveRequests, setLiveRequests] = useState<DataRoomRequestRecord[]>([]);
+  const [startupDocsMap, setStartupDocsMap] = useState<Record<string, DataRoomDocRecord[]>>({});
 
   useEffect(() => {
     let active = true;
@@ -67,44 +68,34 @@ function InvestorDataRooms() {
     };
   }, [myInvestorId, user?.email]);
 
-  // Merge live requests with store access records
-  const allAccessMap = new Map<
-    string,
-    {
-      id: string;
-      startupId: string;
-      status: string;
-      ndaSigned: boolean;
-      ndaSignedName: string;
-      requestedAt: string;
-      downloads: number;
-      discussionTerms?: string | undefined;
-      nextSteps?: string | undefined;
-      declineReason?: string | undefined;
+  // Load real uploaded documents for each granted/requested startup
+  useEffect(() => {
+    let active = true;
+    const loadDocs = async () => {
+      const map: Record<string, DataRoomDocRecord[]> = {};
+      for (const req of liveRequests) {
+        if (req.startupId) {
+          const files = await requestService.getDataRoomDocsForStartup(req.startupId);
+          map[req.startupId] = files;
+        }
+      }
+      if (active) setStartupDocsMap(map);
+    };
+
+    if (liveRequests.length > 0) {
+      loadDocs();
     }
-  >();
-  
-  access.filter((a) => a.investorId === myInvestorId || a.investorId === MY_INVESTOR_ID).forEach((a) => {
-    allAccessMap.set(a.startupId, a);
-  });
 
-  liveRequests.forEach((r) => {
-    const existing = allAccessMap.get(r.startupId);
-    allAccessMap.set(r.startupId, {
-      id: r.id,
-      startupId: r.startupId,
-      status: r.status,
-      ndaSigned: r.ndaSigned || existing?.ndaSigned || false,
-      ndaSignedName: r.ndaSignedName || existing?.ndaSignedName || "",
-      requestedAt: r.createdAt || existing?.requestedAt || new Date().toISOString(),
-      downloads: existing?.downloads || 0,
-      discussionTerms: r.discussionTerms || existing?.discussionTerms,
-      nextSteps: r.nextSteps || existing?.nextSteps,
-      declineReason: r.declineReason || existing?.declineReason,
+    const unsubDocs = requestService.subscribeToDataRoomDocs(() => {
+      loadDocs();
     });
-  });
 
-  const mine = Array.from(allAccessMap.values());
+    return () => {
+      active = false;
+      unsubDocs();
+    };
+  }, [liveRequests]);
+
   const [ndaFor, setNdaFor] = useState<string | null>(null);
   const [signature, setSignature] = useState(investorName);
 
@@ -118,76 +109,38 @@ function InvestorDataRooms() {
           </p>
         </div>
 
-        {mine.length === 0 && (
+        {liveRequests.length === 0 && (
           <div className="rounded-xl border border-dashed p-12 text-center text-sm text-muted-foreground">
-            No data-room requests yet. Request access from a startup profile.
+            No data-room requests yet. Discover verified startups and request diligence access.
           </div>
         )}
 
-        {mine.map((a) => {
+        {liveRequests.map((a) => {
           const startup = startups.find((s) => s.id === a.startupId);
-          const rawFiles = docs.filter((d) => d.startupId === a.startupId);
-          const files =
-            rawFiles.length > 0
-              ? rawFiles
-              : [
-                  {
-                    id: `doc-pitch-${a.startupId}`,
-                    startupId: a.startupId,
-                    name: `${startup?.name || "Startup"} - Institutional Seed Pitch Deck.pdf`,
-                    category: "Product" as const,
-                    size: "3.4 MB",
-                    confidential: true,
-                    addedAt: a.requestedAt,
-                  },
-                  {
-                    id: `doc-fin-${a.startupId}`,
-                    startupId: a.startupId,
-                    name: `${startup?.name || "Startup"} - 3-Year Audited Financial Model & Projections.xlsx`,
-                    category: "Financials" as const,
-                    size: "1.8 MB",
-                    confidential: true,
-                    addedAt: a.requestedAt,
-                  },
-                  {
-                    id: `doc-cap-${a.startupId}`,
-                    startupId: a.startupId,
-                    name: `${startup?.name || "Startup"} - Founder Equity & Cap Table Breakdown.pdf`,
-                    category: "Cap table" as const,
-                    size: "840 KB",
-                    confidential: true,
-                    addedAt: a.requestedAt,
-                  },
-                  {
-                    id: `doc-tech-${a.startupId}`,
-                    startupId: a.startupId,
-                    name: `${startup?.name || "Startup"} - System Architecture & Security Whitepaper.pdf`,
-                    category: "Product" as const,
-                    size: "2.1 MB",
-                    confidential: true,
-                    addedAt: a.requestedAt,
-                  },
-                ];
+          const files = startupDocsMap[a.startupId] || [];
           const unlocked = a.status === "granted" && a.ndaSigned;
+
           return (
             <Card key={a.id}>
               <CardHeader>
                 <div className="flex flex-wrap items-center justify-between gap-3">
                   <div>
-                    <CardTitle className="text-base">{startup?.name}</CardTitle>
+                    <CardTitle className="text-base">{a.startupName || startup?.name || "Startup"}</CardTitle>
                     <CardDescription>
-                      Requested {timeAgo(a.requestedAt)} · {a.downloads} downloads
+                      Requested {timeAgo(a.createdAt)} · {files.length} document{files.length === 1 ? "" : "s"} available
                     </CardDescription>
                   </div>
                   <div className="flex items-center gap-2">
-                    <Badge variant="outline">{a.status}</Badge>
+                    <Badge variant={a.status === "granted" ? "default" : (a.status === "rejected" || a.status === "revoked") ? "destructive" : "outline"} className="capitalize">
+                      {a.status}
+                    </Badge>
                     <Badge variant={a.ndaSigned ? "default" : "secondary"}>
-                      <ShieldCheck className="size-3.5" aria-hidden="true" />
+                      <ShieldCheck className="size-3.5 mr-1" aria-hidden="true" />
                       {a.ndaSigned ? "NDA signed" : "NDA required"}
                     </Badge>
                     {!a.ndaSigned && a.status === "granted" && (
                       <Button size="sm" onClick={() => setNdaFor(a.startupId)}>
-                        Sign NDA
+                        Sign NDA &amp; Unlock
                       </Button>
                     )}
                   </div>
@@ -237,25 +190,37 @@ function InvestorDataRooms() {
                   </div>
                 )}
 
-                {a.status === "rejected" ? (
+                {a.status === "rejected" || a.status === "revoked" ? (
                   <div className="rounded-lg border border-destructive/20 bg-destructive/5 p-4 text-xs text-muted-foreground space-y-1">
-                    <p className="font-semibold text-destructive">Data-Room Access Request Declined</p>
-                    <p>{a.declineReason || "The founder is not expanding diligence access or raising capital for this venture at this time."}</p>
+                    <p className="font-semibold text-destructive">
+                      {a.status === "revoked" ? "Data-Room Access Revoked by Founder" : "Data-Room Access Request Declined"}
+                    </p>
+                    <p>
+                      {a.declineReason ||
+                        (a.status === "revoked"
+                          ? "Access to this data room has been revoked by the founder. All proprietary files are locked."
+                          : "The founder is not expanding diligence access or raising capital for this venture at this time.")}
+                    </p>
                   </div>
                 ) : a.status !== "granted" ? (
                   <p className="rounded-lg border border-dashed p-6 text-center text-muted-foreground">
-                    Waiting for {startup?.name} to approve your request.
+                    Waiting for {a.startupName || startup?.name || "founder"} to approve your data room request.
                   </p>
+                ) : files.length === 0 ? (
+                  <div className="rounded-lg border border-dashed p-6 text-center text-xs text-muted-foreground space-y-1">
+                    <p className="font-medium text-foreground">No confidential documents uploaded by founder yet.</p>
+                    <p>The founder has not added diligence files to this data room. You can message the founder directly to request specific materials.</p>
+                  </div>
                 ) : (
                   files.map((d) => (
                     <div
                       key={d.id}
-                      className="flex items-center justify-between gap-3 rounded-lg border p-3"
+                      className="flex items-center justify-between gap-3 rounded-lg border p-3 bg-card"
                     >
                       <div className="flex items-center gap-3">
                         <FileLock2 className="size-4 text-muted-foreground" aria-hidden="true" />
                         <div>
-                          <p className="font-medium">{d.name}</p>
+                          <p className="font-medium text-sm">{d.name}</p>
                           <p className="text-xs text-muted-foreground">
                             {d.category} · {d.size}
                           </p>
@@ -263,16 +228,18 @@ function InvestorDataRooms() {
                       </div>
                       <Button
                         size="sm"
-                        variant="outline"
+                        variant={unlocked ? "default" : "outline"}
                         disabled={d.confidential && !unlocked}
                         onClick={() => {
                           registerDownload(a.startupId, myInvestorId);
-                          notify("student", "Data-room activity", `${investorName} opened ${d.name}.`);
-                          toast.success(`${d.name} downloaded`);
+                          notify("student", "Data-room activity", `${investorName} downloaded ${d.name}.`, {
+                            recipientEmail: a.founderEmail,
+                          });
+                          toast.success(`${d.name} downloaded successfully`);
                         }}
                       >
-                        <Download className="size-4" aria-hidden="true" />
-                        {d.confidential && !unlocked ? "Locked" : "Download"}
+                        <Download className="size-4 mr-1.5" aria-hidden="true" />
+                        {d.confidential && !unlocked ? "Locked (NDA Required)" : "Download"}
                       </Button>
                     </div>
                   ))
@@ -303,7 +270,7 @@ function InvestorDataRooms() {
           </div>
           <DialogFooter>
             <Button
-              onClick={() => {
+              onClick={async () => {
                 if (signature.trim().length < 3) {
                   toast.error("Enter your full name to sign.");
                   return;
@@ -312,14 +279,21 @@ function InvestorDataRooms() {
                 signNda(ndaFor!, myInvestorId, cleanSig);
                 const reqItem = liveRequests.find((r) => r.startupId === ndaFor);
                 if (reqItem) {
-                  requestService.signDataRoomNda(reqItem.id, cleanSig);
+                  await requestService.signDataRoomNda(reqItem.id, cleanSig);
+                  setLiveRequests((prev) =>
+                    prev.map((r) =>
+                      r.id === reqItem.id ? { ...r, ndaSigned: true, ndaSignedName: cleanSig } : r
+                    )
+                  );
                 }
                 const st = startups.find((s) => s.id === ndaFor);
                 notify(
                   "student",
                   "NDA Signed & Data Room Unlocked",
                   `${cleanSig} signed your data-room NDA for ${st?.name || "your venture"}. Confidential files are now unlocked.`,
-                  st?.founderEmail ? { recipientEmail: st.founderEmail } : undefined
+                  reqItem?.founderEmail || st?.founderEmail
+                    ? { recipientEmail: reqItem?.founderEmail || st?.founderEmail }
+                    : undefined
                 );
                 toast.success("NDA signed — documents unlocked");
                 setNdaFor(null);

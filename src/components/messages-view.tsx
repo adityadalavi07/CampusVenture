@@ -34,7 +34,7 @@ import { messageService, type ChatMessageRecord } from "@/services/messageServic
 
 /** Shared two-pane inbox. `as` decides which side of the thread you speak from. */
 export function MessagesView({ as }: { as: "student" | "investor" }) {
-  const { messages, startups, sendMessage, markThreadRead, notify } = useVenture();
+  const { startups, markThreadRead, notify } = useVenture();
   const { user } = useAuth();
 
   const userStartups = startups.filter(
@@ -42,12 +42,13 @@ export function MessagesView({ as }: { as: "student" | "investor" }) {
       (user?.email && s.founderEmail?.toLowerCase() === user.email.toLowerCase()) ||
       (user?.name && s.founder === user.name)
   );
-  const currentStartupId = userStartups[0]?.id || MY_STARTUP_ID;
-  const startupIds = Array.from(new Set([
-    ...userStartups.map((s) => s.id),
-    currentStartupId,
-    MY_STARTUP_ID,
-  ]));
+  const currentStartupId = userStartups[0]?.id || (as === "student" ? "s1" : "");
+  const startupIds = Array.from(
+    new Set([
+      ...userStartups.map((s) => s.id),
+      ...(currentStartupId ? [currentStartupId] : []),
+    ])
+  );
 
   const [active, setActive] = useState<string | null>(null);
   const [draft, setDraft] = useState("");
@@ -55,6 +56,7 @@ export function MessagesView({ as }: { as: "student" | "investor" }) {
 
   // Connection requests state
   const [connRequests, setConnRequests] = useState<ConnectionRequestRecord[]>([]);
+  const [acceptedConns, setAcceptedConns] = useState<ConnectionRequestRecord[]>([]);
   const [selectedConn, setSelectedConn] = useState<ConnectionRequestRecord | null>(null);
   const [acceptModalOpen, setAcceptModalOpen] = useState(false);
   const [declineModalOpen, setDeclineModalOpen] = useState(false);
@@ -66,14 +68,18 @@ export function MessagesView({ as }: { as: "student" | "investor" }) {
     "Thank you for reaching out. We are focusing on other priorities right now."
   );
 
-  const myUserId = user?.id || (as === "student" ? currentStartupId : MY_INVESTOR_ID);
+  const myUserId = user?.id || (as === "student" ? (currentStartupId || "usr-student") : "usr-investor");
 
-  // Synchronize incoming connection requests across Supabase and local cache
+  // Synchronize incoming and accepted connection requests
   useEffect(() => {
     let active = true;
     const fetchConns = () => {
       requestService.getIncomingConnectionRequests(myUserId, user?.email, startupIds).then((reqs) => {
         if (active) setConnRequests(reqs);
+      });
+
+      requestService.getAllAcceptedConnectionsForUser(user?.id, user?.email, startupIds).then((reqs) => {
+        if (active) setAcceptedConns(reqs);
       });
     };
 
@@ -83,14 +89,20 @@ export function MessagesView({ as }: { as: "student" | "investor" }) {
       active = false;
       unsub();
     };
-  }, [myUserId, user?.email, startupIds.join(",")]);
+  }, [myUserId, user?.id, user?.email, startupIds.join(",")]);
 
   // Synchronize chat messages with Supabase and real-time WebSocket broadcast
   useEffect(() => {
     let active = true;
-    messageService.getAllMessagesForUser({ userId: user?.id, userEmail: user?.email }).then((msgs) => {
-      if (active) setLiveChatMessages(msgs);
-    });
+    messageService
+      .getAllMessagesForUser({
+        userId: user?.id,
+        userEmail: user?.email,
+        startupIds: as === "student" ? startupIds : undefined,
+      })
+      .then((msgs) => {
+        if (active) setLiveChatMessages(msgs);
+      });
 
     const unsubMessages = messageService.subscribeToMessages((incoming) => {
       setLiveChatMessages((prev) => {
@@ -103,7 +115,7 @@ export function MessagesView({ as }: { as: "student" | "investor" }) {
       active = false;
       unsubMessages();
     };
-  }, [user?.id, user?.email]);
+  }, [user?.id, user?.email, as, startupIds.join(",")]);
 
   const handleOpenAcceptModal = (req: ConnectionRequestRecord) => {
     setSelectedConn(req);
@@ -137,22 +149,28 @@ export function MessagesView({ as }: { as: "student" | "investor" }) {
     );
 
     // Create an initial message thread and open it
-    const targetStartupId = selectedConn.startupId || currentStartupId;
+    const targetStartupId = selectedConn.startupId || currentStartupId || "startup";
     const targetInvestorId = as === "student" ? selectedConn.senderId : myUserId;
-    const introMsg = `Hi ${partnerName.split(" ")[0]}! I accepted your connection request. Let's discuss: ${connTerms}`;
+    const introMsg = `Hi ${partnerName.split(" ")[0]}! I accepted your connection request regarding ${selectedConn.startupName || "our venture"}. Let's discuss: ${connTerms}`;
 
     if (targetStartupId && targetInvestorId) {
-      sendMessage(targetStartupId, targetInvestorId, as, introMsg);
-      messageService.sendMessage({
+      await messageService.sendMessage({
         startupId: targetStartupId,
         senderId: myUserId,
         senderName: user?.name || (as === "student" ? "Founder" : "Investor"),
         senderRole: as,
         senderEmail: user?.email,
         recipientId: selectedConn.senderId,
+        recipientName: selectedConn.senderName,
         recipientEmail: selectedConn.senderEmail,
         content: introMsg,
       });
+
+      setAcceptedConns((prev) => [
+        { ...selectedConn, status: "accepted", discussionTerms: connTerms, nextSteps: connNextSteps },
+        ...prev.filter((c) => c.id !== reqId),
+      ]);
+
       setActive(`${targetStartupId}:${targetInvestorId}`);
     }
 
@@ -199,35 +217,129 @@ export function MessagesView({ as }: { as: "student" | "investor" }) {
     setDeclineModalOpen(false);
   };
 
-  // Merge store messages with live Supabase messages
+  // Synchronized message records with strict deduplication
   const allMessages = useMemo(() => {
-    const list: Array<Message & { senderRole?: string; senderName?: string }> = [...messages];
-    liveChatMessages.forEach((l) => {
-      if (!list.some((m) => m.id === l.id)) {
-        list.push({
-          id: l.id,
-          startupId: l.startupId,
-          investorId: l.senderRole === "investor" ? l.senderId : l.recipientId,
-          from: l.senderRole === "investor" ? "investor" : "student",
-          text: l.content,
-          at: l.createdAt,
-          readByStudent: l.read,
-          readByInvestor: l.read,
-          senderName: l.senderName,
-          senderRole: l.senderRole,
-        });
+    const list: Array<
+      Message & {
+        senderId?: string;
+        senderRole?: string;
+        senderName?: string;
+        senderEmail?: string;
+        recipientId?: string;
+        recipientEmail?: string;
       }
+    > = [];
+    const seen = new Set<string>();
+
+    liveChatMessages.forEach((l) => {
+      const sig = `${l.startupId}:${l.senderId}:${l.content.trim()}:${l.createdAt.slice(0, 16)}`;
+      if (seen.has(l.id) || seen.has(sig)) return;
+      seen.add(l.id);
+      seen.add(sig);
+
+      list.push({
+        id: l.id,
+        startupId: l.startupId,
+        investorId: l.senderRole === "investor" ? l.senderId : l.recipientId,
+        from: l.senderRole === "investor" ? "investor" : "student",
+        text: l.content,
+        at: l.createdAt,
+        readByStudent: l.read,
+        readByInvestor: l.read,
+        senderId: l.senderId,
+        senderName: l.senderName,
+        senderRole: l.senderRole,
+        senderEmail: l.senderEmail,
+        recipientId: l.recipientId,
+        recipientEmail: l.recipientEmail,
+      });
     });
+
     return list;
-  }, [messages, liveChatMessages]);
+  }, [liveChatMessages]);
 
   const threads = useMemo(() => {
-    const map = new Map<string, { startupId: string; investorId: string; last: string; unread: number }>();
+    const map = new Map<
+      string,
+      {
+        startupId: string;
+        investorId: string;
+        partnerName: string;
+        partnerOrg: string;
+        partnerEmail?: string;
+        last: string;
+        unread: number;
+      }
+    >();
+
+    // 1. Seed conversation threads from accepted connection requests
+    acceptedConns.forEach((c) => {
+      const sId = c.startupId || currentStartupId || "startup";
+      const iId = c.senderRole === "investor" ? c.senderId : c.receiverId;
+      const key = `${sId}:${iId}`;
+
+      const partnerName =
+        as === "student"
+          ? (c.senderRole === "investor" ? c.senderName : c.receiverName) || "Investor Partner"
+          : c.startupName || "Campus Venture";
+
+      const partnerOrg =
+        as === "student"
+          ? (c.senderRole === "investor" ? c.senderOrg : "") || "Venture Fund"
+          : c.senderOrg || "Venture";
+
+      const partnerEmail =
+        as === "student"
+          ? (c.senderRole === "investor" ? c.senderEmail : c.receiverEmail)
+          : (c.senderRole === "student" ? c.senderEmail : c.receiverEmail);
+
+      map.set(key, {
+        startupId: sId,
+        investorId: iId,
+        partnerName,
+        partnerOrg,
+        partnerEmail,
+        last: c.updatedAt || c.createdAt,
+        unread: 0,
+      });
+    });
+
+    // 2. Add or update threads from actual messages
     for (const m of allMessages) {
-      if (as === "student" && !startupIds.includes(m.startupId)) continue;
-      if (as === "investor" && m.investorId !== MY_INVESTOR_ID && m.investorId !== user?.id) continue;
+      if (as === "student") {
+        const isMyStartup = startupIds.includes(m.startupId);
+        const isMyEmail =
+          user?.email &&
+          (m.recipientEmail?.toLowerCase() === user.email.toLowerCase() ||
+            m.senderEmail?.toLowerCase() === user.email.toLowerCase());
+        const isMyId = user?.id && (m.recipientId === user.id || m.senderId === user.id);
+        if (!isMyStartup && !isMyEmail && !isMyId) continue;
+      } else {
+        const isMyId =
+          user?.id &&
+          (m.investorId === user.id || m.senderId === user.id || m.recipientId === user.id);
+        const isMyEmail =
+          user?.email &&
+          (m.senderEmail?.toLowerCase() === user.email.toLowerCase() ||
+            m.recipientEmail?.toLowerCase() === user.email.toLowerCase());
+        const isDemo = m.investorId === MY_INVESTOR_ID;
+        if (!isMyId && !isMyEmail && !isDemo) continue;
+      }
+
       const key = `${m.startupId}:${m.investorId}`;
-      const prev = map.get(key) ?? { startupId: m.startupId, investorId: m.investorId, last: m.at, unread: 0 };
+      const prev = map.get(key) ?? {
+        startupId: m.startupId,
+        investorId: m.investorId,
+        partnerName:
+          as === "student"
+            ? (m.senderRole === "investor" ? m.senderName : "Investor") || "Investor Partner"
+            : (startups.find((s) => s.id === m.startupId)?.name || "Venture Founder"),
+        partnerOrg: as === "student" ? "Venture Fund" : "Campus Startup",
+        partnerEmail: as === "student" ? (m.senderRole === "investor" ? m.senderEmail : m.recipientEmail) : undefined,
+        last: m.at,
+        unread: 0,
+      };
+
       const unreadFlag = as === "student" ? !m.readByStudent : !m.readByInvestor;
       map.set(key, {
         ...prev,
@@ -235,8 +347,9 @@ export function MessagesView({ as }: { as: "student" | "investor" }) {
         unread: prev.unread + (unreadFlag && m.from !== as ? 1 : 0),
       });
     }
+
     return [...map.values()].sort((a, b) => b.last.localeCompare(a.last));
-  }, [allMessages, as, startupIds, user?.id]);
+  }, [acceptedConns, allMessages, as, currentStartupId, startupIds, user?.email, user?.id, startups]);
 
   const activeKey = active ?? (threads[0] ? `${threads[0].startupId}:${threads[0].investorId}` : null);
   const [startupId, investorId] = (activeKey ?? ":").split(":");
@@ -247,10 +360,21 @@ export function MessagesView({ as }: { as: "student" | "investor" }) {
   }, [activeKey]);
 
   const thread = allMessages
-    .filter((m) => m.startupId === startupId && m.investorId === investorId)
+    .filter((m) => {
+      if (!startupId || !investorId) return false;
+      const matchStartup = m.startupId === startupId || !m.startupId;
+      const matchInvestor =
+        m.investorId === investorId ||
+        m.senderId === investorId ||
+        m.recipientId === investorId;
+      return matchStartup && matchInvestor;
+    })
     .sort((a, b) => a.at.localeCompare(b.at));
 
   const title = (sId: string, iId: string) => {
+    const threadItem = threads.find((t) => t.startupId === sId && t.investorId === iId);
+    if (threadItem?.partnerName) return threadItem.partnerName;
+
     if (as === "student") {
       const demo = DEMO_INVESTORS.find((i) => i.id === iId);
       if (demo) return demo.name;
@@ -266,6 +390,9 @@ export function MessagesView({ as }: { as: "student" | "investor" }) {
   };
 
   const subtitle = (sId: string, iId: string) => {
+    const threadItem = threads.find((t) => t.startupId === sId && t.investorId === iId);
+    if (threadItem?.partnerOrg) return threadItem.partnerOrg;
+
     if (as === "student") {
       const demo = DEMO_INVESTORS.find((i) => i.id === iId);
       if (demo) return demo.organization;
@@ -282,34 +409,59 @@ export function MessagesView({ as }: { as: "student" | "investor" }) {
     const text = draft.trim();
     if (!text || !startupId || !investorId) return;
 
-    // Send via local store
-    sendMessage(startupId, investorId, as, text);
+    const activeThread = threads.find((t) => t.startupId === startupId && t.investorId === investorId);
+    const targetStartup = startups.find((s) => s.id === startupId);
 
-    // Send via real-time message service
+    const recipientId =
+      as === "student" ? investorId : (targetStartup?.founder || targetStartup?.id || startupId);
+    const recipientEmail =
+      as === "student" ? activeThread?.partnerEmail : targetStartup?.founderEmail;
+    const recipientName =
+      activeThread?.partnerName || (as === "student" ? "Investor" : targetStartup?.founder || "Founder");
+
+    setDraft("");
+
+    // Optimistically insert into UI
+    const tempId = `temp-${Date.now()}`;
+    const optimisticMsg: ChatMessageRecord = {
+      id: tempId,
+      conversationId: `${startupId}:${investorId}`,
+      startupId,
+      senderId: myUserId,
+      senderName: user?.name || (as === "student" ? "Founder" : "Investor"),
+      senderRole: as,
+      senderEmail: user?.email,
+      recipientId,
+      recipientName,
+      recipientEmail,
+      content: text,
+      read: false,
+      createdAt: new Date().toISOString(),
+    };
+    setLiveChatMessages((prev) => [...prev, optimisticMsg]);
+
+    // Send via real-time message service to Supabase and WebSocket broadcast
     await messageService.sendMessage({
       startupId,
       senderId: myUserId,
       senderName: user?.name || (as === "student" ? "Founder" : "Investor"),
       senderRole: as,
       senderEmail: user?.email,
-      recipientId: investorId,
+      recipientId,
+      recipientName,
+      recipientEmail,
       content: text,
     });
-
-    const targetStartup = startups.find((s) => s.id === startupId);
-    const targetRecipientEmail = as === "investor" ? targetStartup?.founderEmail : undefined;
-    const targetRecipientId = as === "student" ? investorId : targetStartup?.founder;
 
     notify(
       as === "student" ? "investor" : "student",
       `New message from ${user?.name || (as === "student" ? "Founder" : "Investor")}`,
       `${title(startupId, investorId)}: "${text.slice(0, 75)}"`,
       {
-        ...(targetRecipientEmail ? { recipientEmail: targetRecipientEmail } : {}),
-        ...(targetRecipientId ? { recipientUserId: targetRecipientId } : {}),
+        ...(recipientEmail ? { recipientEmail } : {}),
+        ...(recipientId ? { recipientUserId: recipientId } : {}),
       }
     );
-    setDraft("");
   }
 
   const pendingConns = connRequests.filter((c) => c.status === "pending");
@@ -425,19 +577,33 @@ export function MessagesView({ as }: { as: "student" | "investor" }) {
             </div>
             <ScrollArea className="flex-1 px-4 py-4">
               <div className="space-y-3">
-                {thread.map((m) => (
-                  <div key={m.id} className={cn("flex", m.from === as ? "justify-end" : "justify-start")}>
-                    <div
-                      className={cn(
-                        "max-w-[80%] rounded-2xl px-3 py-2 text-sm",
-                        m.from === as ? "bg-primary text-primary-foreground" : "bg-muted",
-                      )}
-                    >
-                      <p>{m.text}</p>
-                      <p className="mt-1 text-[10px] opacity-70">{timeAgo(m.at)}</p>
+                {thread.map((m) => {
+                  const isMe =
+                    (user?.email && m.senderEmail && m.senderEmail.toLowerCase() === user.email.toLowerCase()) ||
+                    (user?.id && m.senderId === user.id) ||
+                    (m.senderRole ? m.senderRole === as : m.from === as);
+
+                  return (
+                    <div key={m.id} className={cn("flex", isMe ? "justify-end" : "justify-start")}>
+                      <div
+                        className={cn(
+                          "max-w-[80%] rounded-2xl px-3.5 py-2.5 text-sm space-y-1 shadow-2xs",
+                          isMe
+                            ? "bg-primary text-primary-foreground rounded-br-xs"
+                            : "bg-muted text-foreground rounded-bl-xs border"
+                        )}
+                      >
+                        <div className="flex items-center justify-between gap-3 text-[10px] opacity-75">
+                          <span className="font-semibold">
+                            {isMe ? "You" : m.senderName || (as === "student" ? "Investor" : "Founder")}
+                          </span>
+                          <span>{timeAgo(m.at)}</span>
+                        </div>
+                        <p className="whitespace-pre-wrap leading-relaxed">{m.text}</p>
+                      </div>
                     </div>
-                  </div>
-                ))}
+                  );
+                })}
               </div>
             </ScrollArea>
             <form

@@ -1503,12 +1503,36 @@ function StudentDashboard() {
                 <Button
                   variant="outline"
                   size="sm"
-                  className="mt-4"
-                  onClick={() => {
+                  className="mt-4 gap-1.5"
+                  onClick={async () => {
+                    const investorEmail = (investor as any).email || (investor.id === "i1" ? "anaya@northbridge.vc" : undefined);
+                    const res = await requestService.sendConnectionRequest({
+                      senderId: user?.id || STARTUP.id,
+                      senderName: user?.name || STARTUP.founder || "Founder",
+                      senderEmail: user?.email || STARTUP.founderEmail,
+                      senderRole: "student",
+                      senderOrg: STARTUP.university || "Campus Startup",
+                      receiverId: investor.id,
+                      receiverName: investor.name,
+                      receiverEmail: investorEmail,
+                      startupId: STARTUP.id,
+                      startupName: STARTUP.name,
+                      message: `Hi ${investor.name}, I am building ${STARTUP.name} (${STARTUP.sector}, ${STARTUP.stage}) and would love to connect.`,
+                    });
+
+                    if (res.alreadyExisted) {
+                      toast.info(`Connection request is already pending with ${investor.name}.`);
+                      return;
+                    }
+
                     notify(
                       "investor",
-                      "New founder outreach",
-                      `${STARTUP.name} requested a connection.`,
+                      "New founder connection outreach",
+                      `${STARTUP.name} (${user?.name || STARTUP.founder || "Founder"}) requested a connection.`,
+                      {
+                        recipientUserId: investor.id,
+                        recipientEmail: investorEmail,
+                      }
                     );
                     toast.success(`Connection request sent to ${investor.name}`);
                   }}
