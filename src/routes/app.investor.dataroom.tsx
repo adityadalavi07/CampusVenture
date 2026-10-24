@@ -54,7 +54,7 @@ function InvestorDataRooms() {
   useEffect(() => {
     let active = true;
     const fetchRequests = () => {
-      requestService.getDataRoomRequestsForInvestor(myInvestorId).then((reqs) => {
+      requestService.getDataRoomRequestsForInvestor(myInvestorId, user?.email).then((reqs) => {
         if (active) setLiveRequests(reqs);
       });
     };
@@ -65,7 +65,7 @@ function InvestorDataRooms() {
       active = false;
       unsub();
     };
-  }, [myInvestorId]);
+  }, [myInvestorId, user?.email]);
 
   // Merge live requests with store access records
   const allAccessMap = new Map<

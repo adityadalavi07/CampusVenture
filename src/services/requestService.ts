@@ -98,8 +98,20 @@ export const requestService = {
     investorOrg?: string | undefined;
     startupName?: string | undefined;
     founderEmail?: string | undefined;
-  }): Promise<{ success: boolean; request?: DataRoomRequestRecord; error?: string }> {
+  }): Promise<{ success: boolean; request?: DataRoomRequestRecord; error?: string; alreadyExisted?: boolean }> {
     const { startupId, investorId, investorName, investorEmail, investorOrg, startupName, founderEmail } = params;
+
+    // Duplicate check: Prevent duplicate requests and repeated notifications if already pending or granted
+    const existing = getLocalDrRequests().find(
+      (r) =>
+        r.startupId === startupId &&
+        (r.investorId === investorId ||
+          (investorEmail && r.investorEmail?.toLowerCase() === investorEmail.toLowerCase()))
+    );
+    if (existing && (existing.status === "pending" || existing.status === "granted")) {
+      return { success: true, request: existing, alreadyExisted: true };
+    }
+
     const safeId = generateUUID();
     const now = new Date().toISOString();
 
@@ -466,7 +478,7 @@ export const requestService = {
     startupId?: string | undefined;
     startupName?: string | undefined;
     message?: string | undefined;
-  }): Promise<{ success: boolean; request?: ConnectionRequestRecord; error?: string }> {
+  }): Promise<{ success: boolean; request?: ConnectionRequestRecord; error?: string; alreadyExisted?: boolean }> {
     const {
       senderId,
       senderName,
@@ -483,6 +495,17 @@ export const requestService = {
 
     if (senderId === receiverId) {
       return { success: false, error: "Cannot send a connection request to yourself." };
+    }
+
+    // Duplicate check: Prevent duplicate requests if already pending or accepted
+    const existing = getLocalConnRequests().find(
+      (c) =>
+        (startupId ? c.startupId === startupId : true) &&
+        (c.senderId === senderId || (senderEmail && c.senderEmail?.toLowerCase() === senderEmail.toLowerCase())) &&
+        (c.receiverId === receiverId || (receiverEmail && c.receiverEmail?.toLowerCase() === receiverEmail.toLowerCase()))
+    );
+    if (existing && (existing.status === "pending" || existing.status === "accepted")) {
+      return { success: true, request: existing, alreadyExisted: true };
     }
 
     const safeId = generateUUID();
@@ -574,12 +597,15 @@ export const requestService = {
         .select("*")
         .order("created_at", { ascending: false });
 
-      if (userId && cleanEmail) {
-        query = query.or(`receiver_id.eq.${userId},receiver_email.ilike.${cleanEmail}`);
-      } else if (userId) {
-        query = query.eq("receiver_id", userId);
-      } else if (cleanEmail) {
-        query = query.ilike("receiver_email", cleanEmail);
+      const orClauses: string[] = [];
+      if (userId) orClauses.push(`receiver_id.eq.${userId}`);
+      if (cleanEmail) orClauses.push(`receiver_email.ilike.${cleanEmail}`);
+      if (startupIds && startupIds.length > 0) {
+        orClauses.push(`startup_id.in.(${startupIds.join(",")})`);
+      }
+
+      if (orClauses.length > 0) {
+        query = query.or(orClauses.join(","));
       }
 
       const { data, error } = await query;
@@ -619,6 +645,83 @@ export const requestService = {
     }
 
     return local;
+  },
+
+  /**
+   * Get all sent connection requests for a user (by senderId or senderEmail)
+   */
+  async getSentConnectionRequests(
+    senderId: string,
+    senderEmail?: string
+  ): Promise<ConnectionRequestRecord[]> {
+    const cleanEmail = senderEmail?.toLowerCase().trim();
+    const local = getLocalConnRequests().filter(
+      (c) =>
+        c.senderId === senderId ||
+        (cleanEmail && c.senderEmail?.toLowerCase() === cleanEmail)
+    );
+
+    try {
+      let query = (supabase as any)
+        .from("connection_requests")
+        .select("*")
+        .order("created_at", { ascending: false });
+
+      if (senderId && cleanEmail) {
+        query = query.or(`sender_id.eq.${senderId},sender_email.ilike.${cleanEmail}`);
+      } else if (senderId) {
+        query = query.eq("sender_id", senderId);
+      } else if (cleanEmail) {
+        query = query.ilike("sender_email", cleanEmail);
+      }
+
+      const { data, error } = await query;
+      if (!error && Array.isArray(data)) {
+        const dbRecords: ConnectionRequestRecord[] = data.map((d: any) => ({
+          id: d.id,
+          senderId: d.sender_id,
+          senderName: d.sender_name || "Member",
+          senderEmail: d.sender_email || "",
+          senderRole: d.sender_role || "investor",
+          senderOrg: d.sender_org || "",
+          receiverId: d.receiver_id,
+          receiverName: d.receiver_name || "Member",
+          receiverEmail: d.receiver_email || "",
+          startupId: d.startup_id,
+          startupName: d.startup_name || "",
+          message: d.message,
+          status: d.status,
+          discussionTerms: d.discussion_terms || undefined,
+          nextSteps: d.next_steps || undefined,
+          declineReason: d.decline_reason || undefined,
+          createdAt: d.created_at,
+          updatedAt: d.updated_at,
+        }));
+
+        const map = new Map<string, ConnectionRequestRecord>();
+        local.forEach((l) => map.set(l.id, l));
+        dbRecords.forEach((d) => map.set(d.id, d));
+        return Array.from(map.values()).sort(
+          (a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime()
+        );
+      }
+    } catch (err) {
+      console.warn("[RequestService] Error fetching sent connection requests:", err);
+    }
+
+    return local;
+  },
+
+  /**
+   * Get specific connection request between an investor/sender and a startup
+   */
+  async getConnectionRequestBetween(
+    senderId: string,
+    startupId: string,
+    senderEmail?: string
+  ): Promise<ConnectionRequestRecord | null> {
+    const sent = await requestService.getSentConnectionRequests(senderId, senderEmail);
+    return sent.find((c) => c.startupId === startupId) || null;
   },
 
   /**

@@ -156,6 +156,16 @@ export function MessagesView({ as }: { as: "student" | "investor" }) {
       setActive(`${targetStartupId}:${targetInvestorId}`);
     }
 
+    notify(
+      as === "student" ? "investor" : "student",
+      "Connection request accepted!",
+      `${user?.name || "Founder"} accepted your connection request regarding ${selectedConn.startupName || "Startup"}. Discussion terms and next steps are projected.`,
+      {
+        recipientEmail: selectedConn.senderEmail,
+        recipientUserId: selectedConn.senderId,
+      }
+    );
+
     toast.success(`Connection accepted! Discussion initiated with ${partnerName}.`);
     setAcceptModalOpen(false);
   };
@@ -173,6 +183,16 @@ export function MessagesView({ as }: { as: "student" | "investor" }) {
       prev.map((c) =>
         c.id === reqId ? { ...c, status: "rejected", declineReason: connDeclineReason } : c
       )
+    );
+
+    notify(
+      as === "student" ? "investor" : "student",
+      "Connection request declined",
+      `${user?.name || "Founder"} declined your connection request regarding ${selectedConn.startupName || "Startup"}. Feedback: "${connDeclineReason}"`,
+      {
+        recipientEmail: selectedConn.senderEmail,
+        recipientUserId: selectedConn.senderId,
+      }
     );
 
     toast.info(`Connection request declined for ${partnerName}.`);
@@ -276,10 +296,18 @@ export function MessagesView({ as }: { as: "student" | "investor" }) {
       content: text,
     });
 
+    const targetStartup = startups.find((s) => s.id === startupId);
+    const targetRecipientEmail = as === "investor" ? targetStartup?.founderEmail : undefined;
+    const targetRecipientId = as === "student" ? investorId : targetStartup?.founder;
+
     notify(
       as === "student" ? "investor" : "student",
-      "New message",
-      `${title(startupId, investorId)}: ${text.slice(0, 60)}`,
+      `New message from ${user?.name || (as === "student" ? "Founder" : "Investor")}`,
+      `${title(startupId, investorId)}: "${text.slice(0, 75)}"`,
+      {
+        ...(targetRecipientEmail ? { recipientEmail: targetRecipientEmail } : {}),
+        ...(targetRecipientId ? { recipientUserId: targetRecipientId } : {}),
+      }
     );
     setDraft("");
   }

@@ -35,6 +35,8 @@ export interface StartupRecord extends Startup {
 export interface Notification {
   id: string;
   role: Role;
+  recipientEmail?: string | undefined;
+  recipientUserId?: string | undefined;
   title: string;
   body: string;
   at: string;
@@ -249,6 +251,8 @@ export function VentureProvider({ children }: { children: ReactNode }) {
             map.set(f.id, {
               id: f.id,
               role: f.role,
+              recipientEmail: f.recipientEmail,
+              recipientUserId: f.recipientUserId,
               title: f.title,
               body: f.body,
               at: f.createdAt,
@@ -274,6 +278,8 @@ export function VentureProvider({ children }: { children: ReactNode }) {
             map.set(f.id, {
               id: f.id,
               role: f.role,
+              recipientEmail: f.recipientEmail,
+              recipientUserId: f.recipientUserId,
               title: f.title,
               body: f.body,
               at: f.createdAt,
@@ -299,6 +305,8 @@ export function VentureProvider({ children }: { children: ReactNode }) {
             map.set(f.id, {
               id: f.id,
               role: f.role,
+              recipientEmail: f.recipientEmail,
+              recipientUserId: f.recipientUserId,
               title: f.title,
               body: f.body,
               at: f.createdAt,

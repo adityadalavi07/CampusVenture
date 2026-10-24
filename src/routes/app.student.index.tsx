@@ -22,6 +22,7 @@ import {
   ChevronDown,
   ChevronUp,
   ShieldAlert,
+  ShieldCheck,
   HelpCircle,
   RefreshCw,
   Loader2,
@@ -48,6 +49,7 @@ import {
   type AIReadinessResult,
 } from "@/lib/ai-readiness";
 import { cofounderService, type CofounderInvitationRecord } from "@/services/cofounderService";
+import { requestService, type DataRoomRequestRecord, type ConnectionRequestRecord } from "@/services/requestService";
 
 const TITLE = "Founder Dashboard — CampusVenture";
 const DESCRIPTION =
@@ -212,6 +214,8 @@ function StudentDashboard() {
   const [cfEmail, setCfEmail] = useState("");
   const [cfRole, setCfRole] = useState("CTO & Technical Co-Founder");
   const [pendingMyInvites, setPendingMyInvites] = useState<CofounderInvitationRecord[]>([]);
+  const [liveDrRequests, setLiveDrRequests] = useState<DataRoomRequestRecord[]>([]);
+  const [liveConnRequests, setLiveConnRequests] = useState<ConnectionRequestRecord[]>([]);
 
   // Real-time synchronization of co-founder invitations from Supabase & local cache
   useEffect(() => {
@@ -247,6 +251,39 @@ function StudentDashboard() {
       unsub();
     };
   }, [user?.email, STARTUP?.id]);
+
+  // Real-time synchronization of Data Room & Connection requests for this student founder
+  useEffect(() => {
+    let active = true;
+    const sIds = STARTUP?.id ? [STARTUP.id] : [];
+
+    const fetchRequests = () => {
+      requestService
+        .getDataRoomRequestsForStudent({
+          startupIds: sIds,
+          ...(user?.id ? { founderId: user.id } : {}),
+          ...(user?.email ? { founderEmail: user.email } : {}),
+        })
+        .then((reqs) => {
+          if (active) setLiveDrRequests(reqs);
+        });
+
+      requestService
+        .getIncomingConnectionRequests(user?.id || (STARTUP?.id || ""), user?.email, sIds)
+        .then((conns) => {
+          if (active) setLiveConnRequests(conns);
+        });
+    };
+
+    fetchRequests();
+    const unsubDr = requestService.subscribeToDataRoomRequests(fetchRequests);
+    const unsubConn = requestService.subscribeToConnectionRequests(fetchRequests);
+    return () => {
+      active = false;
+      unsubDr();
+      unsubConn();
+    };
+  }, [user?.id, user?.email, STARTUP?.id]);
 
   function handlePostUpdate() {
     if (!newUpdateContent.trim()) {
@@ -654,6 +691,33 @@ function StudentDashboard() {
                 </div>
               </div>
             ))}
+          </div>
+        )}
+
+        {/* INCOMING INVESTOR REQUESTS BANNER */}
+        {(liveDrRequests.some((r) => r.status === "pending") || liveConnRequests.some((c) => c.status === "pending")) && (
+          <div className="rounded-xl border border-emerald-500/40 bg-gradient-to-r from-emerald-500/10 via-emerald-500/5 to-background p-4 shadow-sm flex flex-wrap items-center justify-between gap-4 animate-in fade-in-50">
+            <div className="flex items-center gap-3">
+              <div className="size-10 rounded-full bg-emerald-500/20 text-emerald-600 dark:text-emerald-400 grid place-items-center shrink-0">
+                <ShieldCheck className="size-5" />
+              </div>
+              <div>
+                <p className="text-sm font-semibold flex items-center gap-2">
+                  Action Required: Pending Investor Requests
+                  <Badge variant="default" className="bg-emerald-600 text-white text-[10px]">
+                    {liveDrRequests.filter((r) => r.status === "pending").length + liveConnRequests.filter((c) => c.status === "pending").length} Pending
+                  </Badge>
+                </p>
+                <p className="text-xs text-muted-foreground mt-0.5">
+                  Accredited investors have submitted Data Room and connection requests for your venture. Review diligence terms and accept or decline.
+                </p>
+              </div>
+            </div>
+            <Button size="sm" className="bg-emerald-600 hover:bg-emerald-700 text-white" asChild>
+              <Link to="/app/student/dataroom">
+                Review in Data Room Hub
+              </Link>
+            </Button>
           </div>
         )}
         {/* Top Header Bar */}
@@ -1282,19 +1346,34 @@ function StudentDashboard() {
             <CardContent className="space-y-3 text-sm">
               <Stat label="Investor profile views" value={String(STARTUP.views)} />
               <Stat label="Saved by investors" value={String(saved.length)} />
-              <Stat
-                label="Connection requests"
-                value={String(
-                  requests.filter((r) => r.startupId === STARTUP.id && r.kind === "connection")
-                    .length,
-                )}
-              />
-              <Stat
-                label="Data-room requests"
-                value={String(
-                  requests.filter((r) => r.startupId === STARTUP.id && r.kind === "dataroom").length,
-                )}
-              />
+              <div className="flex items-center justify-between">
+                <span className="text-muted-foreground">Connection requests</span>
+                <Link
+                  to="/app/student/dataroom"
+                  className="font-medium underline-offset-4 hover:underline text-primary flex items-center gap-1.5"
+                >
+                  {liveConnRequests.length}
+                  {liveConnRequests.some((c) => c.status === "pending") && (
+                    <Badge variant="default" className="h-4 px-1 text-[9px] bg-primary">
+                      {liveConnRequests.filter((c) => c.status === "pending").length} new
+                    </Badge>
+                  )}
+                </Link>
+              </div>
+              <div className="flex items-center justify-between">
+                <span className="text-muted-foreground">Data-room requests</span>
+                <Link
+                  to="/app/student/dataroom"
+                  className="font-medium underline-offset-4 hover:underline text-emerald-600 dark:text-emerald-400 flex items-center gap-1.5"
+                >
+                  {liveDrRequests.length}
+                  {liveDrRequests.some((r) => r.status === "pending") && (
+                    <Badge variant="default" className="h-4 px-1 text-[9px] bg-emerald-600 text-white">
+                      {liveDrRequests.filter((r) => r.status === "pending").length} new
+                    </Badge>
+                  )}
+                </Link>
+              </div>
 
             </CardContent>
           </Card>

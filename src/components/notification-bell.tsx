@@ -1,4 +1,5 @@
-import { Bell, CheckCheck } from "lucide-react";
+import { Bell, CheckCheck, ExternalLink } from "lucide-react";
+import { Link } from "@tanstack/react-router";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import {
@@ -8,12 +9,50 @@ import {
 } from "@/components/ui/popover";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { useVenture, timeAgo } from "@/lib/store";
+import { useAuth } from "@/lib/auth-context";
 import type { Role } from "@/lib/demo-data";
 
 export function NotificationBell({ role }: { role: Role }) {
   const { notifications, unread, markAllRead, hydrated } = useVenture();
-  const items = notifications.filter((n) => n.role === role);
-  const count = hydrated ? unread(role) : 0;
+  const { user } = useAuth();
+
+  const items = notifications.filter((n) => {
+    if (n.role !== role) return false;
+    if (n.recipientEmail && user?.email) {
+      return n.recipientEmail.toLowerCase() === user.email.toLowerCase();
+    }
+    return true;
+  });
+
+  const count = hydrated
+    ? items.filter((n) => !n.read).length
+    : 0;
+
+  const getTargetLink = (n: { title: string; body: string }) => {
+    const text = `${n.title} ${n.body}`.toLowerCase();
+    if (role === "student") {
+      if (text.includes("data-room") || text.includes("data room") || text.includes("access")) {
+        return "/app/student/dataroom";
+      }
+      if (text.includes("connection")) {
+        return "/app/student/dataroom";
+      }
+      if (text.includes("message")) {
+        return "/app/student/messages";
+      }
+      return "/app/student";
+    }
+    if (role === "investor") {
+      if (text.includes("data-room") || text.includes("data room") || text.includes("terms")) {
+        return "/app/investor/dataroom";
+      }
+      if (text.includes("connection") || text.includes("message")) {
+        return "/app/investor/messages";
+      }
+      return "/app/investor";
+    }
+    return "/app/university";
+  };
 
   return (
     <Popover>
@@ -50,19 +89,27 @@ export function NotificationBell({ role }: { role: Role }) {
             <p className="p-6 text-center text-sm text-muted-foreground">You're all caught up.</p>
           ) : (
             <ul className="divide-y">
-              {items.map((n) => (
-                <li key={n.id} className="flex gap-3 px-4 py-3">
-                  <span
-                    className={`mt-1.5 size-2 shrink-0 rounded-full ${n.read ? "bg-muted" : "bg-primary"}`}
-                    aria-hidden="true"
-                  />
-                  <div className="min-w-0">
-                    <p className="text-sm font-medium leading-snug">{n.title}</p>
-                    <p className="text-xs text-muted-foreground">{n.body}</p>
-                    <p className="mt-1 text-[11px] text-muted-foreground">{timeAgo(n.at)}</p>
-                  </div>
-                </li>
-              ))}
+              {items.map((n) => {
+                const targetLink = getTargetLink(n);
+                return (
+                  <li key={n.id} className="transition-colors hover:bg-muted/50">
+                    <Link to={targetLink} className="flex gap-3 px-4 py-3 block text-left">
+                      <span
+                        className={`mt-1.5 size-2 shrink-0 rounded-full ${n.read ? "bg-muted" : "bg-primary"}`}
+                        aria-hidden="true"
+                      />
+                      <div className="min-w-0 flex-1">
+                        <div className="flex items-center justify-between gap-1">
+                          <p className="text-sm font-medium leading-snug">{n.title}</p>
+                          <ExternalLink className="size-3 text-muted-foreground shrink-0 opacity-50" />
+                        </div>
+                        <p className="text-xs text-muted-foreground mt-0.5 line-clamp-2">{n.body}</p>
+                        <p className="mt-1 text-[11px] text-muted-foreground">{timeAgo(n.at)}</p>
+                      </div>
+                    </Link>
+                  </li>
+                );
+              })}
             </ul>
           )}
         </ScrollArea>

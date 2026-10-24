@@ -108,27 +108,53 @@ function StartupDetail() {
   const embed = embedUrl(startup.videoUrl);
 
   const [drStatus, setDrStatus] = useState<"none" | "pending" | "granted" | "rejected">("none");
-  const [connStatus, setConnStatus] = useState<"none" | "pending" | "accepted">("none");
+  const [connStatus, setConnStatus] = useState<"none" | "pending" | "accepted" | "rejected">("none");
 
   useEffect(() => {
     let active = true;
-    requestService.getDataRoomRequestsForInvestor(investor.id).then((reqs) => {
-      if (!active) return;
-      const found = reqs.find((r) => r.startupId === startup.id);
-      if (found) {
-        setDrStatus(found.status === "revoked" ? "rejected" : found.status);
-      }
-    });
+
+    const fetchDr = () => {
+      requestService.getDataRoomRequestsForInvestor(investor.id, user?.email).then((reqs) => {
+        if (!active) return;
+        const found = reqs.find((r) => r.startupId === startup.id);
+        if (found) {
+          setDrStatus(found.status === "revoked" ? "rejected" : found.status);
+        } else {
+          setDrStatus("none");
+        }
+      });
+    };
+
+    const fetchConn = () => {
+      requestService.getSentConnectionRequests(investor.id, user?.email).then((reqs) => {
+        if (!active) return;
+        const found = reqs.find((c) => c.startupId === startup.id);
+        if (found) {
+          setConnStatus(found.status);
+        } else {
+          setConnStatus("none");
+        }
+      });
+    };
+
+    fetchDr();
+    fetchConn();
+
+    const unsubDr = requestService.subscribeToDataRoomRequests(fetchDr);
+    const unsubConn = requestService.subscribeToConnectionRequests(fetchConn);
+
     return () => {
       active = false;
+      unsubDr();
+      unsubConn();
     };
-  }, [investor.id, startup.id]);
+  }, [investor.id, startup.id, user?.email]);
 
   const handleRequestDataRoom = async () => {
     addRequest(startup.id, investor.id, "dataroom");
     requestAccess(startup.id, investor.id);
     setDrStatus("pending");
-    await requestService.requestDataRoomAccess({
+    const res = await requestService.requestDataRoomAccess({
       startupId: startup.id,
       investorId: investor.id,
       investorName: investor.name,
@@ -137,10 +163,16 @@ function StartupDetail() {
       startupName: startup.name,
       founderEmail: startup.founderEmail,
     });
+
+    if (res.alreadyExisted) {
+      toast.info(`Data-room request is already pending founder review.`);
+      return;
+    }
+
     notify(
       "student",
       "Data-room request",
-      `${investor.name} (${investor.organization || "Accredited Investor"}) requested access to ${startup.name} data room.`,
+      `${investor.name} (${investor.organization || "Accredited Investor"}) requested access to ${startup.name} data room under NDA.`,
       startup.founderEmail ? { recipientEmail: startup.founderEmail } : undefined
     );
     toast.success(`Data-room request sent to ${startup.name}`);
@@ -167,7 +199,7 @@ function StartupDetail() {
       }
     }
 
-    await requestService.sendConnectionRequest({
+    const res = await requestService.sendConnectionRequest({
       senderId: investor.id,
       senderName: investor.name,
       senderEmail: user?.email,
@@ -180,10 +212,16 @@ function StartupDetail() {
       startupName: startup.name,
       message: `Hi ${startup.founder || "Founder"}, I reviewed ${startup.name} on CampusVenture and would love to connect.`,
     });
+
+    if (res.alreadyExisted) {
+      toast.info(`Connection request is already pending founder review.`);
+      return;
+    }
+
     notify(
       "student",
       "New connection request",
-      `${investor.name} wants to connect regarding ${startup.name}.`,
+      `${investor.name} (${investor.organization || "Accredited Investor"}) wants to connect regarding ${startup.name}.`,
       startup.founderEmail ? { recipientEmail: startup.founderEmail } : undefined
     );
     toast.success(`Connection requested with ${startup.name}`);
@@ -363,15 +401,36 @@ function StartupDetail() {
           >
             {isSaved ? "Saved to watchlist" : "Save startup"}
           </Button>
-          {connStatus === "none" ? (
+          {connStatus === "none" && (
             <Button onClick={handleRequestConnection}>
               Request connection
             </Button>
-          ) : (
+          )}
+          {connStatus === "pending" && (
             <Button variant="secondary" disabled className="gap-1.5">
               <Check className="size-4 text-emerald-600" />
-              Connection Requested
+              Connection Requested (Pending)
             </Button>
+          )}
+          {connStatus === "accepted" && (
+            <div className="flex items-center gap-2">
+              <Badge variant="default" className="bg-emerald-600 text-white text-xs gap-1 py-1.5 px-3">
+                <Check className="size-3.5" /> Connected
+              </Badge>
+              <Button asChild variant="outline" size="sm">
+                <Link to="/app/investor/messages">Message Founder</Link>
+              </Button>
+            </div>
+          )}
+          {connStatus === "rejected" && (
+            <div className="flex items-center gap-2">
+              <Badge variant="destructive" className="text-xs py-1.5 px-3">
+                Connection Declined
+              </Badge>
+              <Button variant="ghost" size="sm" onClick={handleRequestConnection}>
+                Re-request
+              </Button>
+            </div>
           )}
         </div>
       </div>
