@@ -156,14 +156,17 @@ export function AuthGuard({ requiredRole, children }: AuthGuardProps) {
                 <LogIn className="size-4" />
                 Sign In with Official University Email
               </Button>
-              {user.role === "investor" && (
-                <Button variant="secondary" asChild className="w-full">
-                  <Link to="/app/investor">
-                    Return to Investor Portal
-                    <ArrowRight className="ml-1 size-4" />
-                  </Link>
-                </Button>
-              )}
+              <Button
+                variant="outline"
+                onClick={() => {
+                  signOut();
+                  openAuthModal(requiredRole, "register");
+                }}
+                className="w-full flex items-center justify-center gap-2"
+              >
+                <UserPlus className="size-4" />
+                Register as {targetRole.title}
+              </Button>
               <Button variant="ghost" asChild className="w-full text-xs text-muted-foreground">
                 <Link to="/">Return to Homepage</Link>
               </Button>

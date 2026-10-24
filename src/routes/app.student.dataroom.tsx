@@ -1,6 +1,6 @@
 import { createFileRoute } from "@tanstack/react-router";
-import { useRef, useState } from "react";
-import { FileLock2, FileUp, ShieldCheck, Trash2 } from "lucide-react";
+import { useEffect, useRef, useState } from "react";
+import { Check, FileLock2, FileUp, ShieldCheck, Trash2, X } from "lucide-react";
 import { toast } from "sonner";
 import { AppShell } from "@/components/app-shell";
 import { Badge } from "@/components/ui/badge";
@@ -16,6 +16,7 @@ import {
 import { DEMO_INVESTORS } from "@/lib/demo-data";
 import { MY_STARTUP_ID, timeAgo, useVenture, type DataRoomDoc } from "@/lib/store";
 import { useAuth } from "@/lib/auth-context";
+import { requestService, type DataRoomRequestRecord } from "@/services/requestService";
 
 const TITLE = "Data Room — CampusVenture Founder";
 const DESCRIPTION =
@@ -46,6 +47,8 @@ function StudentDataRoom() {
   const { user } = useAuth();
   const fileRef = useRef<HTMLInputElement>(null);
   const [category, setCategory] = useState<DataRoomDoc["category"]>("Financials");
+  const [liveRequests, setLiveRequests] = useState<DataRoomRequestRecord[]>([]);
+  const [loadingRequests, setLoadingRequests] = useState(true);
 
   const currentStartup = startups.find(
     (s) =>
@@ -56,6 +59,38 @@ function StudentDataRoom() {
 
   const myDocs = docs.filter((d) => d.startupId === currentStartupId || d.startupId === MY_STARTUP_ID);
   const myAccess = access.filter((a) => a.startupId === currentStartupId || a.startupId === MY_STARTUP_ID);
+
+  useEffect(() => {
+    let active = true;
+    requestService.getDataRoomRequestsForStartup(currentStartupId).then((reqs) => {
+      if (active) {
+        setLiveRequests(reqs);
+        setLoadingRequests(false);
+      }
+    });
+    return () => {
+      active = false;
+    };
+  }, [currentStartupId]);
+
+  const handleGrantAccess = async (reqId: string, invName: string) => {
+    await requestService.updateDataRoomRequestStatus(reqId, "granted");
+    setAccessStatus(reqId, "granted");
+    setLiveRequests((prev) =>
+      prev.map((r) => (r.id === reqId ? { ...r, status: "granted" } : r))
+    );
+    notify("investor", "Data-room access granted", `${invName} can now view files.`);
+    toast.success(`Access granted to ${invName}`);
+  };
+
+  const handleDeclineAccess = async (reqId: string, invName: string) => {
+    await requestService.updateDataRoomRequestStatus(reqId, "rejected");
+    setAccessStatus(reqId, "revoked");
+    setLiveRequests((prev) =>
+      prev.map((r) => (r.id === reqId ? { ...r, status: "rejected" } : r))
+    );
+    toast.info(`Access request declined for ${invName}`);
+  };
 
   return (
     <AppShell role="student">
@@ -151,55 +186,96 @@ function StudentDataRoom() {
 
         <Card>
           <CardHeader>
-            <CardTitle className="text-base">Access requests</CardTitle>
-            <CardDescription>Grant or revoke investor access to the data room.</CardDescription>
+            <CardTitle className="text-base">Access requests ({liveRequests.length})</CardTitle>
+            <CardDescription>Grant or decline investor access to your proprietary documents.</CardDescription>
           </CardHeader>
           <CardContent className="space-y-2">
-            {myAccess.length === 0 && (
+            {liveRequests.length === 0 && (
               <p className="rounded-lg border border-dashed p-8 text-center text-sm text-muted-foreground">
-                No access requests yet.
+                No access requests yet. When accredited investors discover your venture and request data room access, they will appear here.
               </p>
             )}
-            {myAccess.map((a) => {
-              const inv = DEMO_INVESTORS.find((i) => i.id === a.investorId);
+            {liveRequests.map((req) => {
+              const displayName = req.investorName || "Accredited Investor";
+              const displayOrg = req.investorOrg || "Venture Fund";
+              const isGranted = req.status === "granted";
+              const isRejected = req.status === "rejected";
+
               return (
                 <div
-                  key={a.id}
-                  className="flex flex-wrap items-center justify-between gap-3 rounded-lg border p-3"
+                  key={req.id}
+                  className="flex flex-wrap items-center justify-between gap-3 rounded-lg border p-3.5"
                 >
                   <div>
-                    <p className="text-sm font-medium">{inv?.name ?? a.investorId}</p>
-                    <p className="text-xs text-muted-foreground">
-                      {inv?.organization} · requested {timeAgo(a.requestedAt)} · {a.downloads} downloads
+                    <div className="flex items-center gap-2">
+                      <p className="text-sm font-semibold">{displayName}</p>
+                      <Badge variant="outline" className="text-[11px]">
+                        {displayOrg}
+                      </Badge>
+                    </div>
+                    <p className="text-xs text-muted-foreground mt-0.5">
+                      Requested {timeAgo(req.createdAt)} {req.investorEmail ? `· ${req.investorEmail}` : ""}
                     </p>
                   </div>
                   <div className="flex items-center gap-2">
-                    <Badge variant={a.ndaSigned ? "default" : "secondary"}>
-                      <ShieldCheck className="size-3.5" aria-hidden="true" />
-                      {a.ndaSigned ? `NDA signed by ${a.ndaSignedName}` : "NDA pending"}
+                    <Badge variant={req.ndaSigned ? "default" : "secondary"} className="text-xs">
+                      <ShieldCheck className="size-3.5 mr-1" aria-hidden="true" />
+                      {req.ndaSigned ? `NDA signed` : "NDA pending"}
                     </Badge>
-                    <Badge variant="outline">{a.status}</Badge>
-                    {a.status !== "granted" ? (
-                      <Button
-                        size="sm"
-                        onClick={() => {
-                          setAccessStatus(a.id, "granted");
-                          notify("investor", "Data-room access granted", `${inv?.name} can now view files.`);
-                          toast.success("Access granted");
-                        }}
-                      >
-                        Grant
-                      </Button>
-                    ) : (
+                    <Badge
+                      variant={
+                        isGranted
+                          ? "default"
+                          : isRejected
+                          ? "destructive"
+                          : "outline"
+                      }
+                      className="text-xs capitalize"
+                    >
+                      {req.status}
+                    </Badge>
+
+                    {req.status === "pending" && (
+                      <div className="flex items-center gap-1.5">
+                        <Button
+                          size="sm"
+                          className="h-8 gap-1 bg-emerald-600 hover:bg-emerald-700 text-white"
+                          onClick={() => handleGrantAccess(req.id, displayName)}
+                        >
+                          <Check className="size-3.5" />
+                          Grant
+                        </Button>
+                        <Button
+                          size="sm"
+                          variant="outline"
+                          className="h-8 gap-1 text-destructive hover:bg-destructive/10"
+                          onClick={() => handleDeclineAccess(req.id, displayName)}
+                        >
+                          <X className="size-3.5" />
+                          Decline
+                        </Button>
+                      </div>
+                    )}
+
+                    {isGranted && (
                       <Button
                         size="sm"
                         variant="outline"
-                        onClick={() => {
-                          setAccessStatus(a.id, "revoked");
-                          toast("Access revoked");
-                        }}
+                        className="h-8 text-xs text-muted-foreground hover:text-destructive"
+                        onClick={() => handleDeclineAccess(req.id, displayName)}
                       >
-                        Revoke
+                        Revoke Access
+                      </Button>
+                    )}
+
+                    {isRejected && (
+                      <Button
+                        size="sm"
+                        variant="outline"
+                        className="h-8 text-xs text-emerald-600 hover:bg-emerald-50"
+                        onClick={() => handleGrantAccess(req.id, displayName)}
+                      >
+                        Re-grant Access
                       </Button>
                     )}
                   </div>

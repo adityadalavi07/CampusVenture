@@ -1,5 +1,6 @@
 import { createFileRoute, Link, useParams } from "@tanstack/react-router";
-import { ArrowLeft, BadgeCheck, FolderLock, Github, Star } from "lucide-react";
+import { useEffect, useState } from "react";
+import { ArrowLeft, BadgeCheck, Check, FolderLock, Github, Star, UserCheck } from "lucide-react";
 import { toast } from "sonner";
 import { AppShell } from "@/components/app-shell";
 import { ScoreRing } from "@/components/score-ring";
@@ -9,6 +10,7 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/com
 import { DEMO_INVESTORS, formatMoney, matchScore } from "@/lib/demo-data";
 import { STATUS_LABEL, useVenture } from "@/lib/store";
 import { useAuth } from "@/lib/auth-context";
+import { requestService, type DataRoomRequestRecord, type ConnectionRequestRecord } from "@/services/requestService";
 
 const TITLE = "Startup Profile — CampusVenture";
 const DESCRIPTION =
@@ -95,6 +97,58 @@ function StartupDetail() {
   const { score, reasons } = matchScore(investor, startup);
   const isSaved = saved.includes(startup.id);
   const embed = embedUrl(startup.videoUrl);
+
+  const [drStatus, setDrStatus] = useState<"none" | "pending" | "granted" | "rejected">("none");
+  const [connStatus, setConnStatus] = useState<"none" | "pending" | "accepted">("none");
+
+  useEffect(() => {
+    let active = true;
+    requestService.getDataRoomRequestsForInvestor(investor.id).then((reqs) => {
+      if (!active) return;
+      const found = reqs.find((r) => r.startupId === startup.id);
+      if (found) {
+        setDrStatus(found.status === "revoked" ? "rejected" : found.status);
+      }
+    });
+    return () => {
+      active = false;
+    };
+  }, [investor.id, startup.id]);
+
+  const handleRequestDataRoom = async () => {
+    addRequest(startup.id, investor.id, "dataroom");
+    requestAccess(startup.id, investor.id);
+    setDrStatus("pending");
+    await requestService.requestDataRoomAccess({
+      startupId: startup.id,
+      investorId: investor.id,
+      investorName: investor.name,
+      investorEmail: user?.email,
+      investorOrg: investor.organization,
+      startupName: startup.name,
+    });
+    notify("student", "Data-room request", `${investor.organization} requested access.`);
+    toast.success(`Data-room request sent to ${startup.name}`);
+  };
+
+  const handleRequestConnection = async () => {
+    addRequest(startup.id, investor.id, "connection");
+    setConnStatus("pending");
+    await requestService.sendConnectionRequest({
+      senderId: investor.id,
+      senderName: investor.name,
+      senderEmail: user?.email,
+      senderRole: "investor",
+      senderOrg: investor.organization,
+      receiverId: startup.founder || startup.id,
+      receiverName: startup.founder || startup.name,
+      startupId: startup.id,
+      startupName: startup.name,
+      message: `Hi ${startup.founder || "Founder"}, I reviewed ${startup.name} on CampusVenture and would love to connect.`,
+    });
+    notify("student", "New connection request", `${investor.name} wants to connect.`);
+    toast.success(`Connection requested with ${startup.name}`);
+  };
 
   return (
     <AppShell role="investor">
@@ -226,17 +280,36 @@ function StartupDetail() {
               <p className="text-muted-foreground">
                 {startup.deckName ? `1 document: ${startup.deckName}` : "No documents uploaded yet."}
               </p>
-              <Button
-                size="sm"
-                onClick={() => {
-                  addRequest(startup.id, investor.id, "dataroom");
-                  requestAccess(startup.id, investor.id);
-                  notify("student", "Data-room request", `${investor.organization} requested access.`);
-                  toast.success(`Data-room request sent to ${startup.name}`);
-                }}
-              >
-                Request access
-              </Button>
+              {drStatus === "none" && (
+                <Button size="sm" onClick={handleRequestDataRoom}>
+                  Request access
+                </Button>
+              )}
+              {drStatus === "pending" && (
+                <Badge variant="secondary" className="px-3 py-1 font-medium text-xs">
+                  Access Requested (Pending Founder Approval)
+                </Badge>
+              )}
+              {drStatus === "granted" && (
+                <div className="flex items-center gap-2">
+                  <Badge variant="default" className="bg-emerald-600 text-white text-xs">
+                    Access Granted
+                  </Badge>
+                  <Button size="sm" asChild variant="outline">
+                    <Link to="/app/investor/dataroom">Open Data Room</Link>
+                  </Button>
+                </div>
+              )}
+              {drStatus === "rejected" && (
+                <div className="space-y-1">
+                  <Badge variant="destructive" className="text-xs">
+                    Access Request Declined
+                  </Badge>
+                  <Button size="sm" variant="ghost" className="text-xs block" onClick={handleRequestDataRoom}>
+                    Re-request access
+                  </Button>
+                </div>
+              )}
             </CardContent>
           </Card>
         </div>
@@ -251,15 +324,16 @@ function StartupDetail() {
           >
             {isSaved ? "Saved to watchlist" : "Save startup"}
           </Button>
-          <Button
-            onClick={() => {
-              addRequest(startup.id, investor.id, "connection");
-              notify("student", "New connection request", `${investor.name} wants to connect.`);
-              toast.success(`Connection requested with ${startup.name}`);
-            }}
-          >
-            Request connection
-          </Button>
+          {connStatus === "none" ? (
+            <Button onClick={handleRequestConnection}>
+              Request connection
+            </Button>
+          ) : (
+            <Button variant="secondary" disabled className="gap-1.5">
+              <Check className="size-4 text-emerald-600" />
+              Connection Requested
+            </Button>
+          )}
         </div>
       </div>
     </AppShell>

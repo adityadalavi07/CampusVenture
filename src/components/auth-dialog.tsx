@@ -372,51 +372,37 @@ export function AuthDialog() {
     }, 100);
   };
 
-  // Auto-verify if user clicks the login/verify button in their email (same-tab and cross-tab sync)
+  // Auto-verify ONLY if user explicitly requested verification and is actively waiting on the OTP dialog
   useEffect(() => {
+    if (!verShow) return;
+
     const handleCheckSession = (email: string) => {
       const cleanEmail = email.toLowerCase();
-      const currentTarget = (verSentRef.current || (typeof window !== "undefined" ? localStorage.getItem("cv_email_ver_pending") : "") || fEmailRef.current).toLowerCase();
-      if (cleanEmail && (!currentTarget || cleanEmail === currentTarget)) {
+      const currentTarget = (verSentRef.current || "").toLowerCase();
+      
+      // ONLY trigger if this specific verification is actively pending for this exact email
+      if (currentTarget && cleanEmail === currentTarget) {
         setVerOk(true);
         setVerEmail(cleanEmail);
         setVerCode(null);
         setVerShow(false);
         if (typeof window !== "undefined") {
           localStorage.removeItem("cv_email_ver_pending");
-          localStorage.setItem("cv_email_verified", cleanEmail);
         }
-        toast.success("Email verified successfully via your secure link!");
+        toast.success("Email verified successfully!");
       }
     };
 
     const {
       data: { subscription },
-    } = supabase.auth.onAuthStateChange((_event, session) => {
-      if (session?.user?.email) {
+    } = supabase.auth.onAuthStateChange((event, session) => {
+      if ((event === "SIGNED_IN" || event === "USER_UPDATED") && session?.user?.email) {
         handleCheckSession(session.user.email);
       }
     });
 
-    const handleStorageChange = (e: StorageEvent) => {
-      if (e.key === "cv_email_verified" && e.newValue) {
-        setVerOk(true);
-        setVerEmail(e.newValue);
-        setVerCode(null);
-        setVerShow(false);
-        toast.success("Email verified successfully!");
-      }
-    };
-
-    if (typeof window !== "undefined") {
-      window.addEventListener("storage", handleStorageChange);
-    }
-
     return () => {
       subscription.unsubscribe();
-      if (typeof window !== "undefined") {
-        window.removeEventListener("storage", handleStorageChange);
-      }
     };
   }, [verShow]);
 

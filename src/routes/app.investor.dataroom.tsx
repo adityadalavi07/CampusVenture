@@ -1,5 +1,5 @@
 import { createFileRoute } from "@tanstack/react-router";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { Download, FileLock2, ShieldCheck } from "lucide-react";
 import { toast } from "sonner";
 import { AppShell } from "@/components/app-shell";
@@ -19,6 +19,7 @@ import { Label } from "@/components/ui/label";
 import { DEMO_INVESTORS } from "@/lib/demo-data";
 import { MY_INVESTOR_ID, timeAgo, useVenture } from "@/lib/store";
 import { useAuth } from "@/lib/auth-context";
+import { requestService, type DataRoomRequestRecord } from "@/services/requestService";
 
 const TITLE = "Data Rooms — CampusVenture Investor";
 const DESCRIPTION =
@@ -41,7 +42,39 @@ function InvestorDataRooms() {
   const { user } = useAuth();
   const myInvestorId = user?.id || MY_INVESTOR_ID;
   const investorName = user?.name || DEMO_INVESTORS[0]?.name || "Investor";
-  const mine = access.filter((a) => a.investorId === myInvestorId || a.investorId === MY_INVESTOR_ID);
+  const [liveRequests, setLiveRequests] = useState<DataRoomRequestRecord[]>([]);
+
+  useEffect(() => {
+    let active = true;
+    requestService.getDataRoomRequestsForInvestor(myInvestorId).then((reqs) => {
+      if (active) setLiveRequests(reqs);
+    });
+    return () => {
+      active = false;
+    };
+  }, [myInvestorId]);
+
+  // Merge live requests with store access records
+  const allAccessMap = new Map<string, { id: string; startupId: string; status: string; ndaSigned: boolean; ndaSignedName: string; requestedAt: string; downloads: number }>();
+  
+  access.filter((a) => a.investorId === myInvestorId || a.investorId === MY_INVESTOR_ID).forEach((a) => {
+    allAccessMap.set(a.startupId, a);
+  });
+
+  liveRequests.forEach((r) => {
+    const existing = allAccessMap.get(r.startupId);
+    allAccessMap.set(r.startupId, {
+      id: r.id,
+      startupId: r.startupId,
+      status: r.status,
+      ndaSigned: r.ndaSigned || existing?.ndaSigned || false,
+      ndaSignedName: r.ndaSignedName || existing?.ndaSignedName || "",
+      requestedAt: r.createdAt || existing?.requestedAt || new Date().toISOString(),
+      downloads: existing?.downloads || 0,
+    });
+  });
+
+  const mine = Array.from(allAccessMap.values());
   const [ndaFor, setNdaFor] = useState<string | null>(null);
   const [signature, setSignature] = useState(investorName);
 

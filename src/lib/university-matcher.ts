@@ -29,19 +29,22 @@ export function getEmailDomain(email?: string): string {
  * 3. UGC Universities alias and abbreviation lookup
  */
 export function isSameUniversity(
-  source: { org?: string | undefined; email?: string | undefined; university?: string | undefined },
-  target: { org?: string | undefined; email?: string | undefined; university?: string | undefined }
+  source: string | { org?: string | undefined; email?: string | undefined; university?: string | undefined },
+  target: string | { org?: string | undefined; email?: string | undefined; university?: string | undefined }
 ): boolean {
-  const emailA = getEmailDomain(source.email);
-  const emailB = getEmailDomain(target.email);
+  const srcObj = typeof source === "string" ? { org: source, university: source } : source;
+  const tgtObj = typeof target === "string" ? { org: target, university: target } : target;
+
+  const emailA = getEmailDomain(srcObj.email);
+  const emailB = getEmailDomain(tgtObj.email);
 
   // 1. If both have institutional email domains, match them directly
   if (emailA && emailB && emailA === emailB) {
     return true;
   }
 
-  const nameA = (source.org || source.university || "").trim();
-  const nameB = (target.org || target.university || "").trim();
+  const nameA = (srcObj.org || srcObj.university || "").trim();
+  const nameB = (tgtObj.org || tgtObj.university || "").trim();
 
   if (!nameA || !nameB) {
     return false;
