@@ -2,7 +2,79 @@
 -- Includes: Data Room Requests, Connection Requests, Central Notifications,
 -- Real-time Messages, and Co-Founder Invitations.
 
--- 1. DATA ROOM REQUESTS TABLE
+-- STEP 1: DYNAMICALLY DROP ALL EXISTING POLICIES
+-- This prevents PostgreSQL Error 0A000 ("cannot alter type of a column used in a policy definition")
+do $$
+declare
+  pol record;
+begin
+  for pol in (
+    select schemaname, tablename, policyname
+    from pg_policies
+    where schemaname = 'public'
+      and tablename in (
+        'data_room_requests',
+        'connection_requests',
+        'notifications',
+        'messages',
+        'cofounder_invitations'
+      )
+  ) loop
+    execute format('drop policy if exists %I on %I.%I', pol.policyname, pol.schemaname, pol.tablename);
+  end loop;
+exception when others then null;
+end $$;
+
+-- Explicitly ensure legacy policy names are dropped if any remain
+drop policy if exists "Investors can view their own data room requests" on public.data_room_requests;
+drop policy if exists "Founders can view requests for their startups" on public.data_room_requests;
+drop policy if exists "Investors can create data room requests" on public.data_room_requests;
+drop policy if exists "Founders can update request status" on public.data_room_requests;
+drop policy if exists "Universities can view requests for campus startups" on public.data_room_requests;
+drop policy if exists "Allow read access to data room requests" on public.data_room_requests;
+drop policy if exists "Allow insert to data room requests" on public.data_room_requests;
+drop policy if exists "Allow update to data room requests" on public.data_room_requests;
+drop policy if exists "Public access to data room requests" on public.data_room_requests;
+
+drop policy if exists "Users can view connections they are part of" on public.connection_requests;
+drop policy if exists "Users can create connection requests" on public.connection_requests;
+drop policy if exists "Receivers can update connection status" on public.connection_requests;
+drop policy if exists "Allow read access to connection requests" on public.connection_requests;
+drop policy if exists "Allow insert to connection requests" on public.connection_requests;
+drop policy if exists "Allow update to connection requests" on public.connection_requests;
+drop policy if exists "Public access to connection requests" on public.connection_requests;
+
+drop policy if exists "Allow read access to notifications" on public.notifications;
+drop policy if exists "Allow insert to notifications" on public.notifications;
+drop policy if exists "Allow update to notifications" on public.notifications;
+drop policy if exists "Public access to notifications" on public.notifications;
+
+drop policy if exists "Public access to messages" on public.messages;
+drop policy if exists "Public access to cofounder_invitations" on public.cofounder_invitations;
+
+
+-- STEP 2: DYNAMICALLY DROP FOREIGN KEY CONSTRAINTS THAT LOCK COLUMN TYPES
+do $$
+declare
+  c record;
+begin
+  for c in (
+    select conname, conrelid::regclass as relname
+    from pg_constraint
+    where conrelid in (
+      select oid from pg_class
+      where relname in ('data_room_requests', 'connection_requests', 'messages', 'cofounder_invitations', 'notifications')
+        and relnamespace = 'public'::regnamespace
+    )
+    and contype = 'f'
+  ) loop
+    execute format('alter table %s drop constraint if exists %I cascade', c.relname, c.conname);
+  end loop;
+exception when others then null;
+end $$;
+
+
+-- STEP 3: DATA ROOM REQUESTS TABLE
 create table if not exists public.data_room_requests (
   id uuid default gen_random_uuid() primary key,
   startup_id text not null,
@@ -19,16 +91,14 @@ create table if not exists public.data_room_requests (
   next_steps text,
   decline_reason text,
   created_at timestamp with time zone default timezone('utc'::text, now()) not null,
-  updated_at timestamp with time zone default timezone('utc'::text, now()) not null,
-  unique(startup_id, investor_id)
+  updated_at timestamp with time zone default timezone('utc'::text, now()) not null
 );
 
--- Safely alter columns in case table was created with rigid foreign keys
-alter table public.data_room_requests drop constraint if exists data_room_requests_startup_id_fkey;
-alter table public.data_room_requests drop constraint if exists data_room_requests_investor_id_fkey;
+-- Safely alter column types now that policies and foreign keys have been cleared
 alter table public.data_room_requests alter column startup_id type text using startup_id::text;
 alter table public.data_room_requests alter column investor_id type text using investor_id::text;
 
+-- Ensure all metadata columns exist
 alter table public.data_room_requests add column if not exists founder_email text;
 alter table public.data_room_requests add column if not exists investor_name text;
 alter table public.data_room_requests add column if not exists investor_email text;
@@ -38,17 +108,20 @@ alter table public.data_room_requests add column if not exists discussion_terms 
 alter table public.data_room_requests add column if not exists next_steps text;
 alter table public.data_room_requests add column if not exists decline_reason text;
 
-alter table public.data_room_requests enable row level security;
+-- Ensure unique constraint on (startup_id, investor_id) for upsert support
+do $$
+begin
+  if not exists (
+    select 1 from pg_constraint
+    where conname = 'data_room_requests_startup_investor_key'
+      and conrelid = 'public.data_room_requests'::regclass
+  ) then
+    alter table public.data_room_requests add constraint data_room_requests_startup_investor_key unique (startup_id, investor_id);
+  end if;
+exception when others then null;
+end $$;
 
-drop policy if exists "Investors can view their own data room requests" on public.data_room_requests;
-drop policy if exists "Founders can view requests for their startups" on public.data_room_requests;
-drop policy if exists "Investors can create data room requests" on public.data_room_requests;
-drop policy if exists "Founders can update request status" on public.data_room_requests;
-drop policy if exists "Universities can view requests for campus startups" on public.data_room_requests;
-drop policy if exists "Allow read access to data room requests" on public.data_room_requests;
-drop policy if exists "Allow insert to data room requests" on public.data_room_requests;
-drop policy if exists "Allow update to data room requests" on public.data_room_requests;
-drop policy if exists "Public access to data room requests" on public.data_room_requests;
+alter table public.data_room_requests enable row level security;
 
 create policy "Public access to data room requests" on public.data_room_requests
   for all using (true) with check (true);
@@ -58,7 +131,7 @@ create index if not exists idx_dr_requests_investor on public.data_room_requests
 create index if not exists idx_dr_requests_status on public.data_room_requests(status);
 
 
--- 2. CONNECTION REQUESTS TABLE
+-- STEP 4: CONNECTION REQUESTS TABLE
 create table if not exists public.connection_requests (
   id uuid default gen_random_uuid() primary key,
   sender_id text not null,
@@ -77,18 +150,15 @@ create table if not exists public.connection_requests (
   next_steps text,
   decline_reason text,
   created_at timestamp with time zone default timezone('utc'::text, now()) not null,
-  updated_at timestamp with time zone default timezone('utc'::text, now()) not null,
-  unique(sender_id, receiver_id, startup_id)
+  updated_at timestamp with time zone default timezone('utc'::text, now()) not null
 );
 
--- Safely alter columns in case table was created with rigid foreign keys
-alter table public.connection_requests drop constraint if exists connection_requests_sender_id_fkey;
-alter table public.connection_requests drop constraint if exists connection_requests_receiver_id_fkey;
-alter table public.connection_requests drop constraint if exists connection_requests_startup_id_fkey;
+-- Safely alter column types
 alter table public.connection_requests alter column sender_id type text using sender_id::text;
 alter table public.connection_requests alter column receiver_id type text using receiver_id::text;
 alter table public.connection_requests alter column startup_id type text using startup_id::text;
 
+-- Ensure all metadata columns exist
 alter table public.connection_requests add column if not exists sender_name text;
 alter table public.connection_requests add column if not exists sender_email text;
 alter table public.connection_requests add column if not exists sender_role text;
@@ -100,15 +170,20 @@ alter table public.connection_requests add column if not exists discussion_terms
 alter table public.connection_requests add column if not exists next_steps text;
 alter table public.connection_requests add column if not exists decline_reason text;
 
-alter table public.connection_requests enable row level security;
+-- Ensure unique constraint on (sender_id, receiver_id, startup_id) for upsert support
+do $$
+begin
+  if not exists (
+    select 1 from pg_constraint
+    where conname = 'connection_requests_sender_receiver_startup_key'
+      and conrelid = 'public.connection_requests'::regclass
+  ) then
+    alter table public.connection_requests add constraint connection_requests_sender_receiver_startup_key unique (sender_id, receiver_id, startup_id);
+  end if;
+exception when others then null;
+end $$;
 
-drop policy if exists "Users can view connections they are part of" on public.connection_requests;
-drop policy if exists "Users can create connection requests" on public.connection_requests;
-drop policy if exists "Receivers can update connection status" on public.connection_requests;
-drop policy if exists "Allow read access to connection requests" on public.connection_requests;
-drop policy if exists "Allow insert to connection requests" on public.connection_requests;
-drop policy if exists "Allow update to connection requests" on public.connection_requests;
-drop policy if exists "Public access to connection requests" on public.connection_requests;
+alter table public.connection_requests enable row level security;
 
 create policy "Public access to connection requests" on public.connection_requests
   for all using (true) with check (true);
@@ -119,10 +194,10 @@ create index if not exists idx_conn_status on public.connection_requests(status)
 create index if not exists idx_conn_receiver_email on public.connection_requests(lower(receiver_email));
 
 
--- 3. NOTIFICATIONS TABLE
+-- STEP 5: CENTRAL NOTIFICATIONS TABLE
 create table if not exists public.notifications (
   id uuid default gen_random_uuid() primary key,
-  user_id uuid references public.profiles(id) on delete cascade,
+  user_id text,
   recipient_email text,
   role text not null,
   title text not null,
@@ -131,13 +206,9 @@ create table if not exists public.notifications (
   created_at timestamp with time zone default timezone('utc'::text, now()) not null
 );
 
+alter table public.notifications alter column user_id type text using user_id::text;
 alter table public.notifications add column if not exists recipient_email text;
 alter table public.notifications enable row level security;
-
-drop policy if exists "Allow read access to notifications" on public.notifications;
-drop policy if exists "Allow insert to notifications" on public.notifications;
-drop policy if exists "Allow update to notifications" on public.notifications;
-drop policy if exists "Public access to notifications" on public.notifications;
 
 create policy "Public access to notifications" on public.notifications
   for all using (true) with check (true);
@@ -147,7 +218,7 @@ create index if not exists idx_notifications_role on public.notifications(role);
 create index if not exists idx_notifications_email on public.notifications(lower(recipient_email));
 
 
--- 4. REAL-TIME MESSAGES TABLE
+-- STEP 6: REAL-TIME MESSAGES TABLE
 create table if not exists public.messages (
   id uuid default gen_random_uuid() primary key,
   sender_id text not null,
@@ -160,17 +231,15 @@ create table if not exists public.messages (
   created_at timestamp with time zone default timezone('utc'::text, now()) not null
 );
 
-alter table public.messages drop constraint if exists messages_sender_id_fkey;
-alter table public.messages drop constraint if exists messages_recipient_id_fkey;
 alter table public.messages alter column sender_id type text using sender_id::text;
 alter table public.messages alter column recipient_id type text using recipient_id::text;
+alter table public.messages alter column startup_id type text using startup_id::text;
 alter table public.messages add column if not exists startup_id text;
 alter table public.messages add column if not exists sender_name text;
 alter table public.messages add column if not exists sender_role text;
 
 alter table public.messages enable row level security;
 
-drop policy if exists "Public access to messages" on public.messages;
 create policy "Public access to messages" on public.messages
   for all using (true) with check (true);
 
@@ -179,7 +248,7 @@ create index if not exists idx_messages_recipient on public.messages(recipient_i
 create index if not exists idx_messages_startup on public.messages(startup_id);
 
 
--- 5. CO-FOUNDER INVITATIONS TABLE
+-- STEP 7: CO-FOUNDER INVITATIONS TABLE
 create table if not exists public.cofounder_invitations (
   id uuid default gen_random_uuid() primary key,
   startup_id text not null,
@@ -200,7 +269,6 @@ create table if not exists public.cofounder_invitations (
 
 alter table public.cofounder_invitations enable row level security;
 
-drop policy if exists "Public access to cofounder_invitations" on public.cofounder_invitations;
 create policy "Public access to cofounder_invitations" on public.cofounder_invitations
   for all using (true) with check (true);
 
@@ -209,7 +277,7 @@ create index if not exists idx_cofounder_email on public.cofounder_invitations(l
 create index if not exists idx_cofounder_status on public.cofounder_invitations(status);
 
 
--- 6. ENABLE SUPABASE REALTIME REPLICATION
+-- STEP 8: ENABLE REAL-TIME REPLICATION
 do $$
 begin
   begin
