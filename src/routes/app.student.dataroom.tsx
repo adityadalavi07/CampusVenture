@@ -58,6 +58,19 @@ export const Route = createFileRoute("/app/student/dataroom")({
     ],
   }),
   component: StudentDataRoom,
+  errorComponent: ({ error, reset }) => (
+    <AppShell role="student">
+      <div className="mx-auto max-w-lg py-12 text-center space-y-3">
+        <h2 className="text-lg font-semibold text-destructive">Data Room Error</h2>
+        <p className="text-xs text-muted-foreground">
+          {error?.message || "An unexpected error occurred while loading the data room."}
+        </p>
+        <Button size="sm" onClick={() => reset()}>
+          Retry
+        </Button>
+      </div>
+    </AppShell>
+  ),
 });
 
 const CATEGORIES: DataRoomDoc["category"][] = [
@@ -80,10 +93,10 @@ function StudentDataRoom() {
   const [recentMessages, setRecentMessages] = useState<ChatMessageRecord[]>([]);
   const [realDocs, setRealDocs] = useState<DataRoomDocRecord[]>([]);
 
-  const userStartups = startups.filter(
+  const userStartups = (startups || []).filter(
     (s) =>
-      (user?.email && s.founderEmail?.toLowerCase() === user.email.toLowerCase()) ||
-      (user?.name && s.founder === user.name)
+      (user?.email && s?.founderEmail?.toLowerCase() === user.email?.toLowerCase()) ||
+      (user?.name && s?.founder === user.name)
   );
   const currentStartup = userStartups[0];
   const startupIds = Array.from(
@@ -731,7 +744,7 @@ function StudentDataRoom() {
               <CardHeader>
                 <div className="flex flex-wrap items-center justify-between gap-3">
                   <div>
-                    <CardTitle className="text-base">Confidential Documents ({myDocs.length})</CardTitle>
+                    <CardTitle className="text-base">Confidential Documents ({realDocs.length})</CardTitle>
                     <CardDescription>Proprietary financials, pitch decks, cap tables, and metrics.</CardDescription>
                   </div>
                   <div className="flex items-center gap-2">
