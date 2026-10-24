@@ -47,11 +47,18 @@ function InvestorDashboard() {
   const [savedOnly, setSavedOnly] = useState(false);
 
   const activeInvestor = useMemo(() => {
+    let savedOrg = "";
+    if (typeof window !== "undefined") {
+      try {
+        const raw = window.localStorage.getItem("campusventure.profile.investor");
+        if (raw) savedOrg = JSON.parse(raw)?.org || "";
+      } catch {}
+    }
     return {
       ...ME,
       id: user?.id || ME.id,
       name: user?.name || ME.name,
-      organization: user?.org || ME.organization,
+      organization: user?.org || savedOrg || ME.organization,
     };
   }, [user]);
 

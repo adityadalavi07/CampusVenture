@@ -287,10 +287,10 @@ export function AuthDialog() {
       return;
     }
 
-    if ((role === "student" || role === "university") && !isUniversityEmail(clean)) {
+    if (role === "university" && !isUniversityEmail(clean)) {
       setFieldError(
         "email",
-        `${ROLES[role]} registration requires an official university/institutional email (e.g. 252921389@sguk.ac.in, .ac.in, .edu). Personal emails like Gmail/Yahoo are not allowed.`
+        `University registration requires an official institutional email (e.g. dean@sgu.ac.in, .ac.in, .edu).`
       );
       return;
     }
@@ -578,8 +578,8 @@ export function AuthDialog() {
     }
 
     closeAuthModal();
-    // Navigate smoothly to role portal
-    const targetRole = res.user?.role || role;
+    // Navigate to the role selected on the tab, or fallback to user role
+    const targetRole = role || res.user?.role || "student";
     router.navigate({ to: `/app/${targetRole}` });
   };
 
@@ -603,8 +603,8 @@ export function AuthDialog() {
     if (!emailOk(cleanEmail)) {
       setFieldError("email", "Enter a valid email address.");
       bad = true;
-    } else if ((role === "student" || role === "university") && !isUniversityEmail(cleanEmail)) {
-      setFieldError("email", `${ROLES[role]} registration requires an official university email (e.g. 252921389@sguk.ac.in, .ac.in, .edu).`);
+    } else if (role === "university" && !isUniversityEmail(cleanEmail)) {
+      setFieldError("email", `University registration requires an official university/institutional email (e.g. dean@sgu.ac.in, .ac.in, .edu).`);
       bad = true;
     }
     if (!pwOk(fPw)) {
@@ -1021,7 +1021,7 @@ export function AuthDialog() {
                       onClick={handleSendOtp}
                       disabled={
                         isEmailVerified ||
-                        ((role === "student" || role === "university") ? !isUniversityEmail(fEmail.trim()) : !emailOk(fEmail.trim())) ||
+                        (role === "university" ? !isUniversityEmail(fEmail.trim()) : !emailOk(fEmail.trim())) ||
                         busy
                       }
                     >
@@ -1040,15 +1040,22 @@ export function AuthDialog() {
                   </div>
                   {errors["email"] && <div className="err">{errors["email"]}</div>}
 
-                  {/* Institutional email domain guidance alerts */}
-                  {(role === "student" || role === "university") && fEmail.trim().length > 0 && !errors["email"] && (
+                  {/* Institutional / Student email domain guidance alerts */}
+                  {role === "university" && fEmail.trim().length > 0 && !errors["email"] && (
                     !isUniversityEmail(fEmail.trim()) ? (
                       <div style={{ fontSize: 11.5, color: "#fca5a5", marginTop: 4 }}>
-                        ⚠️ Only official university/institutional emails are allowed (e.g. 252921389@sguk.ac.in or .ac.in / .edu). Personal emails like Gmail/Yahoo are not permitted.
+                        ⚠️ Only official university/institutional emails are allowed for university accounts (.ac.in or .edu).
                       </div>
                     ) : !isEmailVerified ? (
                       <div style={{ fontSize: 11.5, color: "var(--ok)", marginTop: 4, display: "flex", alignItems: "center", gap: 4 }}>
-                        <Icon name="check" size={13} /> Valid university email domain! Click "Verify Email" to get your OTP.
+                        <Icon name="check" size={13} /> Valid university domain! Click "Verify Email" to get your code.
+                      </div>
+                    ) : null
+                  )}
+                  {role === "student" && fEmail.trim().length > 0 && !errors["email"] && (
+                    !isEmailVerified && emailOk(fEmail.trim()) ? (
+                      <div style={{ fontSize: 11.5, color: isUniversityEmail(fEmail.trim()) ? "var(--ok)" : "var(--muted)", marginTop: 4, display: "flex", alignItems: "center", gap: 4 }}>
+                        <Icon name="check" size={13} /> {isUniversityEmail(fEmail.trim()) ? "Official university email detected." : "Personal & university emails both supported for student founders."} Click "Verify Email" to proceed.
                       </div>
                     ) : null
                   )}
@@ -1465,26 +1472,26 @@ export function AuthDialog() {
                       }}
                     >
                       <label style={{ fontSize: 12, fontWeight: 600, color: "var(--text)", marginBottom: 4 }}>
-                        {role === "student" || role === "university"
+                        {role === "university"
                           ? "Or enter your official university email:"
-                          : "Or enter another Google / Firm Email:"}
+                          : "Or enter another Google / University Email:"}
                       </label>
                       <input
                         type="email"
                         placeholder={
-                          role === "student" || role === "university"
-                            ? "e.g. 252921378@sguk.ac.in or student@university.edu"
-                            : "e.g. partner@fund.vc or user@gmail.com"
+                          role === "university"
+                            ? "e.g. dean@university.ac.in or incubator@sguk.ac.in"
+                            : "e.g. user@gmail.com or 252921378@sguk.ac.in"
                         }
                         value={customGoogleEmail}
                         onChange={(e) => setCustomGoogleEmail(e.target.value)}
                         style={{ height: 36, fontSize: 13, marginBottom: 8 }}
                       />
-                      {(role === "student" || role === "university") &&
+                      {role === "university" &&
                         customGoogleEmail.includes("@") &&
                         !isUniversityEmail(customGoogleEmail) && (
                           <div style={{ color: "#ef4444", fontSize: 11.5, marginBottom: 8, lineHeight: 1.4 }}>
-                            ⚠️ Personal email addresses (@gmail.com) are strictly prohibited for {ROLES[role]}. You must use an official university domain (.ac.in, .edu, @sguk.ac.in).
+                            ⚠️ University accounts require an official university domain (.ac.in, .edu, @sguk.ac.in).
                           </div>
                         )}
                       <input
@@ -1500,7 +1507,7 @@ export function AuthDialog() {
                         style={{ height: 34, fontSize: 13 }}
                         disabled={
                           !customGoogleEmail.includes("@") ||
-                          ((role === "student" || role === "university") && !isUniversityEmail(customGoogleEmail))
+                          (role === "university" && !isUniversityEmail(customGoogleEmail))
                         }
                         onClick={async () => {
                           setShowGooglePicker(false);

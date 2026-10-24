@@ -10,6 +10,7 @@ import {
   Users,
   Send,
   CheckCircle2,
+  Check,
   Clock,
   Mail,
   Trash2,
@@ -46,6 +47,7 @@ import {
   isGibberishOrNonsense,
   type AIReadinessResult,
 } from "@/lib/ai-readiness";
+import { cofounderService, type CofounderInvitationRecord } from "@/services/cofounderService";
 
 const TITLE = "Founder Dashboard — CampusVenture";
 const DESCRIPTION =
@@ -209,6 +211,42 @@ function StudentDashboard() {
   const [cfName, setCfName] = useState("");
   const [cfEmail, setCfEmail] = useState("");
   const [cfRole, setCfRole] = useState("CTO & Technical Co-Founder");
+  const [pendingMyInvites, setPendingMyInvites] = useState<CofounderInvitationRecord[]>([]);
+
+  // Real-time synchronization of co-founder invitations from Supabase & local cache
+  useEffect(() => {
+    let active = true;
+    const fetchInvites = () => {
+      if (user?.email) {
+        cofounderService.getPendingInvitationsForEmail(user.email).then((invs) => {
+          if (active) setPendingMyInvites(invs);
+        });
+      }
+      if (STARTUP?.id) {
+        cofounderService.getInvitationsForStartup(STARTUP.id).then((invs) => {
+          if (active && Array.isArray(invs) && invs.length > 0) {
+            setCoFounders(
+              invs.map((i) => ({
+                id: i.id,
+                name: i.cofounderName,
+                email: i.cofounderEmail,
+                role: i.role,
+                status: i.status === "accepted" ? "accepted" : "pending",
+                invitedAt: new Date(i.createdAt).toLocaleDateString("en-US", { month: "short", day: "numeric" }),
+              }))
+            );
+          }
+        });
+      }
+    };
+
+    fetchInvites();
+    const unsub = cofounderService.subscribeToInvitations(fetchInvites);
+    return () => {
+      active = false;
+      unsub();
+    };
+  }, [user?.email, STARTUP?.id]);
 
   function handlePostUpdate() {
     if (!newUpdateContent.trim()) {
@@ -251,7 +289,27 @@ function StudentDashboard() {
     );
   }
 
-  function handleSendInvite() {
+  async function handleAcceptMyInvite(inv: CofounderInvitationRecord) {
+    await cofounderService.acceptInvitation(inv.id, user?.id);
+    setPendingMyInvites((prev) => prev.filter((i) => i.id !== inv.id));
+    toast.success(`🎉 You are now officially a Co-Founder of ${inv.startupName}!`, {
+      description: `Linked as ${inv.role}. Refreshing your venture dashboard.`,
+    });
+    const targetStartup = startups.find((s) => s.id === inv.startupId);
+    if (targetStartup) {
+      updateStartup(targetStartup.id, {
+        teamSize: (targetStartup.teamSize || 1) + 1,
+      });
+    }
+  }
+
+  async function handleDeclineMyInvite(invitationId: string) {
+    await cofounderService.rejectInvitation(invitationId);
+    setPendingMyInvites((prev) => prev.filter((i) => i.id !== invitationId));
+    toast.info("Co-founder invitation declined.");
+  }
+
+  async function handleSendInvite() {
     if (!cfName.trim()) {
       toast.error("Please enter your co-founder's full name.");
       return;
@@ -287,9 +345,21 @@ function StudentDashboard() {
       /* ignore */
     }
 
+    // Persist to database & dispatch transactional email + real-time notification
+    await cofounderService.sendInvitation({
+      startupId: STARTUP?.id || "s1",
+      startupName: STARTUP?.name || "Campus Venture",
+      founderId: user?.id,
+      founderName,
+      founderEmail: user?.email || STARTUP?.founderEmail || "",
+      cofounderName: newCf.name,
+      cofounderEmail: newCf.email,
+      role: newCf.role,
+    });
+
     notify("student", "Co-Founder Request Sent", `Invitation email sent to ${cleanEmail} for ${newCf.role}.`);
     toast.success(`Request email dispatched to ${cleanEmail}`, {
-      description: "Invitation sent! They can click their email link or you can simulate acceptance below.",
+      description: "Invitation sent! They can accept via their email/dashboard or you can simulate below.",
     });
 
     setCfName("");
@@ -298,9 +368,11 @@ function StudentDashboard() {
     setIsInviting(false);
   }
 
-  function handleAcceptInvite(id: string) {
+  async function handleAcceptInvite(id: string) {
     const target = coFounders.find((c) => c.id === id);
     if (!target) return;
+
+    await cofounderService.acceptInvitation(id, user?.id);
 
     const updated = coFounders.map((c) =>
       c.id === id ? { ...c, status: "accepted" as const } : c
@@ -322,7 +394,8 @@ function StudentDashboard() {
     }
   }
 
-  function handleRemoveCoFounder(id: string) {
+  async function handleRemoveCoFounder(id: string) {
+    await cofounderService.revokeInvitation(id);
     const updated = coFounders.filter((c) => c.id !== id);
     setCoFounders(updated);
     try {
@@ -341,6 +414,54 @@ function StudentDashboard() {
     return (
       <AppShell role="student">
         <div className="mx-auto max-w-4xl space-y-8 py-8 animate-in fade-in-50">
+          {/* INCOMING CO-FOUNDER INVITATIONS BANNER */}
+          {pendingMyInvites.length > 0 && (
+            <div className="space-y-3">
+              {pendingMyInvites.map((inv) => (
+                <div
+                  key={inv.id}
+                  className="rounded-xl border border-primary/40 bg-gradient-to-r from-primary/10 via-primary/5 to-background p-4 shadow-sm flex flex-wrap items-center justify-between gap-4 animate-in fade-in-50"
+                >
+                  <div className="flex items-center gap-3">
+                    <div className="grid size-10 place-items-center rounded-xl bg-primary text-primary-foreground font-bold shrink-0">
+                      🎉
+                    </div>
+                    <div>
+                      <h3 className="text-sm font-semibold text-foreground flex items-center gap-2">
+                        Co-Founder Invitation: {inv.startupName}
+                        <Badge variant="outline" className="text-[10px] text-primary border-primary/30">
+                          {inv.role}
+                        </Badge>
+                      </h3>
+                      <p className="text-xs text-muted-foreground mt-0.5">
+                        <strong>{inv.founderName}</strong> ({inv.founderEmail}) invited you to join as <strong>{inv.role}</strong>!
+                        {inv.equity ? ` · Equity: ${inv.equity}` : ""}
+                      </p>
+                    </div>
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <Button
+                      size="sm"
+                      className="bg-emerald-600 hover:bg-emerald-700 text-white gap-1.5 h-8 text-xs font-semibold shadow-xs"
+                      onClick={() => handleAcceptMyInvite(inv)}
+                    >
+                      <Check className="size-3.5" />
+                      Accept Co-Founder Role
+                    </Button>
+                    <Button
+                      size="sm"
+                      variant="outline"
+                      className="text-destructive hover:bg-destructive/10 h-8 text-xs"
+                      onClick={() => handleDeclineMyInvite(inv.id)}
+                    >
+                      <X className="size-3.5" />
+                      Decline
+                    </Button>
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
           <div className="text-center space-y-2">
             <Badge variant="outline" className="text-primary border-primary/30 text-xs">
               CampusVenture Student Incubator
@@ -487,6 +608,54 @@ function StudentDashboard() {
   return (
     <AppShell role="student">
       <div className="mx-auto max-w-6xl space-y-6">
+        {/* INCOMING CO-FOUNDER INVITATIONS BANNER */}
+        {pendingMyInvites.length > 0 && (
+          <div className="space-y-3">
+            {pendingMyInvites.map((inv) => (
+              <div
+                key={inv.id}
+                className="rounded-xl border border-primary/40 bg-gradient-to-r from-primary/10 via-primary/5 to-background p-4 shadow-sm flex flex-wrap items-center justify-between gap-4 animate-in fade-in-50"
+              >
+                <div className="flex items-center gap-3">
+                  <div className="grid size-10 place-items-center rounded-xl bg-primary text-primary-foreground font-bold shrink-0">
+                    🎉
+                  </div>
+                  <div>
+                    <h3 className="text-sm font-semibold text-foreground flex items-center gap-2">
+                      Co-Founder Invitation: {inv.startupName}
+                      <Badge variant="outline" className="text-[10px] text-primary border-primary/30">
+                        {inv.role}
+                      </Badge>
+                    </h3>
+                    <p className="text-xs text-muted-foreground mt-0.5">
+                      <strong>{inv.founderName}</strong> ({inv.founderEmail}) invited you to join as <strong>{inv.role}</strong>!
+                      {inv.equity ? ` · Equity: ${inv.equity}` : ""}
+                    </p>
+                  </div>
+                </div>
+                <div className="flex items-center gap-2">
+                  <Button
+                    size="sm"
+                    className="bg-emerald-600 hover:bg-emerald-700 text-white gap-1.5 h-8 text-xs font-semibold shadow-xs"
+                    onClick={() => handleAcceptMyInvite(inv)}
+                  >
+                    <Check className="size-3.5" />
+                    Accept Co-Founder Role
+                  </Button>
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    className="text-destructive hover:bg-destructive/10 h-8 text-xs"
+                    onClick={() => handleDeclineMyInvite(inv.id)}
+                  >
+                    <X className="size-3.5" />
+                    Decline
+                  </Button>
+                </div>
+              </div>
+            ))}
+          </div>
+        )}
         {/* Top Header Bar */}
         {/* Institutional Verification Status Banner */}
         {STARTUP.status === "pending" && (
@@ -913,7 +1082,7 @@ function StudentDashboard() {
                 </Badge>
               </div>
               <CardDescription>
-                Connect and invite your co-founder via their university email. Once accepted, they appear alongside you on the startup profile.
+                Connect and invite your co-founder via email (normal Gmail/Outlook and university emails both accepted). Once accepted, they appear alongside you on the startup profile.
               </CardDescription>
             </CardHeader>
             <CardContent className="flex flex-1 flex-col gap-4">
@@ -951,7 +1120,7 @@ function StudentDashboard() {
                           </Badge>
                         ) : (
                           <Badge variant="outline" className="border-amber-500/40 text-amber-600 dark:text-amber-400 bg-amber-500/10 text-[10px] py-0 px-1.5 flex items-center gap-1">
-                            <Clock className="size-3" /> Invite Sent
+                            <Clock className="size-3" /> Invite Dispatched
                           </Badge>
                         )}
                       </div>
@@ -961,16 +1130,30 @@ function StudentDashboard() {
 
                     <div className="flex items-center gap-1.5">
                       {cf.status === "pending" && (
-                        <Button
-                          size="sm"
-                          variant="outline"
-                          onClick={() => handleAcceptInvite(cf.id)}
-                          className="h-7 text-xs border-primary/40 text-primary hover:bg-primary/10 font-medium"
-                          title="Simulate co-founder accepting invitation from their email"
-                        >
-                          <CheckCircle2 className="size-3 mr-1" />
-                          Simulate Accept
-                        </Button>
+                        <div className="flex items-center gap-1">
+                          <Button
+                            size="sm"
+                            variant="outline"
+                            onClick={() => {
+                              navigator.clipboard?.writeText?.(window.location.origin + "/app/student");
+                              toast.success("Invitation link copied to clipboard!");
+                            }}
+                            className="h-7 text-[11px] px-2 text-muted-foreground"
+                            title="Copy invitation link"
+                          >
+                            Copy Link
+                          </Button>
+                          <Button
+                            size="sm"
+                            variant="outline"
+                            onClick={() => handleAcceptInvite(cf.id)}
+                            className="h-7 text-xs border-primary/40 text-primary hover:bg-primary/10 font-medium"
+                            title="Accept and link co-founder"
+                          >
+                            <CheckCircle2 className="size-3 mr-1" />
+                            Accept
+                          </Button>
+                        </div>
                       )}
                       <button
                         type="button"
@@ -1017,7 +1200,7 @@ function StudentDashboard() {
                     />
                     <Input
                       type="email"
-                      placeholder="University Email (e.g. rohan@sguk.ac.in)"
+                      placeholder="Email address (e.g. rohan@gmail.com or rohan@sguk.ac.in)"
                       value={cfEmail}
                       onChange={(e) => setCfEmail(e.target.value)}
                       className="h-8 text-xs bg-background"

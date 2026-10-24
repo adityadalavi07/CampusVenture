@@ -27,23 +27,31 @@ import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { cn } from "@/lib/utils";
 import { DEMO_INVESTORS } from "@/lib/demo-data";
-import { MY_INVESTOR_ID, MY_STARTUP_ID, timeAgo, useVenture } from "@/lib/store";
+import { MY_INVESTOR_ID, MY_STARTUP_ID, timeAgo, useVenture, type Message } from "@/lib/store";
 import { useAuth } from "@/lib/auth-context";
 import { requestService, type ConnectionRequestRecord } from "@/services/requestService";
+import { messageService, type ChatMessageRecord } from "@/services/messageService";
 
 /** Shared two-pane inbox. `as` decides which side of the thread you speak from. */
 export function MessagesView({ as }: { as: "student" | "investor" }) {
   const { messages, startups, sendMessage, markThreadRead, notify } = useVenture();
   const { user } = useAuth();
-  const currentStartupId =
-    startups.find(
-      (s) =>
-        (user?.email && s.founderEmail?.toLowerCase() === user.email.toLowerCase()) ||
-        (user?.name && s.founder === user.name)
-    )?.id || MY_STARTUP_ID;
+
+  const userStartups = startups.filter(
+    (s) =>
+      (user?.email && s.founderEmail?.toLowerCase() === user.email.toLowerCase()) ||
+      (user?.name && s.founder === user.name)
+  );
+  const currentStartupId = userStartups[0]?.id || MY_STARTUP_ID;
+  const startupIds = Array.from(new Set([
+    ...userStartups.map((s) => s.id),
+    currentStartupId,
+    MY_STARTUP_ID,
+  ]));
 
   const [active, setActive] = useState<string | null>(null);
   const [draft, setDraft] = useState("");
+  const [liveChatMessages, setLiveChatMessages] = useState<ChatMessageRecord[]>([]);
 
   // Connection requests state
   const [connRequests, setConnRequests] = useState<ConnectionRequestRecord[]>([]);
@@ -60,15 +68,42 @@ export function MessagesView({ as }: { as: "student" | "investor" }) {
 
   const myUserId = user?.id || (as === "student" ? currentStartupId : MY_INVESTOR_ID);
 
+  // Synchronize incoming connection requests across Supabase and local cache
   useEffect(() => {
     let active = true;
-    requestService.getIncomingConnectionRequests(myUserId).then((reqs) => {
-      if (active) setConnRequests(reqs);
-    });
+    const fetchConns = () => {
+      requestService.getIncomingConnectionRequests(myUserId, user?.email, startupIds).then((reqs) => {
+        if (active) setConnRequests(reqs);
+      });
+    };
+
+    fetchConns();
+    const unsub = requestService.subscribeToConnectionRequests(fetchConns);
     return () => {
       active = false;
+      unsub();
     };
-  }, [myUserId]);
+  }, [myUserId, user?.email, startupIds.join(",")]);
+
+  // Synchronize chat messages with Supabase and real-time WebSocket broadcast
+  useEffect(() => {
+    let active = true;
+    messageService.getAllMessagesForUser({ userId: user?.id, userEmail: user?.email }).then((msgs) => {
+      if (active) setLiveChatMessages(msgs);
+    });
+
+    const unsubMessages = messageService.subscribeToMessages((incoming) => {
+      setLiveChatMessages((prev) => {
+        if (prev.some((m) => m.id === incoming.id)) return prev;
+        return [...prev, incoming];
+      });
+    });
+
+    return () => {
+      active = false;
+      unsubMessages();
+    };
+  }, [user?.id, user?.email]);
 
   const handleOpenAcceptModal = (req: ConnectionRequestRecord) => {
     setSelectedConn(req);
@@ -101,16 +136,23 @@ export function MessagesView({ as }: { as: "student" | "investor" }) {
       )
     );
 
-    // If there's a startupId and senderId, create an initial message thread
+    // Create an initial message thread and open it
     const targetStartupId = selectedConn.startupId || currentStartupId;
     const targetInvestorId = as === "student" ? selectedConn.senderId : myUserId;
+    const introMsg = `Hi ${partnerName.split(" ")[0]}! I accepted your connection request. Let's discuss: ${connTerms}`;
+
     if (targetStartupId && targetInvestorId) {
-      sendMessage(
-        targetStartupId,
-        targetInvestorId,
-        as,
-        `Hi ${partnerName.split(" ")[0]}! I accepted your connection request. Let's discuss: ${connTerms}`
-      );
+      sendMessage(targetStartupId, targetInvestorId, as, introMsg);
+      messageService.sendMessage({
+        startupId: targetStartupId,
+        senderId: myUserId,
+        senderName: user?.name || (as === "student" ? "Founder" : "Investor"),
+        senderRole: as,
+        senderEmail: user?.email,
+        recipientId: selectedConn.senderId,
+        recipientEmail: selectedConn.senderEmail,
+        content: introMsg,
+      });
       setActive(`${targetStartupId}:${targetInvestorId}`);
     }
 
@@ -137,11 +179,33 @@ export function MessagesView({ as }: { as: "student" | "investor" }) {
     setDeclineModalOpen(false);
   };
 
+  // Merge store messages with live Supabase messages
+  const allMessages = useMemo(() => {
+    const list: Array<Message & { senderRole?: string; senderName?: string }> = [...messages];
+    liveChatMessages.forEach((l) => {
+      if (!list.some((m) => m.id === l.id)) {
+        list.push({
+          id: l.id,
+          startupId: l.startupId,
+          investorId: l.senderRole === "investor" ? l.senderId : l.recipientId,
+          from: l.senderRole === "investor" ? "investor" : "student",
+          text: l.content,
+          at: l.createdAt,
+          readByStudent: l.read,
+          readByInvestor: l.read,
+          senderName: l.senderName,
+          senderRole: l.senderRole,
+        });
+      }
+    });
+    return list;
+  }, [messages, liveChatMessages]);
+
   const threads = useMemo(() => {
     const map = new Map<string, { startupId: string; investorId: string; last: string; unread: number }>();
-    for (const m of messages) {
-      if (as === "student" && m.startupId !== currentStartupId && m.startupId !== MY_STARTUP_ID) continue;
-      if (as === "investor" && m.investorId !== MY_INVESTOR_ID) continue;
+    for (const m of allMessages) {
+      if (as === "student" && !startupIds.includes(m.startupId)) continue;
+      if (as === "investor" && m.investorId !== MY_INVESTOR_ID && m.investorId !== user?.id) continue;
       const key = `${m.startupId}:${m.investorId}`;
       const prev = map.get(key) ?? { startupId: m.startupId, investorId: m.investorId, last: m.at, unread: 0 };
       const unreadFlag = as === "student" ? !m.readByStudent : !m.readByInvestor;
@@ -152,7 +216,7 @@ export function MessagesView({ as }: { as: "student" | "investor" }) {
       });
     }
     return [...map.values()].sort((a, b) => b.last.localeCompare(a.last));
-  }, [messages, as]);
+  }, [allMessages, as, startupIds, user?.id]);
 
   const activeKey = active ?? (threads[0] ? `${threads[0].startupId}:${threads[0].investorId}` : null);
   const [startupId, investorId] = (activeKey ?? ":").split(":");
@@ -162,24 +226,56 @@ export function MessagesView({ as }: { as: "student" | "investor" }) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [activeKey]);
 
-  const thread = messages
+  const thread = allMessages
     .filter((m) => m.startupId === startupId && m.investorId === investorId)
     .sort((a, b) => a.at.localeCompare(b.at));
 
-  const title = (sId: string, iId: string) =>
-    as === "student"
-      ? (DEMO_INVESTORS.find((i) => i.id === iId)?.name ?? "Investor")
-      : (startups.find((s) => s.id === sId)?.name ?? "Startup");
+  const title = (sId: string, iId: string) => {
+    if (as === "student") {
+      const demo = DEMO_INVESTORS.find((i) => i.id === iId);
+      if (demo) return demo.name;
+      const conn = connRequests.find((c) => c.senderId === iId || c.receiverId === iId);
+      if (conn?.senderName) return conn.senderName;
+      return "Investor Partner";
+    }
+    const startup = startups.find((s) => s.id === sId);
+    if (startup) return startup.name;
+    const conn = connRequests.find((c) => c.startupId === sId);
+    if (conn?.startupName) return conn.startupName;
+    return "Venture Founder";
+  };
 
-  const subtitle = (sId: string, iId: string) =>
-    as === "student"
-      ? (DEMO_INVESTORS.find((i) => i.id === iId)?.organization ?? "")
-      : (startups.find((s) => s.id === sId)?.sector ?? "");
+  const subtitle = (sId: string, iId: string) => {
+    if (as === "student") {
+      const demo = DEMO_INVESTORS.find((i) => i.id === iId);
+      if (demo) return demo.organization;
+      const conn = connRequests.find((c) => c.senderId === iId || c.receiverId === iId);
+      if (conn?.senderOrg) return conn.senderOrg;
+      return "Venture Fund";
+    }
+    const startup = startups.find((s) => s.id === sId);
+    if (startup) return startup.sector;
+    return "Campus Venture";
+  };
 
-  function send() {
+  async function send() {
     const text = draft.trim();
     if (!text || !startupId || !investorId) return;
+
+    // Send via local store
     sendMessage(startupId, investorId, as, text);
+
+    // Send via real-time message service
+    await messageService.sendMessage({
+      startupId,
+      senderId: myUserId,
+      senderName: user?.name || (as === "student" ? "Founder" : "Investor"),
+      senderRole: as,
+      senderEmail: user?.email,
+      recipientId: investorId,
+      content: text,
+    });
+
     notify(
       as === "student" ? "investor" : "student",
       "New message",
@@ -289,9 +385,15 @@ export function MessagesView({ as }: { as: "student" | "investor" }) {
           </Card>
 
           <Card className="flex h-[560px] flex-col p-0">
-            <div className="border-b px-4 py-3">
-              <p className="text-sm font-semibold">{title(startupId!, investorId!)}</p>
-              <p className="text-xs text-muted-foreground">{subtitle(startupId!, investorId!)}</p>
+            <div className="border-b px-4 py-3 flex items-center justify-between">
+              <div>
+                <p className="text-sm font-semibold">{title(startupId!, investorId!)}</p>
+                <p className="text-xs text-muted-foreground">{subtitle(startupId!, investorId!)}</p>
+              </div>
+              <Badge variant="outline" className="text-[10px] text-emerald-600 border-emerald-500/30 bg-emerald-500/10">
+                <span className="inline-block size-1.5 rounded-full bg-emerald-500 mr-1.5 animate-pulse" />
+                Live Sync
+              </Badge>
             </div>
             <ScrollArea className="flex-1 px-4 py-4">
               <div className="space-y-3">
@@ -365,57 +467,73 @@ export function MessagesView({ as }: { as: "student" | "investor" }) {
                 rows={3}
                 value={connNextSteps}
                 onChange={(e) => setConnNextSteps(e.target.value)}
-                placeholder="Next steps for the intro discussion..."
+                placeholder="1. Introduction sync.&#10;2. Diligence review.&#10;3. Terms alignment."
                 className="text-xs font-mono"
               />
             </div>
+
+            <div className="rounded-lg bg-muted/40 p-2.5 text-[11px] text-muted-foreground flex items-center gap-2">
+              <Info className="size-4 text-primary shrink-0" />
+              <span>
+                Accepting unlocks mutual real-time messaging and automatically dispatches terms to {selectedConn?.senderName || "the requester"}.
+              </span>
+            </div>
           </div>
 
-          <DialogFooter className="gap-2 sm:gap-0">
+          <DialogFooter>
             <Button variant="ghost" size="sm" onClick={() => setAcceptModalOpen(false)}>
               Cancel
             </Button>
-            <Button size="sm" className="bg-emerald-600 hover:bg-emerald-700 text-white" onClick={handleConfirmAccept}>
-              <Check className="size-3.5 mr-1.5" />
-              Accept &amp; Start Discussion
+            <Button
+              size="sm"
+              className="bg-emerald-600 hover:bg-emerald-700 text-white gap-1"
+              onClick={handleConfirmAccept}
+            >
+              <Check className="size-3.5" />
+              Confirm &amp; Start Discussion
             </Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>
 
-      {/* DIALOG: DECLINE CONNECTION */}
+      {/* DIALOG: DECLINE CONNECTION REQUEST */}
       <Dialog open={declineModalOpen} onOpenChange={setDeclineModalOpen}>
         <DialogContent className="max-w-md">
           <DialogHeader>
             <DialogTitle>Decline Connection Request</DialogTitle>
             <DialogDescription>
-              Decline the connection from {selectedConn?.senderName || "Member"}.
+              Send a polite feedback response to {selectedConn?.senderName || "Member"}.
             </DialogDescription>
           </DialogHeader>
 
           <div className="space-y-3 py-2 text-xs">
             <div className="space-y-1.5">
-              <Label htmlFor="decline-msg" className="text-xs font-semibold">
+              <Label htmlFor="conn-decline" className="text-xs font-semibold">
                 Decline Reason / Feedback
               </Label>
               <Textarea
-                id="decline-msg"
+                id="conn-decline"
                 rows={3}
                 value={connDeclineReason}
                 onChange={(e) => setConnDeclineReason(e.target.value)}
-                placeholder="Reason or feedback note..."
+                placeholder="Let them know why you are unable to connect at this time..."
                 className="text-xs"
               />
             </div>
           </div>
 
-          <DialogFooter className="gap-2 sm:gap-0">
+          <DialogFooter>
             <Button variant="ghost" size="sm" onClick={() => setDeclineModalOpen(false)}>
-              Cancel
+              Back
             </Button>
-            <Button size="sm" variant="destructive" onClick={handleConfirmDecline}>
-              <X className="size-3.5 mr-1.5" />
-              Confirm &amp; Decline
+            <Button
+              size="sm"
+              variant="destructive"
+              className="gap-1"
+              onClick={handleConfirmDecline}
+            >
+              <X className="size-3.5" />
+              Decline Request
             </Button>
           </DialogFooter>
         </DialogContent>

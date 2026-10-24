@@ -367,6 +367,78 @@ async function handleServerSendCode(request: Request, env: unknown): Promise<Res
   }
 }
 
+/**
+ * Handle transactional co-founder invite email via Resend API
+ */
+async function handleServerCofounderInvite(request: Request, env: unknown): Promise<Response> {
+  try {
+    const body = (await request.json()) as any;
+    const { startupName, founderName, founderEmail, cofounderName, cofounderEmail, role, equity } = body || {};
+
+    if (!cofounderEmail || !cofounderEmail.includes("@")) {
+      return new Response(JSON.stringify({ success: false, error: "Invalid recipient email" }), {
+        status: 400,
+        headers: { "Content-Type": "application/json" },
+      });
+    }
+
+    const envObj = (env && typeof env === "object" ? env : {}) as Record<string, string | undefined>;
+    const procEnv = typeof process !== "undefined" && process.env ? process.env : {};
+    const resendApiKey = envObj["RESEND_API_KEY"] || procEnv["RESEND_API_KEY"] || "";
+    const resendFrom = envObj["RESEND_FROM"] || procEnv["RESEND_FROM"] || "CampusVenture <onboarding@resend.dev>";
+
+    if (resendApiKey) {
+      try {
+        await fetch("https://api.resend.com/emails", {
+          method: "POST",
+          headers: {
+            "Authorization": `Bearer ${resendApiKey.trim()}`,
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify({
+            from: resendFrom,
+            to: [cofounderEmail.trim().toLowerCase()],
+            subject: `Join ${startupName} as ${role} — Co-Founder Invitation from ${founderName}`,
+            html: `
+              <div style="font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif; max-width: 520px; margin: 0 auto; padding: 32px; border: 1px solid #e2e8f0; border-radius: 14px; background: #ffffff;">
+                <div style="margin-bottom: 20px;">
+                  <span style="display: inline-block; padding: 4px 10px; background: #e0e7ff; color: #4338ca; border-radius: 6px; font-size: 12px; font-weight: 600;">CampusVenture Co-Founder Invitation</span>
+                </div>
+                <h2 style="color: #0f172a; margin-top: 0; font-size: 22px; font-weight: 700;">You're Invited to Join ${startupName}</h2>
+                <p style="color: #334155; font-size: 15px; line-height: 1.6;">
+                  Hi <strong>${cofounderName}</strong>,<br /><br />
+                  <strong>${founderName}</strong> (${founderEmail}) has invited you to join <strong>${startupName}</strong> as <strong>${role}</strong> on CampusVenture.
+                  ${equity ? `<br /><br /><strong>Equity Allocation:</strong> ${equity}` : ""}
+                </p>
+                <div style="margin: 28px 0; text-align: center;">
+                  <a href="https://campus-venture.vercel.app/app/student" style="display: inline-block; background: #4f46e5; color: #ffffff; padding: 12px 28px; border-radius: 8px; font-size: 15px; font-weight: 600; text-decoration: none;">Review & Accept Invitation</a>
+                </div>
+                <p style="color: #64748b; font-size: 13px; line-height: 1.5;">
+                  Log into CampusVenture using <strong>${cofounderEmail}</strong> (both university and personal emails accepted) to review this invitation and become an official co-founder.
+                </p>
+                <hr style="border: 0; border-top: 1px solid #e2e8f0; margin: 24px 0;" />
+                <p style="color: #94a3b8; font-size: 12px; margin-bottom: 0;">CampusVenture • Institutional Student & Investor Ecosystem</p>
+              </div>
+            `,
+          }),
+        });
+      } catch (sendErr) {
+        console.warn("[CampusVenture] Resend cofounder email error:", sendErr);
+      }
+    }
+
+    return new Response(
+      JSON.stringify({ success: true, message: `Invitation dispatched to ${cofounderEmail}` }),
+      { status: 200, headers: { "Content-Type": "application/json" } }
+    );
+  } catch (err: any) {
+    return new Response(
+      JSON.stringify({ success: false, error: err?.message || "Failed to send cofounder invite" }),
+      { status: 500, headers: { "Content-Type": "application/json" } }
+    );
+  }
+}
+
 export default {
   async fetch(request: Request, env: unknown, ctx: unknown) {
     try {
@@ -376,6 +448,9 @@ export default {
       }
       if (url.pathname === "/api/auth/send-code" && request.method === "POST") {
         return await handleServerSendCode(request, env);
+      }
+      if (url.pathname === "/api/cofounder/invite" && request.method === "POST") {
+        return await handleServerCofounderInvite(request, env);
       }
 
       const handler = await getServerEntry();

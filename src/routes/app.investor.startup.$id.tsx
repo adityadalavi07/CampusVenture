@@ -10,6 +10,7 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/com
 import { DEMO_INVESTORS, formatMoney, matchScore } from "@/lib/demo-data";
 import { STATUS_LABEL, useVenture } from "@/lib/store";
 import { useAuth } from "@/lib/auth-context";
+import { supabase } from "@/lib/supabase";
 import { requestService, type DataRoomRequestRecord, type ConnectionRequestRecord } from "@/services/requestService";
 
 const TITLE = "Startup Profile — CampusVenture";
@@ -88,11 +89,19 @@ function StartupDetail() {
     );
   }
 
+  let savedInvestorOrg = "";
+  if (typeof window !== "undefined") {
+    try {
+      const raw = window.localStorage.getItem("campusventure.profile.investor");
+      if (raw) savedInvestorOrg = JSON.parse(raw)?.org || "";
+    } catch {}
+  }
+
   const investor = {
     ...DEMO_INVESTORS[0]!,
     id: user?.id || DEMO_INVESTORS[0]!.id,
     name: user?.name || DEMO_INVESTORS[0]!.name,
-    organization: user?.org || DEMO_INVESTORS[0]!.organization,
+    organization: user?.org || savedInvestorOrg || DEMO_INVESTORS[0]!.organization,
   };
   const { score, reasons } = matchScore(investor, startup);
   const isSaved = saved.includes(startup.id);
@@ -126,6 +135,7 @@ function StartupDetail() {
       investorEmail: user?.email,
       investorOrg: investor.organization,
       startupName: startup.name,
+      founderEmail: startup.founderEmail,
     });
     notify(
       "student",
@@ -139,14 +149,33 @@ function StartupDetail() {
   const handleRequestConnection = async () => {
     addRequest(startup.id, investor.id, "connection");
     setConnStatus("pending");
+
+    let resolvedReceiverId = startup.founder;
+    if (startup.founderEmail) {
+      try {
+        const { data: prof } = await (supabase as any)
+          .from("profiles")
+          .select("id")
+          .ilike("email", startup.founderEmail.trim())
+          .limit(1)
+          .maybeSingle();
+        if (prof?.id) {
+          resolvedReceiverId = prof.id;
+        }
+      } catch {
+        /* ignore */
+      }
+    }
+
     await requestService.sendConnectionRequest({
       senderId: investor.id,
       senderName: investor.name,
       senderEmail: user?.email,
       senderRole: "investor",
       senderOrg: investor.organization,
-      receiverId: startup.founder || startup.id,
+      receiverId: resolvedReceiverId || startup.id,
       receiverName: startup.founder || startup.name,
+      receiverEmail: startup.founderEmail,
       startupId: startup.id,
       startupName: startup.name,
       message: `Hi ${startup.founder || "Founder"}, I reviewed ${startup.name} on CampusVenture and would love to connect.`,

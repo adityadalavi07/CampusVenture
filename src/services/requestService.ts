@@ -9,6 +9,7 @@ export interface DataRoomRequestRecord {
   investorEmail?: string | undefined;
   investorOrg?: string | undefined;
   startupName?: string | undefined;
+  founderEmail?: string | undefined;
   status: "pending" | "granted" | "rejected" | "revoked";
   ndaSigned: boolean;
   ndaSignedName?: string | undefined;
@@ -28,6 +29,7 @@ export interface ConnectionRequestRecord {
   senderOrg?: string | undefined;
   receiverId: string;
   receiverName?: string | undefined;
+  receiverEmail?: string | undefined;
   startupId?: string | undefined;
   startupName?: string | undefined;
   message?: string | undefined;
@@ -39,8 +41,8 @@ export interface ConnectionRequestRecord {
   updatedAt: string;
 }
 
-const LOCAL_DR_KEY = "campusventure.dataroom.requests.v1";
-const LOCAL_CONN_KEY = "campusventure.connections.requests.v1";
+const LOCAL_DR_KEY = "campusventure.dataroom.requests.v2";
+const LOCAL_CONN_KEY = "campusventure.connections.requests.v2";
 
 function getLocalDrRequests(): DataRoomRequestRecord[] {
   if (typeof window === "undefined") return [];
@@ -95,8 +97,9 @@ export const requestService = {
     investorEmail?: string | undefined;
     investorOrg?: string | undefined;
     startupName?: string | undefined;
+    founderEmail?: string | undefined;
   }): Promise<{ success: boolean; request?: DataRoomRequestRecord; error?: string }> {
-    const { startupId, investorId, investorName, investorEmail, investorOrg, startupName } = params;
+    const { startupId, investorId, investorName, investorEmail, investorOrg, startupName, founderEmail } = params;
     const safeId = generateUUID();
     const now = new Date().toISOString();
 
@@ -108,6 +111,7 @@ export const requestService = {
       investorEmail: investorEmail || "",
       investorOrg: investorOrg || "Institutional Venture Fund",
       startupName: startupName || "Venture",
+      founderEmail: founderEmail || undefined,
       status: "pending",
       ndaSigned: false,
       createdAt: now,
@@ -116,38 +120,42 @@ export const requestService = {
 
     // Update local cache
     const existingLocal = getLocalDrRequests();
-    const alreadyExists = existingLocal.find(
-      (r) => r.startupId === startupId && r.investorId === investorId
+    const filteredLocal = existingLocal.filter(
+      (r) => !(r.startupId === startupId && r.investorId === investorId)
     );
-    if (!alreadyExists) {
-      saveLocalDrRequests([record, ...existingLocal]);
-    }
+    saveLocalDrRequests([record, ...filteredLocal]);
 
-    // Persist to Supabase if UUIDs are valid and table exists
-    if (isValidUUID(startupId) && isValidUUID(investorId)) {
-      try {
-        const { data, error } = await (supabase as any)
-          .from("data_room_requests")
-          .upsert({
-            id: safeId,
-            startup_id: startupId,
-            investor_id: investorId,
-            status: "pending",
-            nda_signed: false,
-            created_at: now,
-            updated_at: now,
-          }, { onConflict: "startup_id,investor_id" })
-          .select()
-          .single();
+    // Persist to Supabase
+    try {
+      const payload: Record<string, any> = {
+        id: safeId,
+        startup_id: startupId,
+        investor_id: investorId,
+        status: "pending",
+        nda_signed: false,
+        created_at: now,
+        updated_at: now,
+      };
 
-        if (error) {
-          console.warn("[RequestService] Notice inserting data_room_requests to DB:", error.message);
-        } else if (data) {
-          record.id = data.id;
-        }
-      } catch (err) {
-        console.warn("[RequestService] DB data_room_requests exception:", err);
+      if (investorName) payload["investor_name"] = investorName;
+      if (investorEmail) payload["investor_email"] = investorEmail;
+      if (investorOrg) payload["investor_org"] = investorOrg;
+      if (startupName) payload["startup_name"] = startupName;
+      if (founderEmail) payload["founder_email"] = founderEmail.toLowerCase().trim();
+
+      const { data, error } = await (supabase as any)
+        .from("data_room_requests")
+        .upsert(payload, { onConflict: "startup_id,investor_id" })
+        .select()
+        .single();
+
+      if (error) {
+        console.warn("[RequestService] Notice inserting data_room_requests to DB:", error.message);
+      } else if (data) {
+        record.id = data.id;
       }
+    } catch (err) {
+      console.warn("[RequestService] DB data_room_requests exception:", err);
     }
 
     return { success: true, request: record };
@@ -159,44 +167,41 @@ export const requestService = {
   async getDataRoomRequestsForStartup(startupId: string): Promise<DataRoomRequestRecord[]> {
     const local = getLocalDrRequests().filter((r) => r.startupId === startupId);
 
-    if (isValidUUID(startupId)) {
-      try {
-        const { data, error } = await (supabase as any)
-          .from("data_room_requests")
-          .select("*, profiles:investor_id(name, email, org)")
-          .eq("startup_id", startupId)
-          .order("created_at", { ascending: false });
+    try {
+      const { data, error } = await (supabase as any)
+        .from("data_room_requests")
+        .select("*")
+        .eq("startup_id", startupId)
+        .order("created_at", { ascending: false });
 
-        if (!error && Array.isArray(data)) {
-          const dbRecords: DataRoomRequestRecord[] = data.map((d: any) => ({
-            id: d.id,
-            startupId: d.startup_id,
-            investorId: d.investor_id,
-            investorName: d.profiles?.name || "Investor",
-            investorEmail: d.profiles?.email || "",
-            investorOrg: d.profiles?.org || "Venture Fund",
-            status: d.status,
-            ndaSigned: d.nda_signed || false,
-            ndaSignedName: d.nda_signed_name || "",
-            discussionTerms: d.discussion_terms || undefined,
-            nextSteps: d.next_steps || undefined,
-            declineReason: d.decline_reason || undefined,
-            createdAt: d.created_at,
-            updatedAt: d.updated_at,
-          }));
+      if (!error && Array.isArray(data)) {
+        const dbRecords: DataRoomRequestRecord[] = data.map((d: any) => ({
+          id: d.id,
+          startupId: d.startup_id,
+          investorId: d.investor_id,
+          investorName: d.investor_name || "Investor",
+          investorEmail: d.investor_email || "",
+          investorOrg: d.investor_org || "Venture Fund",
+          status: d.status,
+          ndaSigned: d.nda_signed || false,
+          ndaSignedName: d.nda_signed_name || "",
+          discussionTerms: d.discussion_terms || undefined,
+          nextSteps: d.next_steps || undefined,
+          declineReason: d.decline_reason || undefined,
+          createdAt: d.created_at,
+          updatedAt: d.updated_at,
+        }));
 
-          // Merge dbRecords with local
-          const merged = [...dbRecords];
-          for (const l of local) {
-            if (!merged.some((m) => m.startupId === l.startupId && m.investorId === l.investorId)) {
-              merged.push(l);
-            }
+        const merged = [...dbRecords];
+        for (const l of local) {
+          if (!merged.some((m) => m.startupId === l.startupId && m.investorId === l.investorId)) {
+            merged.push(l);
           }
-          return merged;
         }
-      } catch (err) {
-        console.warn("[RequestService] Error fetching data room requests for startup:", err);
+        return merged;
       }
+    } catch (err) {
+      console.warn("[RequestService] Error fetching data room requests for startup:", err);
     }
 
     return local;
@@ -205,44 +210,53 @@ export const requestService = {
   /**
    * Fetch all data room requests made by an investor
    */
-  async getDataRoomRequestsForInvestor(investorId: string): Promise<DataRoomRequestRecord[]> {
-    const local = getLocalDrRequests().filter((r) => r.investorId === investorId);
+  async getDataRoomRequestsForInvestor(investorId: string, investorEmail?: string): Promise<DataRoomRequestRecord[]> {
+    const local = getLocalDrRequests().filter(
+      (r) => r.investorId === investorId || (investorEmail && r.investorEmail?.toLowerCase() === investorEmail.toLowerCase())
+    );
 
-    if (isValidUUID(investorId)) {
-      try {
-        const { data, error } = await (supabase as any)
-          .from("data_room_requests")
-          .select("*, startups:startup_id(name, university)")
-          .eq("investor_id", investorId)
-          .order("created_at", { ascending: false });
+    try {
+      let query = (supabase as any)
+        .from("data_room_requests")
+        .select("*")
+        .order("created_at", { ascending: false });
 
-        if (!error && Array.isArray(data)) {
-          const dbRecords: DataRoomRequestRecord[] = data.map((d: any) => ({
-            id: d.id,
-            startupId: d.startup_id,
-            investorId: d.investor_id,
-            startupName: d.startups?.name || "Startup",
-            status: d.status,
-            ndaSigned: d.nda_signed || false,
-            ndaSignedName: d.nda_signed_name || "",
-            discussionTerms: d.discussion_terms || undefined,
-            nextSteps: d.next_steps || undefined,
-            declineReason: d.decline_reason || undefined,
-            createdAt: d.created_at,
-            updatedAt: d.updated_at,
-          }));
-
-          const merged = [...dbRecords];
-          for (const l of local) {
-            if (!merged.some((m) => m.startupId === l.startupId && m.investorId === l.investorId)) {
-              merged.push(l);
-            }
-          }
-          return merged;
-        }
-      } catch (err) {
-        console.warn("[RequestService] Error fetching investor data room requests:", err);
+      if (investorEmail) {
+        query = query.or(`investor_id.eq.${investorId},investor_email.ilike.${investorEmail.trim()}`);
+      } else {
+        query = query.eq("investor_id", investorId);
       }
+
+      const { data, error } = await query;
+
+      if (!error && Array.isArray(data)) {
+        const dbRecords: DataRoomRequestRecord[] = data.map((d: any) => ({
+          id: d.id,
+          startupId: d.startup_id,
+          investorId: d.investor_id,
+          startupName: d.startup_name || "Startup",
+          investorName: d.investor_name || "Investor",
+          investorEmail: d.investor_email || "",
+          investorOrg: d.investor_org || "Fund",
+          status: d.status,
+          ndaSigned: d.nda_signed || false,
+          ndaSignedName: d.nda_signed_name || "",
+          discussionTerms: d.discussion_terms || undefined,
+          nextSteps: d.next_steps || undefined,
+          declineReason: d.decline_reason || undefined,
+          createdAt: d.created_at,
+          updatedAt: d.updated_at,
+        }));
+
+        const map = new Map<string, DataRoomRequestRecord>();
+        local.forEach((l) => map.set(l.id, l));
+        dbRecords.forEach((d) => map.set(d.id, d));
+        return Array.from(map.values()).sort(
+          (a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime()
+        );
+      }
+    } catch (err) {
+      console.warn("[RequestService] Error fetching investor data room requests:", err);
     }
 
     return local;
@@ -278,24 +292,22 @@ export const requestService = {
     );
     saveLocalDrRequests(updated);
 
-    if (isValidUUID(requestId)) {
-      try {
-        const payload: Record<string, any> = { status, updated_at: now };
-        if (options?.discussionTerms !== undefined) payload["discussion_terms"] = options.discussionTerms;
-        if (options?.nextSteps !== undefined) payload["next_steps"] = options.nextSteps;
-        if (options?.declineReason !== undefined) payload["decline_reason"] = options.declineReason;
+    try {
+      const payload: Record<string, any> = { status, updated_at: now };
+      if (options?.discussionTerms !== undefined) payload["discussion_terms"] = options.discussionTerms;
+      if (options?.nextSteps !== undefined) payload["next_steps"] = options.nextSteps;
+      if (options?.declineReason !== undefined) payload["decline_reason"] = options.declineReason;
 
-        const { error } = await (supabase as any)
-          .from("data_room_requests")
-          .update(payload)
-          .eq("id", requestId);
+      const { error } = await (supabase as any)
+        .from("data_room_requests")
+        .update(payload)
+        .eq("id", requestId);
 
-        if (error) {
-          console.warn("[RequestService] Error updating data room request in DB:", error.message);
-        }
-      } catch (err) {
-        console.warn("[RequestService] DB exception on updateDataRoomRequestStatus:", err);
+      if (error) {
+        console.warn("[RequestService] Error updating data room request in DB:", error.message);
       }
+    } catch (err) {
+      console.warn("[RequestService] DB exception on updateDataRoomRequestStatus:", err);
     }
 
     return { success: true };
@@ -310,7 +322,6 @@ export const requestService = {
   ): Promise<{ success: boolean; error?: string }> {
     const now = new Date().toISOString();
 
-    // Update local cache
     const local = getLocalDrRequests();
     const updated = local.map((r) =>
       r.id === requestId
@@ -324,50 +335,52 @@ export const requestService = {
     );
     saveLocalDrRequests(updated);
 
-    if (isValidUUID(requestId)) {
-      try {
-        await (supabase as any)
-          .from("data_room_requests")
-          .update({
-            nda_signed: true,
-            nda_signed_name: signedName,
-            updated_at: now,
-          })
-          .eq("id", requestId);
-      } catch (err) {
-        console.warn("[RequestService] Error signing NDA in DB:", err);
-      }
+    try {
+      await (supabase as any)
+        .from("data_room_requests")
+        .update({
+          nda_signed: true,
+          nda_signed_name: signedName,
+          updated_at: now,
+        })
+        .eq("id", requestId);
+    } catch (err) {
+      console.warn("[RequestService] Error signing NDA in DB:", err);
     }
 
     return { success: true };
   },
 
   /**
-   * Fetch all data room requests for a student founder across all their startup IDs
+   * Fetch all data room requests for a student founder across all their startup IDs and email
    */
   async getDataRoomRequestsForStudent(params: {
     startupIds: string[];
     founderId?: string | undefined;
     founderEmail?: string | undefined;
   }): Promise<DataRoomRequestRecord[]> {
-    const { startupIds, founderId, founderEmail } = params;
+    const { startupIds, founderEmail } = params;
     const cleanIds = startupIds.filter(Boolean);
+    const cleanEmail = founderEmail?.toLowerCase().trim();
 
     const local = getLocalDrRequests().filter((r) =>
-      cleanIds.includes(r.startupId) || r.startupId === "s1"
+      cleanIds.includes(r.startupId) ||
+      r.startupId === "s1" ||
+      (cleanEmail && r.founderEmail?.toLowerCase() === cleanEmail)
     );
 
     try {
-      const validUuids = cleanIds.filter(isValidUUID);
       let query = (supabase as any)
         .from("data_room_requests")
-        .select("*, profiles:investor_id(name, email, org), startups:startup_id(name, university, founder_email, founder_id)")
+        .select("*")
         .order("created_at", { ascending: false });
 
-      if (validUuids.length > 0) {
-        query = query.in("startup_id", validUuids);
-      } else if (founderId && isValidUUID(founderId)) {
-        query = query.eq("startups.founder_id", founderId);
+      if (cleanIds.length > 0 && cleanEmail) {
+        query = query.or(`startup_id.in.(${cleanIds.join(",")}),founder_email.ilike.${cleanEmail}`);
+      } else if (cleanIds.length > 0) {
+        query = query.in("startup_id", cleanIds);
+      } else if (cleanEmail) {
+        query = query.ilike("founder_email", cleanEmail);
       }
 
       const { data, error } = await query;
@@ -377,10 +390,11 @@ export const requestService = {
           id: d.id,
           startupId: d.startup_id,
           investorId: d.investor_id,
-          investorName: d.profiles?.name || "Investor",
-          investorEmail: d.profiles?.email || "",
-          investorOrg: d.profiles?.org || "Venture Fund",
-          startupName: d.startups?.name || "Venture",
+          investorName: d.investor_name || "Accredited Investor",
+          investorEmail: d.investor_email || "",
+          investorOrg: d.investor_org || "Venture Fund",
+          startupName: d.startup_name || "Venture",
+          founderEmail: d.founder_email || undefined,
           status: d.status,
           ndaSigned: d.nda_signed || false,
           ndaSignedName: d.nda_signed_name || "",
@@ -392,10 +406,8 @@ export const requestService = {
         }));
 
         const map = new Map<string, DataRoomRequestRecord>();
+        local.forEach((l) => map.set(l.id, l));
         dbRecords.forEach((r) => map.set(r.id, r));
-        local.forEach((l) => {
-          if (!map.has(l.id)) map.set(l.id, l);
-        });
 
         return Array.from(map.values()).sort(
           (a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime()
@@ -450,6 +462,7 @@ export const requestService = {
     senderOrg?: string | undefined;
     receiverId: string;
     receiverName?: string | undefined;
+    receiverEmail?: string | undefined;
     startupId?: string | undefined;
     startupName?: string | undefined;
     message?: string | undefined;
@@ -462,6 +475,7 @@ export const requestService = {
       senderOrg,
       receiverId,
       receiverName,
+      receiverEmail,
       startupId,
       startupName,
       message,
@@ -483,6 +497,7 @@ export const requestService = {
       senderOrg: senderOrg || "CampusVenture",
       receiverId,
       receiverName: receiverName || "Member",
+      receiverEmail: receiverEmail || "",
       startupId,
       startupName,
       message: message || "I would like to connect on CampusVenture.",
@@ -493,89 +508,114 @@ export const requestService = {
 
     // Update local cache
     const local = getLocalConnRequests();
-    const exists = local.find(
-      (c) => c.senderId === senderId && c.receiverId === receiverId && c.startupId === startupId
+    const filteredLocal = local.filter(
+      (c) => !(c.senderId === senderId && c.receiverId === receiverId && c.startupId === startupId)
     );
-    if (!exists) {
-      saveLocalConnRequests([record, ...local]);
-    }
+    saveLocalConnRequests([record, ...filteredLocal]);
 
-    // Persist to Supabase if valid UUIDs
-    if (isValidUUID(senderId) && isValidUUID(receiverId)) {
-      try {
-        const { data, error } = await (supabase as any)
-          .from("connection_requests")
-          .upsert({
-            id: safeId,
-            sender_id: senderId,
-            receiver_id: receiverId,
-            startup_id: startupId && isValidUUID(startupId) ? startupId : null,
-            message: record.message,
-            status: "pending",
-            created_at: now,
-            updated_at: now,
-          }, { onConflict: "sender_id,receiver_id,startup_id" })
-          .select()
-          .single();
+    // Persist to Supabase
+    try {
+      const payload: Record<string, any> = {
+        id: safeId,
+        sender_id: senderId,
+        receiver_id: receiverId,
+        message: record.message,
+        status: "pending",
+        created_at: now,
+        updated_at: now,
+      };
 
-        if (error) {
-          console.warn("[RequestService] Notice inserting connection_requests to DB:", error.message);
-        } else if (data) {
-          record.id = data.id;
-        }
-      } catch (err) {
-        console.warn("[RequestService] DB connection_requests exception:", err);
+      if (senderName) payload["sender_name"] = senderName;
+      if (senderEmail) payload["sender_email"] = senderEmail.toLowerCase().trim();
+      if (senderRole) payload["sender_role"] = senderRole;
+      if (senderOrg) payload["sender_org"] = senderOrg;
+      if (receiverName) payload["receiver_name"] = receiverName;
+      if (receiverEmail) payload["receiver_email"] = receiverEmail.toLowerCase().trim();
+      if (startupId) payload["startup_id"] = startupId;
+      if (startupName) payload["startup_name"] = startupName;
+
+      const { data, error } = await (supabase as any)
+        .from("connection_requests")
+        .upsert(payload, { onConflict: "sender_id,receiver_id,startup_id" })
+        .select()
+        .single();
+
+      if (error) {
+        console.warn("[RequestService] Notice inserting connection_requests to DB:", error.message);
+      } else if (data) {
+        record.id = data.id;
       }
+    } catch (err) {
+      console.warn("[RequestService] DB connection_requests exception:", err);
     }
 
     return { success: true, request: record };
   },
 
   /**
-   * Get all incoming connection requests for a user
+   * Get all incoming connection requests for a user (by userId, email, or startupIds)
    */
-  async getIncomingConnectionRequests(userId: string): Promise<ConnectionRequestRecord[]> {
-    const local = getLocalConnRequests().filter((c) => c.receiverId === userId);
+  async getIncomingConnectionRequests(
+    userId: string,
+    userEmail?: string,
+    startupIds?: string[]
+  ): Promise<ConnectionRequestRecord[]> {
+    const cleanEmail = userEmail?.toLowerCase().trim();
+    const local = getLocalConnRequests().filter(
+      (c) =>
+        c.receiverId === userId ||
+        (cleanEmail && c.receiverEmail?.toLowerCase() === cleanEmail) ||
+        (startupIds && c.startupId && startupIds.includes(c.startupId))
+    );
 
-    if (isValidUUID(userId)) {
-      try {
-        const { data, error } = await (supabase as any)
-          .from("connection_requests")
-          .select("*, sender:sender_id(name, email, role, org), startups:startup_id(name)")
-          .eq("receiver_id", userId)
-          .order("created_at", { ascending: false });
+    try {
+      let query = (supabase as any)
+        .from("connection_requests")
+        .select("*")
+        .order("created_at", { ascending: false });
 
-        if (!error && Array.isArray(data)) {
-          const dbRecords: ConnectionRequestRecord[] = data.map((d: any) => ({
-            id: d.id,
-            senderId: d.sender_id,
-            senderName: d.sender?.name || "Member",
-            senderEmail: d.sender?.email || "",
-            senderRole: d.sender?.role || "founder",
-            senderOrg: d.sender?.org || "",
-            receiverId: d.receiver_id,
-            startupId: d.startup_id,
-            startupName: d.startups?.name || "",
-            message: d.message,
-            status: d.status,
-            discussionTerms: d.discussion_terms || undefined,
-            nextSteps: d.next_steps || undefined,
-            declineReason: d.decline_reason || undefined,
-            createdAt: d.created_at,
-            updatedAt: d.updated_at,
-          }));
-
-          const merged = [...dbRecords];
-          for (const l of local) {
-            if (!merged.some((m) => m.id === l.id || (m.senderId === l.senderId && m.receiverId === l.receiverId))) {
-              merged.push(l);
-            }
-          }
-          return merged;
-        }
-      } catch (err) {
-        console.warn("[RequestService] Error fetching incoming connection requests:", err);
+      if (userId && cleanEmail) {
+        query = query.or(`receiver_id.eq.${userId},receiver_email.ilike.${cleanEmail}`);
+      } else if (userId) {
+        query = query.eq("receiver_id", userId);
+      } else if (cleanEmail) {
+        query = query.ilike("receiver_email", cleanEmail);
       }
+
+      const { data, error } = await query;
+
+      if (!error && Array.isArray(data)) {
+        const dbRecords: ConnectionRequestRecord[] = data.map((d: any) => ({
+          id: d.id,
+          senderId: d.sender_id,
+          senderName: d.sender_name || "Member",
+          senderEmail: d.sender_email || "",
+          senderRole: d.sender_role || "investor",
+          senderOrg: d.sender_org || "",
+          receiverId: d.receiver_id,
+          receiverName: d.receiver_name || "Member",
+          receiverEmail: d.receiver_email || "",
+          startupId: d.startup_id,
+          startupName: d.startup_name || "",
+          message: d.message,
+          status: d.status,
+          discussionTerms: d.discussion_terms || undefined,
+          nextSteps: d.next_steps || undefined,
+          declineReason: d.decline_reason || undefined,
+          createdAt: d.created_at,
+          updatedAt: d.updated_at,
+        }));
+
+        const map = new Map<string, ConnectionRequestRecord>();
+        local.forEach((l) => map.set(l.id, l));
+        dbRecords.forEach((d) => map.set(d.id, d));
+
+        return Array.from(map.values()).sort(
+          (a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime()
+        );
+      }
+    } catch (err) {
+      console.warn("[RequestService] Error fetching incoming connection requests:", err);
     }
 
     return local;
@@ -610,27 +650,52 @@ export const requestService = {
     );
     saveLocalConnRequests(updated);
 
-    if (isValidUUID(requestId)) {
-      try {
-        const payload: Record<string, any> = { status, updated_at: now };
-        if (options?.discussionTerms !== undefined) payload["discussion_terms"] = options.discussionTerms;
-        if (options?.nextSteps !== undefined) payload["next_steps"] = options.nextSteps;
-        if (options?.declineReason !== undefined) payload["decline_reason"] = options.declineReason;
+    try {
+      const payload: Record<string, any> = { status, updated_at: now };
+      if (options?.discussionTerms !== undefined) payload["discussion_terms"] = options.discussionTerms;
+      if (options?.nextSteps !== undefined) payload["next_steps"] = options.nextSteps;
+      if (options?.declineReason !== undefined) payload["decline_reason"] = options.declineReason;
 
-        const { error } = await (supabase as any)
-          .from("connection_requests")
-          .update(payload)
-          .eq("id", requestId);
+      const { error } = await (supabase as any)
+        .from("connection_requests")
+        .update(payload)
+        .eq("id", requestId);
 
-        if (error) {
-          console.warn("[RequestService] DB update connection_requests notice:", error.message);
-        }
-      } catch (err) {
-        console.warn("[RequestService] DB exception on respondToConnectionRequest:", err);
+      if (error) {
+        console.warn("[RequestService] DB update connection_requests notice:", error.message);
       }
+    } catch (err) {
+      console.warn("[RequestService] DB exception on respondToConnectionRequest:", err);
     }
 
     return { success: true };
+  },
+
+  /**
+   * Subscribe to real-time incoming connection requests
+   */
+  subscribeToConnectionRequests(onUpdate: () => void) {
+    let pollingTimer: any = null;
+
+    const channel = supabase
+      .channel("public-conn-requests-realtime")
+      .on(
+        "postgres_changes",
+        { event: "*", schema: "public", table: "connection_requests" },
+        () => {
+          onUpdate();
+        }
+      )
+      .subscribe();
+
+    pollingTimer = setInterval(() => {
+      onUpdate();
+    }, 4000);
+
+    return () => {
+      if (pollingTimer) clearInterval(pollingTimer);
+      supabase.removeChannel(channel);
+    };
   },
 
   /**
@@ -643,57 +708,54 @@ export const requestService = {
     const localDr = getLocalDrRequests().filter((r) => campusStartupIds.includes(r.startupId));
     const localConn = getLocalConnRequests().filter((c) => c.startupId && campusStartupIds.includes(c.startupId));
 
-    const validIds = campusStartupIds.filter(isValidUUID);
-    if (validIds.length > 0) {
-      try {
-        const { data: drData } = await (supabase as any)
-          .from("data_room_requests")
-          .select("*, profiles:investor_id(name, email, org), startups:startup_id(name)")
-          .in("startup_id", validIds);
+    try {
+      const { data: drData } = await (supabase as any)
+        .from("data_room_requests")
+        .select("*")
+        .in("startup_id", campusStartupIds);
 
-        const { data: connData } = await (supabase as any)
-          .from("connection_requests")
-          .select("*, sender:sender_id(name, email, role, org), startups:startup_id(name)")
-          .in("startup_id", validIds);
+      const { data: connData } = await (supabase as any)
+        .from("connection_requests")
+        .select("*")
+        .in("startup_id", campusStartupIds);
 
-        const mergedDr = Array.isArray(drData)
-          ? drData.map((d: any) => ({
-              id: d.id,
-              startupId: d.startup_id,
-              startupName: d.startups?.name || "Campus Startup",
-              investorId: d.investor_id,
-              investorName: d.profiles?.name || "Investor",
-              investorEmail: d.profiles?.email || "",
-              investorOrg: d.profiles?.org || "Venture Fund",
-              status: d.status,
-              ndaSigned: d.nda_signed || false,
-              createdAt: d.created_at,
-              updatedAt: d.updated_at,
-            }))
-          : localDr;
+      const mergedDr = Array.isArray(drData)
+        ? drData.map((d: any) => ({
+            id: d.id,
+            startupId: d.startup_id,
+            startupName: d.startup_name || "Campus Startup",
+            investorId: d.investor_id,
+            investorName: d.investor_name || "Investor",
+            investorEmail: d.investor_email || "",
+            investorOrg: d.investor_org || "Venture Fund",
+            status: d.status,
+            ndaSigned: d.nda_signed || false,
+            createdAt: d.created_at,
+            updatedAt: d.updated_at,
+          }))
+        : localDr;
 
-        const mergedConn = Array.isArray(connData)
-          ? connData.map((d: any) => ({
-              id: d.id,
-              senderId: d.sender_id,
-              senderName: d.sender?.name || "Investor",
-              senderEmail: d.sender?.email || "",
-              senderRole: d.sender?.role || "investor",
-              senderOrg: d.sender?.org || "Fund",
-              receiverId: d.receiver_id,
-              startupId: d.startup_id,
-              startupName: d.startups?.name || "Campus Startup",
-              message: d.message,
-              status: d.status,
-              createdAt: d.created_at,
-              updatedAt: d.updated_at,
-            }))
-          : localConn;
+      const mergedConn = Array.isArray(connData)
+        ? connData.map((d: any) => ({
+            id: d.id,
+            senderId: d.sender_id,
+            senderName: d.sender_name || "Investor",
+            senderEmail: d.sender_email || "",
+            senderRole: d.sender_role || "investor",
+            senderOrg: d.sender_org || "Fund",
+            receiverId: d.receiver_id,
+            startupId: d.startup_id,
+            startupName: d.startup_name || "Campus Startup",
+            message: d.message,
+            status: d.status,
+            createdAt: d.created_at,
+            updatedAt: d.updated_at,
+          }))
+        : localConn;
 
-        return { dataRoomRequests: mergedDr, connectionRequests: mergedConn };
-      } catch (err) {
-        console.warn("[RequestService] DB exception on getUniversityInvestorActivity:", err);
-      }
+      return { dataRoomRequests: mergedDr, connectionRequests: mergedConn };
+    } catch (err) {
+      console.warn("[RequestService] DB exception on getUniversityInvestorActivity:", err);
     }
 
     return { dataRoomRequests: localDr, connectionRequests: localConn };
