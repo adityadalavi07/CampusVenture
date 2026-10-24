@@ -1,17 +1,42 @@
 import { createFileRoute, Link, useParams } from "@tanstack/react-router";
 import { useEffect, useState } from "react";
-import { ArrowLeft, BadgeCheck, Check, FolderLock, Github, Star, UserCheck } from "lucide-react";
+import {
+  AlertCircle,
+  ArrowLeft,
+  BadgeCheck,
+  Check,
+  FolderLock,
+  Github,
+  Send,
+  ShieldCheck,
+  Star,
+  UserCheck,
+} from "lucide-react";
 import { toast } from "sonner";
 import { AppShell } from "@/components/app-shell";
 import { ScoreRing } from "@/components/score-ring";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
+import { Label } from "@/components/ui/label";
+import { Textarea } from "@/components/ui/textarea";
 import { DEMO_INVESTORS, formatMoney, matchScore } from "@/lib/demo-data";
 import { STATUS_LABEL, useVenture } from "@/lib/store";
 import { useAuth } from "@/lib/auth-context";
 import { supabase } from "@/lib/supabase";
-import { requestService, type DataRoomRequestRecord, type ConnectionRequestRecord } from "@/services/requestService";
+import {
+  requestService,
+  type DataRoomRequestRecord,
+  type ConnectionRequestRecord,
+} from "@/services/requestService";
 
 const TITLE = "Startup Profile — CampusVenture";
 const DESCRIPTION =
@@ -26,6 +51,27 @@ export const Route = createFileRoute("/app/investor/startup/$id")({
       { property: "og:description", content: DESCRIPTION },
     ],
   }),
+  errorComponent: ({ error, reset }) => (
+    <AppShell role="investor">
+      <div className="mx-auto max-w-lg my-12 rounded-xl border border-destructive/30 bg-destructive/5 p-6 text-center space-y-4">
+        <div className="mx-auto grid size-12 place-items-center rounded-xl bg-destructive/10 text-destructive">
+          <AlertCircle className="size-6" />
+        </div>
+        <div className="space-y-1">
+          <h2 className="text-lg font-semibold">Unable to load startup profile</h2>
+          <p className="text-xs text-muted-foreground">{error.message || "An unexpected error occurred."}</p>
+        </div>
+        <div className="flex justify-center gap-2">
+          <Button variant="outline" size="sm" onClick={() => reset()}>
+            Try Again
+          </Button>
+          <Button asChild size="sm">
+            <Link to="/app/investor">Return to Discovery</Link>
+          </Button>
+        </div>
+      </div>
+    </AppShell>
+  ),
   component: StartupDetail,
 });
 
@@ -110,6 +156,11 @@ function StartupDetail() {
   const [drStatus, setDrStatus] = useState<"none" | "pending" | "granted" | "rejected">("none");
   const [connStatus, setConnStatus] = useState<"none" | "pending" | "accepted" | "rejected">("none");
 
+  // Data Room Request Dialog State
+  const [drDialogOpen, setDrDialogOpen] = useState(false);
+  const [drMessage, setDrMessage] = useState("");
+  const [isSubmittingDr, setIsSubmittingDr] = useState(false);
+
   useEffect(() => {
     let active = true;
 
@@ -150,10 +201,36 @@ function StartupDetail() {
     };
   }, [investor.id, startup.id, user?.email]);
 
-  const handleRequestDataRoom = async () => {
+  const handleOpenDrDialog = () => {
+    setDrMessage(
+      `Hi ${startup.founder || "Founder"}, we are reviewing ventures in ${startup.sector || "your industry"} and would like to request diligence access to your Data Room under mutual NDA.`
+    );
+    setDrDialogOpen(true);
+  };
+
+  const handleConfirmRequestDataRoom = async () => {
+    setIsSubmittingDr(true);
     addRequest(startup.id, investor.id, "dataroom");
     requestAccess(startup.id, investor.id);
     setDrStatus("pending");
+
+    let resolvedFounderId = startup.founder;
+    if (startup.founderEmail) {
+      try {
+        const { data: prof } = await (supabase as any)
+          .from("profiles")
+          .select("id")
+          .ilike("email", startup.founderEmail.trim())
+          .limit(1)
+          .maybeSingle();
+        if (prof?.id) {
+          resolvedFounderId = prof.id;
+        }
+      } catch {
+        /* ignore */
+      }
+    }
+
     const res = await requestService.requestDataRoomAccess({
       startupId: startup.id,
       investorId: investor.id,
@@ -161,8 +238,13 @@ function StartupDetail() {
       investorEmail: user?.email,
       investorOrg: investor.organization,
       startupName: startup.name,
+      founderId: resolvedFounderId,
       founderEmail: startup.founderEmail,
+      message: drMessage.trim() || undefined,
     });
+
+    setIsSubmittingDr(false);
+    setDrDialogOpen(false);
 
     if (res.alreadyExisted) {
       toast.info(`Data-room request is already pending founder review.`);
@@ -171,11 +253,11 @@ function StartupDetail() {
 
     notify(
       "student",
-      "Data-room request",
-      `${investor.name} (${investor.organization || "Accredited Investor"}) requested access to ${startup.name} data room under NDA.`,
+      "Data-room access requested",
+      `${investor.name} (${investor.organization || "Accredited Investor"}) requested access to ${startup.name} Data Room under mutual NDA.`,
       startup.founderEmail ? { recipientEmail: startup.founderEmail } : undefined
     );
-    toast.success(`Data-room request sent to ${startup.name}`);
+    toast.success(`Data-room access request sent to ${startup.name}`);
   };
 
   const handleRequestConnection = async () => {
@@ -355,11 +437,11 @@ function StartupDetail() {
             </CardHeader>
             <CardContent className="space-y-3 text-sm">
               <p className="text-muted-foreground">
-                {startup.deckName ? `1 document: ${startup.deckName}` : "No documents uploaded yet."}
+                {startup.deckName ? `1 document: ${startup.deckName}` : "Founder-managed confidential diligence documents."}
               </p>
               {drStatus === "none" && (
-                <Button size="sm" onClick={handleRequestDataRoom}>
-                  Request access
+                <Button size="sm" onClick={handleOpenDrDialog}>
+                  Request Data Room Access
                 </Button>
               )}
               {drStatus === "pending" && (
@@ -382,7 +464,7 @@ function StartupDetail() {
                   <Badge variant="destructive" className="text-xs">
                     Access Request Declined
                   </Badge>
-                  <Button size="sm" variant="ghost" className="text-xs block" onClick={handleRequestDataRoom}>
+                  <Button size="sm" variant="ghost" className="text-xs block" onClick={handleOpenDrDialog}>
                     Re-request access
                   </Button>
                 </div>
@@ -434,6 +516,65 @@ function StartupDetail() {
           )}
         </div>
       </div>
+
+      {/* PHASE 2: REQUEST DATA ROOM ACCESS MODAL WITH OPTIONAL MESSAGE */}
+      <Dialog open={drDialogOpen} onOpenChange={setDrDialogOpen}>
+        <DialogContent className="max-w-md">
+          <DialogHeader className="space-y-1">
+            <div className="flex items-center gap-2">
+              <ShieldCheck className="size-5 text-primary" />
+              <DialogTitle className="text-base">Request Data Room Access</DialogTitle>
+            </div>
+            <DialogDescription className="text-xs">
+              Request authorization to inspect confidential startup materials (financial projections, cap tables, product roadmap) for <strong>{startup.name}</strong> under a mutual non-disclosure agreement.
+            </DialogDescription>
+          </DialogHeader>
+
+          <div className="space-y-3 py-2 text-xs">
+            <div className="rounded-lg border bg-muted/30 p-3 space-y-1 text-muted-foreground">
+              <div className="flex justify-between">
+                <span className="font-medium text-foreground">Venture:</span>
+                <span>{startup.name} ({startup.university || "University Venture"})</span>
+              </div>
+              <div className="flex justify-between">
+                <span className="font-medium text-foreground">Round / Raising:</span>
+                <span>{formatMoney(startup.fundingRequired)}</span>
+              </div>
+              <div className="flex justify-between">
+                <span className="font-medium text-foreground">Legal Protection:</span>
+                <span className="text-emerald-700 dark:text-emerald-400 font-medium">Mutual NDA (v1.0) Required</span>
+              </div>
+            </div>
+
+            <div className="space-y-1.5">
+              <Label htmlFor="dr-message" className="text-xs">
+                Investment Interest / Note to Founder (Optional)
+              </Label>
+              <Textarea
+                id="dr-message"
+                value={drMessage}
+                onChange={(e) => setDrMessage(e.target.value)}
+                placeholder="Explain your fund focus, typical check size, or specific diligence requirements..."
+                rows={4}
+                className="text-xs resize-none"
+              />
+              <p className="text-[11px] text-muted-foreground">
+                This note will appear directly in the founder's incoming diligence requests queue and notifications.
+              </p>
+            </div>
+          </div>
+
+          <DialogFooter className="gap-2 pt-2 border-t">
+            <Button variant="outline" size="sm" onClick={() => setDrDialogOpen(false)} disabled={isSubmittingDr}>
+              Cancel
+            </Button>
+            <Button size="sm" onClick={handleConfirmRequestDataRoom} disabled={isSubmittingDr} className="gap-1.5">
+              <Send className="size-3.5" />
+              {isSubmittingDr ? "Submitting..." : "Submit Access Request"}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </AppShell>
   );
 }
