@@ -8,6 +8,7 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/com
 import { ScoreRing } from "@/components/score-ring";
 import { DEMO_INVESTORS, formatMoney, matchScore } from "@/lib/demo-data";
 import { MY_INVESTOR_ID, useVenture } from "@/lib/store";
+import { useAuth } from "@/lib/auth-context";
 
 const TITLE = "Saved Startups — CampusVenture Investor";
 const DESCRIPTION = "Your watchlist of student startups, with live match scores and quick actions.";
@@ -26,7 +27,9 @@ export const Route = createFileRoute("/app/investor/saved")({
 
 function SavedStartups() {
   const { startups, saved, toggleSaved, requestAccess, notify } = useVenture();
-  const me = DEMO_INVESTORS.find((i) => i.id === MY_INVESTOR_ID)!;
+  const { user } = useAuth();
+  const myInvestorId = user?.id || MY_INVESTOR_ID;
+  const me = DEMO_INVESTORS[0]!;
   const list = startups.filter((s) => saved.includes(s.id));
 
   return (
@@ -79,8 +82,8 @@ function SavedStartups() {
                       <Button
                         size="sm"
                         onClick={() => {
-                          requestAccess(s.id, MY_INVESTOR_ID);
-                          notify("student", "Data-room request", `${me.name} requested access to ${s.name}.`);
+                          requestAccess(s.id, myInvestorId);
+                          notify("student", "Data-room request", `${user?.name || me.name} requested access to ${s.name}.`);
                           toast.success("Data-room access requested");
                         }}
                       >

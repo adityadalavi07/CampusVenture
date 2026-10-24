@@ -16,6 +16,8 @@ import {
 } from "@/components/ui/select";
 import { formatMoney } from "@/lib/demo-data";
 import { STATUS_LABEL, completeness, useVenture } from "@/lib/store";
+import { useAuth } from "@/lib/auth-context";
+import { isSameUniversity } from "@/lib/university-matcher";
 
 const TITLE = "Campus Startups — CampusVenture University";
 const DESCRIPTION = "Track every student startup on campus: stage, readiness, funding ask and status.";
@@ -34,10 +36,19 @@ export const Route = createFileRoute("/app/university/startups")({
 
 function CampusStartups() {
   const { startups } = useVenture();
+  const { user } = useAuth();
   const [q, setQ] = useState("");
   const [status, setStatus] = useState("all");
 
-  const list = startups.filter(
+  const uniStartups = startups.filter((s) => {
+    if (!user) return true;
+    return isSameUniversity(
+      { org: user.org, email: user.email },
+      { university: s.university, email: s.founderEmail }
+    );
+  });
+
+  const list = uniStartups.filter(
     (s) =>
       (status === "all" || s.status === status) &&
       `${s.name} ${s.sector} ${s.stage} ${s.university}`.toLowerCase().includes(q.toLowerCase()),
@@ -49,7 +60,7 @@ function CampusStartups() {
         <div>
           <h1 className="text-2xl font-semibold">Campus startups</h1>
           <p className="text-sm text-muted-foreground">
-            {startups.length} startups · {startups.filter((s) => s.verified).length} verified
+            {uniStartups.length} startups from {user?.org || "your university"} · {uniStartups.filter((s) => s.verified).length} verified
           </p>
         </div>
 

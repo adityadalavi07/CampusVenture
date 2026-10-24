@@ -15,6 +15,7 @@ import {
 } from "@/components/ui/select";
 import { DEMO_INVESTORS } from "@/lib/demo-data";
 import { MY_STARTUP_ID, timeAgo, useVenture, type DataRoomDoc } from "@/lib/store";
+import { useAuth } from "@/lib/auth-context";
 
 const TITLE = "Data Room — CampusVenture Founder";
 const DESCRIPTION =
@@ -41,12 +42,20 @@ const CATEGORIES: DataRoomDoc["category"][] = [
 ];
 
 function StudentDataRoom() {
-  const { docs, access, addDoc, removeDoc, setAccessStatus, notify } = useVenture();
+  const { docs, access, addDoc, removeDoc, setAccessStatus, notify, startups } = useVenture();
+  const { user } = useAuth();
   const fileRef = useRef<HTMLInputElement>(null);
   const [category, setCategory] = useState<DataRoomDoc["category"]>("Financials");
 
-  const myDocs = docs.filter((d) => d.startupId === MY_STARTUP_ID);
-  const myAccess = access.filter((a) => a.startupId === MY_STARTUP_ID);
+  const currentStartup = startups.find(
+    (s) =>
+      (user?.email && s.founderEmail?.toLowerCase() === user.email.toLowerCase()) ||
+      (user?.name && s.founder === user.name)
+  );
+  const currentStartupId = currentStartup?.id || user?.id || MY_STARTUP_ID;
+
+  const myDocs = docs.filter((d) => d.startupId === currentStartupId || d.startupId === MY_STARTUP_ID);
+  const myAccess = access.filter((a) => a.startupId === currentStartupId || a.startupId === MY_STARTUP_ID);
 
   return (
     <AppShell role="student">
@@ -86,7 +95,7 @@ function StudentDataRoom() {
                     const file = e.target.files?.[0];
                     if (!file) return;
                     addDoc({
-                      startupId: MY_STARTUP_ID,
+                      startupId: currentStartupId,
                       name: file.name,
                       category,
                       size: `${Math.max(1, Math.round(file.size / 1024))} KB`,

@@ -1,5 +1,6 @@
 import { supabase } from "@/lib/supabase";
-import type { ReviewStatus, StartupRecord } from "@/lib/store";
+import type { ReviewStatus, StartupRecord, StudentRecord } from "@/lib/store";
+import { generateUUID, isValidUUID } from "@/lib/uuid";
 
 export function dbRowToStartupRecord(row: any): StartupRecord {
   return {
@@ -34,23 +35,26 @@ export function dbRowToStartupRecord(row: any): StartupRecord {
 }
 
 export function startupRecordToDbRow(s: StartupRecord, founderId?: string): Record<string, any> {
+  const safeId = isValidUUID(s.id) ? s.id : generateUUID();
+  const safeFounderId = founderId && isValidUUID(founderId) ? founderId : null;
+
   return {
-    id: s.id,
-    founder_id: founderId || undefined,
+    id: safeId,
+    founder_id: safeFounderId,
     founder: s.founder || null,
     founder_email: s.founderEmail || null,
-    name: s.name,
-    tagline: s.tagline || "",
+    name: s.name ? s.name.trim() : "Untitled Venture",
+    tagline: s.tagline ? s.tagline.trim() : "",
     sector: s.sector || "AI",
     stage: s.stage || "Idea",
     location: s.location || "India",
-    university: s.university || "",
+    university: s.university ? s.university.trim() : "",
     team_size: s.teamSize || 1,
     funding_required: s.fundingRequired || 0,
     revenue: s.revenue ?? false,
     monthly_users: s.monthlyUsers || 0,
     readiness: s.readiness || 50,
-    verified: s.verified || s.status === "approved",
+    verified: Boolean(s.verified || s.status === "approved"),
     traction: s.traction || "",
     business_model: s.businessModel || "",
     problem: s.problem || "",
@@ -59,7 +63,7 @@ export function startupRecordToDbRow(s: StartupRecord, founderId?: string): Reco
     deck_name: s.deckName || "",
     github_url: s.githubUrl || "",
     github_stars: s.githubStars || 0,
-    status: s.status,
+    status: s.status || "pending",
     review_note: s.reviewNote || "",
     views: s.views || 0,
     updated_at: new Date().toISOString(),
@@ -68,7 +72,7 @@ export function startupRecordToDbRow(s: StartupRecord, founderId?: string): Reco
 
 export const ventureService = {
   /**
-   * Fetch all startups from Supabase. Returns empty array if none exist yet.
+   * Fetch all startups from Supabase PostgreSQL central database.
    */
   async getAllStartups(): Promise<StartupRecord[]> {
     try {
@@ -93,30 +97,86 @@ export const ventureService = {
   },
 
   /**
-   * Upsert a startup in Supabase cloud database
+   * Fetch all student profiles registered across institutions from Supabase.
    */
-  async upsertStartup(startup: StartupRecord, founderId?: string): Promise<boolean> {
+  async getAllStudentProfiles(): Promise<StudentRecord[]> {
     try {
-      const payload = startupRecordToDbRow(startup, founderId);
-      const { error } = await (supabase as any)
-        .from("startups")
-        .upsert(payload, { onConflict: "id" });
+      const { data, error } = await (supabase as any)
+        .from("profiles")
+        .select("*")
+        .eq("role", "student")
+        .order("created_at", { ascending: false });
 
       if (error) {
-        console.warn("[VentureService] Supabase upsert notice:", error.message);
-        return false;
+        console.warn("[VentureService] Supabase profiles fetch notice:", error.message);
+        return [];
       }
-      return true;
+
+      if (Array.isArray(data)) {
+        return data.map((p) => ({
+          id: p.id,
+          name: p.name || p.email?.split("@")[0] || "Student Founder",
+          email: p.email,
+          branch: "Computer Science & Engineering",
+          year: "Final year",
+          startupId: null,
+          verified: false,
+          org: p.org || undefined,
+        }));
+      }
+      return [];
     } catch (err) {
-      console.warn("[VentureService] Supabase upsert error:", err);
-      return false;
+      console.warn("[VentureService] Network error fetching student profiles:", err);
+      return [];
     }
   },
 
   /**
-   * Update review status and review note in Supabase
+   * Upsert a startup in Supabase cloud database with foreign key safety fallback.
    */
-  async updateStartupReview(id: string, status: ReviewStatus, reviewNote?: string): Promise<boolean> {
+  async upsertStartup(
+    startup: StartupRecord,
+    founderId?: string
+  ): Promise<{ success: boolean; id: string; error?: string }> {
+    try {
+      const payload = startupRecordToDbRow(startup, founderId);
+      let { error } = await (supabase as any)
+        .from("startups")
+        .upsert(payload, { onConflict: "id" });
+
+      // If foreign key constraint fails (e.g. founder_id is not in public.profiles yet), retry with founder_id = null
+      if (error && (error.code === "23503" || error.code === "22P02")) {
+        console.warn("[VentureService] FK violation on founder_id, retrying with founder_id = null");
+        payload["founder_id"] = null;
+        const retry = await (supabase as any)
+          .from("startups")
+          .upsert(payload, { onConflict: "id" });
+        error = retry.error;
+      }
+
+      const returnId = String(payload["id"] || startup.id);
+
+      if (error) {
+        console.error("[VentureService] Supabase upsert failed:", error.message, error);
+        return { success: false, id: returnId, error: error.message };
+      }
+
+      return { success: true, id: returnId };
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : "Unknown error during upsert";
+      console.error("[VentureService] Supabase upsert exception:", err);
+      return { success: false, id: startup.id, error: msg };
+    }
+  },
+
+  /**
+   * Update review status and review note in Supabase PostgreSQL database.
+   */
+  async updateStartupReview(
+    id: string,
+    status: ReviewStatus,
+    reviewNote?: string
+  ): Promise<{ success: boolean; error?: string }> {
     try {
       const updates: Record<string, any> = {
         status,
@@ -131,13 +191,14 @@ export const ventureService = {
         .eq("id", id);
 
       if (error) {
-        console.warn("[VentureService] Supabase review update notice:", error.message);
-        return false;
+        console.error("[VentureService] Supabase review update failed:", error.message);
+        return { success: false, error: error.message };
       }
-      return true;
+      return { success: true };
     } catch (err) {
-      console.warn("[VentureService] Supabase review update error:", err);
-      return false;
+      const msg = err instanceof Error ? err.message : "Unknown error updating review";
+      console.error("[VentureService] Supabase review update error:", err);
+      return { success: false, error: msg };
     }
   },
 
@@ -157,7 +218,7 @@ export const ventureService = {
   },
 
   /**
-   * Subscribe to Supabase real-time postgres changes on table startups
+   * Subscribe to Supabase real-time postgres changes on table startups and profiles
    */
   subscribeToStartups(onStartupsUpdated: (startups: StartupRecord[]) => void) {
     let pollingTimer: any = null;

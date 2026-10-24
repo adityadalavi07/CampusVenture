@@ -1,6 +1,6 @@
-import { createFileRoute } from "@tanstack/react-router";
+import { createFileRoute, Link } from "@tanstack/react-router";
 import { useState } from "react";
-import { MessagesSquare, Search } from "lucide-react";
+import { MessagesSquare, Rocket, Search } from "lucide-react";
 import { toast } from "sonner";
 import { AppShell } from "@/components/app-shell";
 import { Badge } from "@/components/ui/badge";
@@ -9,7 +9,8 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/com
 import { Input } from "@/components/ui/input";
 import { ScoreRing } from "@/components/score-ring";
 import { DEMO_INVESTORS, formatMoney, matchScore } from "@/lib/demo-data";
-import { MY_STARTUP_ID, useVenture } from "@/lib/store";
+import { useVenture } from "@/lib/store";
+import { useAuth } from "@/lib/auth-context";
 
 const TITLE = "Discover Investors — CampusVenture";
 const DESCRIPTION =
@@ -29,8 +30,34 @@ export const Route = createFileRoute("/app/student/discover")({
 
 function DiscoverInvestors() {
   const { startups, sendMessage, notify } = useVenture();
-  const startup = startups.find((s) => s.id === MY_STARTUP_ID)!;
+  const { user } = useAuth();
+  const startup = startups.find(
+    (s) =>
+      (user?.email && s.founderEmail?.toLowerCase() === user.email.toLowerCase()) ||
+      (user?.name && s.founder === user.name)
+  );
   const [q, setQ] = useState("");
+
+  if (!startup) {
+    return (
+      <AppShell role="student">
+        <div className="mx-auto max-w-lg space-y-6 py-16 text-center animate-in fade-in-50">
+          <div className="mx-auto grid size-16 place-items-center rounded-2xl bg-primary/10 text-primary">
+            <Rocket className="size-8" />
+          </div>
+          <div className="space-y-2">
+            <h1 className="text-2xl font-bold tracking-tight">Create your startup profile first</h1>
+            <p className="text-sm text-muted-foreground">
+              To discover matching venture funds and angel investors, build and submit your startup idea so our AI matchmaker can compute thesis compatibility.
+            </p>
+          </div>
+          <Button asChild size="lg">
+            <Link to="/app/student/startup">Build My Startup Profile</Link>
+          </Button>
+        </div>
+      </AppShell>
+    );
+  }
 
   const list = DEMO_INVESTORS.map((investor) => ({ investor, ...matchScore(investor, startup) }))
     .filter(({ investor }) =>
@@ -100,7 +127,7 @@ function DiscoverInvestors() {
                   size="sm"
                   onClick={() => {
                     sendMessage(
-                      MY_STARTUP_ID,
+                      startup.id,
                       investor.id,
                       "student",
                       `Hi ${investor.name.split(" ")[0]}, I'm building ${startup.name} — ${startup.tagline} Would you be open to a short intro call?`,

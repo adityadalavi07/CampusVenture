@@ -18,6 +18,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { DEMO_INVESTORS } from "@/lib/demo-data";
 import { MY_INVESTOR_ID, timeAgo, useVenture } from "@/lib/store";
+import { useAuth } from "@/lib/auth-context";
 
 const TITLE = "Data Rooms — CampusVenture Investor";
 const DESCRIPTION =
@@ -37,10 +38,12 @@ export const Route = createFileRoute("/app/investor/dataroom")({
 
 function InvestorDataRooms() {
   const { access, docs, startups, signNda, registerDownload, notify } = useVenture();
-  const me = DEMO_INVESTORS.find((i) => i.id === MY_INVESTOR_ID)!;
-  const mine = access.filter((a) => a.investorId === MY_INVESTOR_ID);
+  const { user } = useAuth();
+  const myInvestorId = user?.id || MY_INVESTOR_ID;
+  const investorName = user?.name || DEMO_INVESTORS[0]?.name || "Investor";
+  const mine = access.filter((a) => a.investorId === myInvestorId || a.investorId === MY_INVESTOR_ID);
   const [ndaFor, setNdaFor] = useState<string | null>(null);
-  const [signature, setSignature] = useState(me.name);
+  const [signature, setSignature] = useState(investorName);
 
   return (
     <AppShell role="investor">
@@ -111,8 +114,8 @@ function InvestorDataRooms() {
                         variant="outline"
                         disabled={d.confidential && !unlocked}
                         onClick={() => {
-                          registerDownload(a.startupId, MY_INVESTOR_ID);
-                          notify("student", "Data-room activity", `${me.name} opened ${d.name}.`);
+                          registerDownload(a.startupId, myInvestorId);
+                          notify("student", "Data-room activity", `${investorName} opened ${d.name}.`);
                           toast.success(`${d.name} downloaded`);
                         }}
                       >
@@ -153,7 +156,7 @@ function InvestorDataRooms() {
                   toast.error("Enter your full name to sign.");
                   return;
                 }
-                signNda(ndaFor!, MY_INVESTOR_ID, signature.trim());
+                signNda(ndaFor!, myInvestorId, signature.trim());
                 notify("student", "NDA signed", `${signature.trim()} signed your data-room NDA.`);
                 toast.success("NDA signed — documents unlocked");
                 setNdaFor(null);

@@ -68,7 +68,7 @@ export function NotificationBell({ role }: { role: Role }) {
         </ScrollArea>
         <div className="border-t px-4 py-2">
           <Badge variant="secondary" className="text-[10px] uppercase tracking-wide">
-            Live demo feed
+            Verified Notifications
           </Badge>
         </div>
       </PopoverContent>

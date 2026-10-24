@@ -2,9 +2,10 @@ import { Toaster as Sonner } from "sonner";
 
 type ToasterProps = React.ComponentProps<typeof Sonner>;
 
-const Toaster = ({ ...props }: ToasterProps) => {
+const Toaster = ({ closeButton = true, ...props }: ToasterProps) => {
   return (
     <Sonner
+      closeButton={closeButton}
       className="toaster group"
       toastOptions={{
         classNames: {
@@ -13,6 +14,7 @@ const Toaster = ({ ...props }: ToasterProps) => {
           description: "group-[.toast]:text-muted-foreground",
           actionButton: "group-[.toast]:bg-primary group-[.toast]:text-primary-foreground",
           cancelButton: "group-[.toast]:bg-muted group-[.toast]:text-muted-foreground",
+          closeButton: "border-border hover:bg-muted text-muted-foreground",
         },
       }}
       {...props}

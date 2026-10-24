@@ -16,6 +16,7 @@ import {
 } from "@/components/ui/select";
 import { DEMO_INVESTORS, SECTORS, STAGES, formatMoney, matchScore } from "@/lib/demo-data";
 import { useVenture } from "@/lib/store";
+import { useAuth } from "@/lib/auth-context";
 
 const TITLE = "Investor Dashboard — CampusVenture";
 const DESCRIPTION =
@@ -38,16 +39,26 @@ type SortKey = "match" | "readiness" | "updated" | "funding";
 
 function InvestorDashboard() {
   const { startups, saved, toggleSaved, addRequest, requestAccess, requests, notify } = useVenture();
+  const { user } = useAuth();
   const [query, setQuery] = useState("");
   const [sector, setSector] = useState("all");
   const [stage, setStage] = useState("all");
   const [sort, setSort] = useState<SortKey>("match");
   const [savedOnly, setSavedOnly] = useState(false);
 
+  const activeInvestor = useMemo(() => {
+    return {
+      ...ME,
+      id: user?.id || ME.id,
+      name: user?.name || ME.name,
+      organization: user?.org || ME.organization,
+    };
+  }, [user]);
+
   const results = useMemo(() => {
     const list = startups
       .filter((s) => s.status === "approved" || s.verified === true)
-      .map((s) => ({ startup: s, ...matchScore(ME, s) }))
+      .map((s) => ({ startup: s, ...matchScore(activeInvestor, s) }))
       .filter(({ startup }) => {
         const q = query.trim().toLowerCase();
         const matchesQuery =
@@ -69,7 +80,7 @@ function InvestorDashboard() {
       if (sort === "updated") return b.startup.updatedAt.localeCompare(a.startup.updatedAt);
       return b.score - a.score;
     });
-  }, [startups, saved, savedOnly, query, sector, stage, sort]);
+  }, [startups, saved, savedOnly, query, sector, stage, sort, activeInvestor]);
 
   const hasFilters = query !== "" || sector !== "all" || stage !== "all" || savedOnly;
 
@@ -83,7 +94,7 @@ function InvestorDashboard() {
   function toggleSave(id: string, name: string) {
     const added = toggleSaved(id);
     if (added) {
-      notify("student", "Investor saved your startup! ⭐", `${ME.name} (${ME.organization}) added ${name} to their portfolio watchlist.`);
+      notify("student", "Investor saved your startup! ⭐", `${activeInvestor.name} (${activeInvestor.organization}) added ${name} to their portfolio watchlist.`);
     }
     toast.success(added ? `Saved ${name} to your watchlist` : `Removed ${name}`);
   }
@@ -94,8 +105,7 @@ function InvestorDashboard() {
         <div>
           <h1 className="text-2xl font-semibold">Discover startups</h1>
           <p className="text-sm text-muted-foreground">
-            {ME.organization} · sectors: {ME.sectors.join(", ")} · ticket{" "}
-            {formatMoney(ME.ticketMin)}–{formatMoney(ME.ticketMax)}
+            {activeInvestor.organization} · Cross-University Verified Deal Flow · All Participating Universities
           </p>
         </div>
 
@@ -263,8 +273,8 @@ function InvestorDashboard() {
                       size="sm"
                       variant="outline"
                       onClick={() => {
-                        addRequest(startup.id, ME.id, "connection");
-                        notify("student", "New connection request", `${ME.name} wants to connect.`);
+                        addRequest(startup.id, activeInvestor.id, "connection");
+                        notify("student", "New connection request", `${activeInvestor.name} wants to connect.`);
                         toast.success(`Connection requested with ${startup.name}`);
                       }}
                     >
@@ -274,9 +284,9 @@ function InvestorDashboard() {
                       size="sm"
                       variant="outline"
                       onClick={() => {
-                        addRequest(startup.id, ME.id, "dataroom");
-                        requestAccess(startup.id, ME.id);
-                        notify("student", "Data-room request", `${ME.organization} requested access.`);
+                        addRequest(startup.id, activeInvestor.id, "dataroom");
+                        requestAccess(startup.id, activeInvestor.id);
+                        notify("student", "Data-room request", `${activeInvestor.organization} requested access.`);
                         toast.info(`Data-room request sent to ${startup.name}`, {
                           description: "The founder must approve, then both parties accept the NDA.",
                         });

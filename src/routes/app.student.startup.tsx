@@ -27,6 +27,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { STATUS_LABEL, completeness, useVenture, type StartupRecord, type ReviewStatus } from "@/lib/store";
 import { useAuth } from "@/lib/auth-context";
 import { SECTORS, STAGES, type Stage } from "@/lib/demo-data";
+import { generateUUID, isValidUUID } from "@/lib/uuid";
 
 const TITLE = "My Startup — CampusVenture";
 const DESCRIPTION =
@@ -65,7 +66,7 @@ function MyStartup() {
   const [localStartup, setLocalStartup] = useState<StartupRecord>(() => {
     return (
       studentStartup || {
-        id: `s-${Date.now().toString(36)}`,
+        id: generateUUID(),
         name: "",
         tagline: "",
         sector: "AI",
@@ -115,6 +116,13 @@ function MyStartup() {
       setLocalStartup((prev) => ({ ...prev, id: createdId, ...patch }));
     }
   }
+
+  // Sync remote startup changes to local startup
+  useEffect(() => {
+    if (studentStartup) {
+      setLocalStartup(studentStartup);
+    }
+  }, [studentStartup]);
 
   // Sync startup founder and university with authenticated user
   useEffect(() => {

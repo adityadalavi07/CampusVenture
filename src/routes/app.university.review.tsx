@@ -10,6 +10,8 @@ import { Textarea } from "@/components/ui/textarea";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { formatMoney } from "@/lib/demo-data";
 import { STATUS_LABEL, completeness, useVenture, type ReviewStatus } from "@/lib/store";
+import { useAuth } from "@/lib/auth-context";
+import { isSameUniversity } from "@/lib/university-matcher";
 
 const TITLE = "Startup Review Queue — CampusVenture";
 const DESCRIPTION =
@@ -36,6 +38,15 @@ const FILTERS: { value: ReviewStatus; label: string }[] = [
 
 function ReviewQueue() {
   const { startups } = useVenture();
+  const { user } = useAuth();
+
+  const uniStartups = startups.filter((s) => {
+    if (!user) return true;
+    return isSameUniversity(
+      { org: user.org, email: user.email },
+      { university: s.university, email: s.founderEmail }
+    );
+  });
 
   return (
     <AppShell role="university">
@@ -43,7 +54,7 @@ function ReviewQueue() {
         <div>
           <h1 className="text-2xl font-semibold">Review queue</h1>
           <p className="text-sm text-muted-foreground">
-            Verification decisions are logged and visible to the founder.
+            {user?.org || "University Incubation Cell"} · Verification decisions are logged and visible to the founder.
           </p>
         </div>
 
@@ -51,17 +62,17 @@ function ReviewQueue() {
           <TabsList className="flex-wrap">
             {FILTERS.map((f) => (
               <TabsTrigger key={f.value} value={f.value}>
-                {f.label} ({startups.filter((s) => s.status === f.value).length})
+                {f.label} ({uniStartups.filter((s) => s.status === f.value).length})
               </TabsTrigger>
             ))}
           </TabsList>
           {FILTERS.map((f) => {
-            const list = startups.filter((s) => s.status === f.value);
+            const list = uniStartups.filter((s) => s.status === f.value);
             return (
               <TabsContent key={f.value} value={f.value} className="space-y-4">
                 {list.length === 0 ? (
                   <div className="rounded-xl border border-dashed p-12 text-center text-sm text-muted-foreground">
-                    Nothing here right now.
+                    No {f.label.toLowerCase()} submissions from {user?.org || "your university"} right now.
                   </div>
                 ) : (
                   list.map((s) => <ReviewCard key={s.id} id={s.id} />)

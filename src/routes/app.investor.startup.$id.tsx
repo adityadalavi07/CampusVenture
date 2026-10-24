@@ -8,6 +8,7 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { DEMO_INVESTORS, formatMoney, matchScore } from "@/lib/demo-data";
 import { STATUS_LABEL, useVenture } from "@/lib/store";
+import { useAuth } from "@/lib/auth-context";
 
 const TITLE = "Startup Profile — CampusVenture";
 const DESCRIPTION =
@@ -35,8 +36,20 @@ function embedUrl(url: string) {
 
 function StartupDetail() {
   const { id } = useParams({ from: "/app/investor/startup/$id" });
-  const { startups, saved, toggleSaved, addRequest, requestAccess, notify } = useVenture();
+  const { startups, saved, toggleSaved, addRequest, requestAccess, notify, hydrated } = useVenture();
+  const { user } = useAuth();
   const startup = startups.find((s) => s.id === id);
+
+  if (!hydrated) {
+    return (
+      <AppShell role="investor">
+        <div className="flex min-h-[400px] flex-col items-center justify-center space-y-3">
+          <div className="size-8 animate-spin rounded-full border-4 border-primary border-t-transparent" />
+          <p className="text-xs text-muted-foreground">Loading verified startup profile...</p>
+        </div>
+      </AppShell>
+    );
+  }
 
   if (!startup) {
     return (
@@ -51,7 +64,34 @@ function StartupDetail() {
     );
   }
 
-  const investor = DEMO_INVESTORS[0]!;
+  // Institutional Protection: Prevent investors from viewing unapproved or pending ideas
+  if (startup.status !== "approved" && !startup.verified) {
+    return (
+      <AppShell role="investor">
+        <div className="mx-auto max-w-md rounded-xl border bg-card p-8 text-center space-y-4 my-8 shadow-sm">
+          <div className="mx-auto grid size-12 place-items-center rounded-xl bg-amber-500/10 text-amber-600">
+            <FolderLock className="size-6" />
+          </div>
+          <div className="space-y-1.5">
+            <h1 className="text-xl font-semibold">Startup Awaiting University Verification</h1>
+            <p className="text-xs text-muted-foreground">
+              This startup is currently undergoing incubator due diligence by {startup.university || "its university"} and is not yet available for investor access.
+            </p>
+          </div>
+          <Button asChild variant="outline" size="sm">
+            <Link to="/app/investor">Return to Verified Discovery</Link>
+          </Button>
+        </div>
+      </AppShell>
+    );
+  }
+
+  const investor = {
+    ...DEMO_INVESTORS[0]!,
+    id: user?.id || DEMO_INVESTORS[0]!.id,
+    name: user?.name || DEMO_INVESTORS[0]!.name,
+    organization: user?.org || DEMO_INVESTORS[0]!.organization,
+  };
   const { score, reasons } = matchScore(investor, startup);
   const isSaved = saved.includes(startup.id);
   const embed = embedUrl(startup.videoUrl);
@@ -154,12 +194,12 @@ function StartupDetail() {
               </CardTitle>
             </CardHeader>
             <CardContent className="text-sm">
-              {startup.githubUrl ? (
+              {startup.githubUrl && /^https:\/\//i.test(startup.githubUrl) ? (
                 <div className="flex flex-wrap items-center justify-between gap-2">
                   <a
                     href={startup.githubUrl}
                     target="_blank"
-                    rel="noreferrer"
+                    rel="noopener noreferrer"
                     className="font-medium underline-offset-4 hover:underline"
                   >
                     {startup.githubUrl.replace("https://github.com/", "")}

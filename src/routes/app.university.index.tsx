@@ -18,6 +18,7 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/com
 import { STAGES, formatMoney } from "@/lib/demo-data";
 import { STATUS_LABEL, useVenture } from "@/lib/store";
 import { useAuth } from "@/lib/auth-context";
+import { isSameUniversity } from "@/lib/university-matcher";
 
 const TITLE = "University Ecosystem Dashboard — CampusVenture";
 const DESCRIPTION =
@@ -44,28 +45,45 @@ const CHART_COLORS = [
 ];
 
 function UniversityDashboard() {
-  const { startups: DEMO_STARTUPS } = useVenture();
+  const { startups, students } = useVenture();
   const { user } = useAuth();
   const uniName = user?.org || "University Innovation & Incubation Cell";
-  const pending = DEMO_STARTUPS.filter((s) => s.status === "pending");
+
+  const uniStartups = startups.filter((s) => {
+    if (!user) return true;
+    return isSameUniversity(
+      { org: user.org, email: user.email },
+      { university: s.university, email: s.founderEmail }
+    );
+  });
+
+  const uniStudents = students.filter((st) => {
+    if (!user) return true;
+    return isSameUniversity(
+      { org: user.org, email: user.email },
+      { org: st.org, email: st.email }
+    );
+  });
+
+  const pending = uniStartups.filter((s) => s.status === "pending");
   const byStage = STAGES.map((stage) => ({
     stage,
-    count: DEMO_STARTUPS.filter((s) => s.stage === stage).length,
+    count: uniStartups.filter((s) => s.stage === stage).length,
   }));
 
   const bySector = Object.entries(
-    DEMO_STARTUPS.reduce<Record<string, number>>((acc, s) => {
+    uniStartups.reduce<Record<string, number>>((acc, s) => {
       acc[s.sector] = (acc[s.sector] ?? 0) + 1;
       return acc;
     }, {}),
   ).map(([name, value]) => ({ name, value }));
 
   const avgReadiness =
-    DEMO_STARTUPS.length > 0
-      ? Math.round(DEMO_STARTUPS.reduce((sum, s) => sum + s.readiness, 0) / DEMO_STARTUPS.length)
+    uniStartups.length > 0
+      ? Math.round(uniStartups.reduce((sum, s) => sum + s.readiness, 0) / uniStartups.length)
       : 0;
 
-  const top = [...DEMO_STARTUPS].sort((a, b) => b.readiness - a.readiness).slice(0, 3);
+  const top = [...uniStartups].sort((a, b) => b.readiness - a.readiness).slice(0, 3);
 
   return (
     <AppShell role="university">
@@ -78,9 +96,9 @@ function UniversityDashboard() {
         </div>
 
         <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
-          <Stat label="Student founders" value="142" />
-          <Stat label="Verified startups" value={String(DEMO_STARTUPS.filter((s) => s.status === "approved").length)} />
-          <Stat label="Active startups" value={String(DEMO_STARTUPS.length)} />
+          <Stat label="Student founders" value={String(uniStudents.length)} />
+          <Stat label="Verified startups" value={String(uniStartups.filter((s) => s.status === "approved").length)} />
+          <Stat label="Active startups" value={String(uniStartups.length)} />
           <Stat label="Avg. readiness" value={`${avgReadiness}/100`} />
         </div>
 

@@ -44,8 +44,52 @@ function isH3SwallowedErrorBody(body: string): boolean {
   }
 }
 
+// In-memory sliding window rate limiter
+interface RateLimitRecord {
+  count: number;
+  resetAt: number;
+}
+const rateLimits = new Map<string, RateLimitRecord>();
+
+function checkRateLimit(
+  key: string,
+  limit: number,
+  windowMs: number
+): { allowed: boolean; retryAfterSec?: number } {
+  const now = Date.now();
+  const record = rateLimits.get(key);
+  if (!record || now > record.resetAt) {
+    rateLimits.set(key, { count: 1, resetAt: now + windowMs });
+    return { allowed: true };
+  }
+  if (record.count >= limit) {
+    const retryAfterSec = Math.max(1, Math.ceil((record.resetAt - now) / 1000));
+    return { allowed: false, retryAfterSec };
+  }
+  record.count++;
+  return { allowed: true };
+}
+
 async function handleServerAIAnalyze(request: Request, env: unknown): Promise<Response> {
   try {
+    const clientIp = request.headers.get("x-forwarded-for") || "unknown-client";
+    const rateCheck = checkRateLimit(`ai:${clientIp}`, 6, 60000);
+    if (!rateCheck.allowed) {
+      return new Response(
+        JSON.stringify({
+          success: false,
+          fallback: true,
+          error: `Rate limit reached. Please wait ${rateCheck.retryAfterSec}s before running another AI audit.`,
+        }),
+        {
+          status: 429,
+          headers: {
+            "Content-Type": "application/json",
+            "Retry-After": String(rateCheck.retryAfterSec || 60),
+          },
+        }
+      );
+    }
     const body = (await request.json()) as { startup?: any; honestyLevel?: string };
     if (!body?.startup) {
       return new Response(JSON.stringify({ error: "Missing startup data" }), {
@@ -161,6 +205,23 @@ async function handleServerSendCode(request: Request, env: unknown): Promise<Res
     }
 
     const cleanEmail = email.trim().toLowerCase();
+    const clientIp = request.headers.get("x-forwarded-for") || "unknown-ip";
+    const rateCheck = checkRateLimit(`code:${cleanEmail}:${clientIp}`, 4, 120000);
+    if (!rateCheck.allowed) {
+      return new Response(
+        JSON.stringify({
+          success: false,
+          error: `Too many verification requests. Please wait ${rateCheck.retryAfterSec}s before requesting another code.`,
+        }),
+        {
+          status: 429,
+          headers: {
+            "Content-Type": "application/json",
+            "Retry-After": String(rateCheck.retryAfterSec || 60),
+          },
+        }
+      );
+    }
     console.info(`[CampusVenture Auth] Security Code dispatched to ${cleanEmail} (${role}): ${code}`);
 
     // If Resend API key is configured on the server, dispatch a 100% clean email with ONLY the 6-digit code
@@ -220,7 +281,6 @@ async function handleServerSendCode(request: Request, env: unknown): Promise<Res
       JSON.stringify({
         success: true,
         message: `Security code dispatched to ${cleanEmail}`,
-        code,
       }),
       { status: 200, headers: { "Content-Type": "application/json" } },
     );

@@ -9,6 +9,7 @@ import {
 } from "react";
 import { DEMO_STARTUPS, type Role, type Startup } from "@/lib/demo-data";
 import { ventureService } from "@/services/ventureService";
+import { generateUUID, isValidUUID } from "@/lib/uuid";
 
 export type ReviewStatus = "draft" | "pending" | "approved" | "rejected";
 
@@ -110,6 +111,7 @@ export interface StudentRecord {
   year: string;
   startupId: string | null;
   verified: boolean;
+  org?: string;
 }
 
 interface State {
@@ -210,6 +212,28 @@ export function VentureProvider({ children }: { children: ReactNode }) {
         });
       }
     });
+
+    ventureService.getAllStudentProfiles().then((remoteStudents) => {
+      if (Array.isArray(remoteStudents) && remoteStudents.length > 0) {
+        setState((prev) => {
+          const map = new Map();
+          prev.students.forEach((st) => map.set(st.email.toLowerCase(), st));
+          remoteStudents.forEach((st) => {
+            const existing = map.get(st.email.toLowerCase());
+            map.set(st.email.toLowerCase(), {
+              ...st,
+              verified: existing?.verified ?? false,
+              startupId: existing?.startupId ?? null,
+            });
+          });
+          return {
+            ...prev,
+            students: Array.from(map.values()),
+          };
+        });
+      }
+    });
+
     return () => unsub();
   }, []);
 
@@ -511,7 +535,7 @@ export function VentureProvider({ children }: { children: ReactNode }) {
           };
         }),
       createStartup: (startupData) => {
-        const newId = `s-${Date.now().toString(36)}`;
+        const newId = isValidUUID(startupData.id) ? (startupData.id as string) : generateUUID();
         const newStartup: StartupRecord = {
           id: newId,
           name: startupData.name || "My Student Venture",

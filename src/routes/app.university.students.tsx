@@ -17,6 +17,7 @@ import {
 } from "@/components/ui/table";
 import { useVenture } from "@/lib/store";
 import { useAuth } from "@/lib/auth-context";
+import { isSameUniversity } from "@/lib/university-matcher";
 
 const TITLE = "Students — CampusVenture University";
 const DESCRIPTION = "Verify student founders, see their startups and manage campus enrolment.";
@@ -35,7 +36,7 @@ export const Route = createFileRoute("/app/university/students")({
 
 function StudentsPage() {
   const { students, startups, setStudentVerified, notify, updateStudent } = useVenture();
-  const { registeredUsers } = useAuth();
+  const { registeredUsers, user } = useAuth();
   const [q, setQ] = useState("");
 
   // Auto-sync registered student accounts with the university roster
@@ -54,13 +55,22 @@ function StudentsPage() {
             year: "Final year",
             startupId: matchingStartup?.id || null,
             verified: false,
+            org: reg.org,
           });
         }
       }
     });
   }, [registeredUsers, students, startups, updateStudent]);
 
-  const rows = students.filter((s) =>
+  const uniStudents = students.filter((s) => {
+    if (!user) return true;
+    return isSameUniversity(
+      { org: user.org, email: user.email },
+      { org: s.org, email: s.email }
+    );
+  });
+
+  const rows = uniStudents.filter((s) =>
     `${s.name} ${s.email} ${s.branch}`.toLowerCase().includes(q.toLowerCase()),
   );
 
@@ -70,7 +80,7 @@ function StudentsPage() {
         <div>
           <h1 className="text-2xl font-semibold">Students</h1>
           <p className="text-sm text-muted-foreground">
-            {students.filter((s) => s.verified).length} of {students.length} student founders verified.
+            {uniStudents.filter((s) => s.verified).length} of {uniStudents.length} student founders verified from {user?.org || "your university"}.
           </p>
         </div>
 
