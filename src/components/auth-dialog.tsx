@@ -210,7 +210,7 @@ export function AuthDialog() {
       }
       if (authModalDefaultMode) {
         setMode(authModalDefaultMode);
-      } else if (isAuthenticated) {
+      } else if (isAuthenticated && (!authModalDefaultRole || user?.role === authModalDefaultRole)) {
         setMode("dash");
       } else {
         setMode("signin");
@@ -218,12 +218,15 @@ export function AuthDialog() {
       setRoleMenuOpen(false);
       setErrors({});
     }
-  }, [isAuthModalOpen, authModalDefaultRole, authModalDefaultMode, isAuthenticated]);
+  }, [isAuthModalOpen, authModalDefaultRole, authModalDefaultMode, isAuthenticated, user?.role]);
 
   // Switch role and clear all filled inputs so the new role starts completely fresh
   const handleRoleChange = (newRole: Role) => {
     setRole(newRole);
     setRoleMenuOpen(false);
+    if (isAuthenticated && user?.role !== newRole) {
+      setMode("signin");
+    }
     setFName("");
     setFOrg("");
     setFEmail("");
@@ -1238,6 +1241,15 @@ export function AuthDialog() {
                     }}
                   >
                     Go to {ROLES[user.role]} Portal
+                  </button>
+                  <button
+                    type="button"
+                    className="btn secondary"
+                    onClick={() => {
+                      setMode("signin");
+                    }}
+                  >
+                    Switch Account / Sign In with Another Role
                   </button>
                   <button
                     type="button"

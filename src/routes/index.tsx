@@ -79,7 +79,7 @@ const STEPS = [
 ];
 
 function Landing() {
-  const { user, isAuthenticated, openAuthModal } = useAuth();
+  const { user, isAuthenticated, openAuthModal, signOut } = useAuth();
 
   return (
     <div className="min-h-screen bg-background">
@@ -94,11 +94,16 @@ function Landing() {
           <div className="flex items-center gap-2">
             <ThemeToggle />
             {isAuthenticated && user ? (
-              <Button asChild size="sm">
-                <Link to={`/app/${user.role}`}>
-                  Open Dashboard ({user.role})
-                </Link>
-              </Button>
+              <div className="flex items-center gap-2">
+                <Button asChild size="sm">
+                  <Link to={`/app/${user.role}`}>
+                    Open {user.role === "investor" ? "Investor" : user.role === "student" ? "Founder" : "University"} Portal
+                  </Link>
+                </Button>
+                <Button variant="ghost" size="sm" onClick={() => signOut()}>
+                  Sign Out
+                </Button>
+              </div>
             ) : (
               <>
                 <Button variant="ghost" size="sm" onClick={() => openAuthModal(undefined, "signin")}>
@@ -127,12 +132,22 @@ function Landing() {
           <p className="mx-auto mt-6 max-w-2xl text-balance text-lg text-muted-foreground">{DESCRIPTION}</p>
           <div className="mt-9 flex flex-wrap justify-center gap-3">
             {isAuthenticated && user ? (
-              <Button asChild size="lg" className="h-12 px-8 text-base shadow-elevated">
-                <Link to={`/app/${user.role}`}>
-                  Go to Dashboard ({user.role})
-                  <ArrowRight className="ml-2 size-4" />
-                </Link>
-              </Button>
+              <div className="flex flex-wrap items-center justify-center gap-3">
+                <Button asChild size="lg" className="h-12 px-8 text-base shadow-elevated">
+                  <Link to={`/app/${user.role}`}>
+                    Open {user.role === "investor" ? "Investor" : user.role === "student" ? "Student Founder" : "University"} Dashboard
+                    <ArrowRight className="ml-2 size-4" />
+                  </Link>
+                </Button>
+                <Button
+                  size="lg"
+                  variant="outline"
+                  className="h-12 px-6 text-base"
+                  onClick={() => signOut()}
+                >
+                  Sign Out / Switch Role
+                </Button>
+              </div>
             ) : (
               <>
                 <Button
@@ -260,12 +275,22 @@ function Landing() {
           </p>
           <div className="mt-7 flex flex-col items-center justify-center gap-3">
             {isAuthenticated && user ? (
-              <Button asChild size="lg" className="h-12 px-8 text-base">
-                <Link to={`/app/${user.role}`}>
-                  Go to Dashboard
-                  <ArrowRight className="ml-2 size-4" />
-                </Link>
-              </Button>
+              <div className="flex flex-wrap items-center justify-center gap-3">
+                <Button asChild size="lg" className="h-12 px-8 text-base shadow-elevated">
+                  <Link to={`/app/${user.role}`}>
+                    Open {user.role === "investor" ? "Investor" : user.role === "student" ? "Student Founder" : "University"} Dashboard
+                    <ArrowRight className="ml-2 size-4" />
+                  </Link>
+                </Button>
+                <Button
+                  size="lg"
+                  variant="outline"
+                  className="h-12 px-6 text-base"
+                  onClick={() => signOut()}
+                >
+                  Sign Out
+                </Button>
+              </div>
             ) : (
               <>
                 <Button

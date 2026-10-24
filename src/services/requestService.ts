@@ -12,6 +12,9 @@ export interface DataRoomRequestRecord {
   status: "pending" | "granted" | "rejected" | "revoked";
   ndaSigned: boolean;
   ndaSignedName?: string | undefined;
+  discussionTerms?: string | undefined;
+  nextSteps?: string | undefined;
+  declineReason?: string | undefined;
   createdAt: string;
   updatedAt: string;
 }
@@ -29,6 +32,9 @@ export interface ConnectionRequestRecord {
   startupName?: string | undefined;
   message?: string | undefined;
   status: "pending" | "accepted" | "rejected";
+  discussionTerms?: string | undefined;
+  nextSteps?: string | undefined;
+  declineReason?: string | undefined;
   createdAt: string;
   updatedAt: string;
 }
@@ -172,6 +178,9 @@ export const requestService = {
             status: d.status,
             ndaSigned: d.nda_signed || false,
             ndaSignedName: d.nda_signed_name || "",
+            discussionTerms: d.discussion_terms || undefined,
+            nextSteps: d.next_steps || undefined,
+            declineReason: d.decline_reason || undefined,
             createdAt: d.created_at,
             updatedAt: d.updated_at,
           }));
@@ -216,6 +225,9 @@ export const requestService = {
             status: d.status,
             ndaSigned: d.nda_signed || false,
             ndaSignedName: d.nda_signed_name || "",
+            discussionTerms: d.discussion_terms || undefined,
+            nextSteps: d.next_steps || undefined,
+            declineReason: d.decline_reason || undefined,
             createdAt: d.created_at,
             updatedAt: d.updated_at,
           }));
@@ -237,24 +249,45 @@ export const requestService = {
   },
 
   /**
-   * Update status of a data room request (Student Founder: approve/reject)
+   * Update status of a data room request (Student Founder: approve/reject with terms & next steps)
    */
   async updateDataRoomRequestStatus(
     requestId: string,
-    status: "granted" | "rejected" | "revoked"
+    status: "granted" | "rejected" | "revoked",
+    options?: {
+      discussionTerms?: string | undefined;
+      nextSteps?: string | undefined;
+      declineReason?: string | undefined;
+    }
   ): Promise<{ success: boolean; error?: string }> {
     const now = new Date().toISOString();
 
     // Update local cache
     const local = getLocalDrRequests();
-    const updated = local.map((r) => (r.id === requestId ? { ...r, status, updatedAt: now } : r));
+    const updated = local.map((r) =>
+      r.id === requestId
+        ? {
+            ...r,
+            status,
+            discussionTerms: options?.discussionTerms ?? r.discussionTerms,
+            nextSteps: options?.nextSteps ?? r.nextSteps,
+            declineReason: options?.declineReason ?? r.declineReason,
+            updatedAt: now,
+          }
+        : r
+    );
     saveLocalDrRequests(updated);
 
     if (isValidUUID(requestId)) {
       try {
+        const payload: Record<string, any> = { status, updated_at: now };
+        if (options?.discussionTerms !== undefined) payload["discussion_terms"] = options.discussionTerms;
+        if (options?.nextSteps !== undefined) payload["next_steps"] = options.nextSteps;
+        if (options?.declineReason !== undefined) payload["decline_reason"] = options.declineReason;
+
         const { error } = await (supabase as any)
           .from("data_room_requests")
-          .update({ status, updated_at: now })
+          .update(payload)
           .eq("id", requestId);
 
         if (error) {
@@ -391,6 +424,9 @@ export const requestService = {
             startupName: d.startups?.name || "",
             message: d.message,
             status: d.status,
+            discussionTerms: d.discussion_terms || undefined,
+            nextSteps: d.next_steps || undefined,
+            declineReason: d.decline_reason || undefined,
             createdAt: d.created_at,
             updatedAt: d.updated_at,
           }));
@@ -412,23 +448,44 @@ export const requestService = {
   },
 
   /**
-   * Respond to connection request (accept/reject)
+   * Respond to connection request (accept/reject with terms & next steps)
    */
   async respondToConnectionRequest(
     requestId: string,
-    status: "accepted" | "rejected"
+    status: "accepted" | "rejected",
+    options?: {
+      discussionTerms?: string | undefined;
+      nextSteps?: string | undefined;
+      declineReason?: string | undefined;
+    }
   ): Promise<{ success: boolean; error?: string }> {
     const now = new Date().toISOString();
 
     const local = getLocalConnRequests();
-    const updated = local.map((c) => (c.id === requestId ? { ...c, status, updatedAt: now } : c));
+    const updated = local.map((c) =>
+      c.id === requestId
+        ? {
+            ...c,
+            status,
+            discussionTerms: options?.discussionTerms ?? c.discussionTerms,
+            nextSteps: options?.nextSteps ?? c.nextSteps,
+            declineReason: options?.declineReason ?? c.declineReason,
+            updatedAt: now,
+          }
+        : c
+    );
     saveLocalConnRequests(updated);
 
     if (isValidUUID(requestId)) {
       try {
+        const payload: Record<string, any> = { status, updated_at: now };
+        if (options?.discussionTerms !== undefined) payload["discussion_terms"] = options.discussionTerms;
+        if (options?.nextSteps !== undefined) payload["next_steps"] = options.nextSteps;
+        if (options?.declineReason !== undefined) payload["decline_reason"] = options.declineReason;
+
         const { error } = await (supabase as any)
           .from("connection_requests")
-          .update({ status, updated_at: now })
+          .update(payload)
           .eq("id", requestId);
 
         if (error) {

@@ -12,10 +12,18 @@ create table if not exists public.data_room_requests (
   status text check (status in ('pending', 'granted', 'rejected', 'revoked')) default 'pending' not null,
   nda_signed boolean default false not null,
   nda_signed_name text,
+  discussion_terms text,
+  next_steps text,
+  decline_reason text,
   created_at timestamp with time zone default timezone('utc'::text, now()) not null,
   updated_at timestamp with time zone default timezone('utc'::text, now()) not null,
   unique(startup_id, investor_id)
 );
+
+-- Idempotent column additions for existing tables
+alter table public.data_room_requests add column if not exists discussion_terms text;
+alter table public.data_room_requests add column if not exists next_steps text;
+alter table public.data_room_requests add column if not exists decline_reason text;
 
 -- Enable RLS for data_room_requests
 alter table public.data_room_requests enable row level security;
@@ -90,10 +98,18 @@ create table if not exists public.connection_requests (
   startup_id uuid references public.startups(id) on delete set null,
   message text,
   status text check (status in ('pending', 'accepted', 'rejected')) default 'pending' not null,
+  discussion_terms text,
+  next_steps text,
+  decline_reason text,
   created_at timestamp with time zone default timezone('utc'::text, now()) not null,
   updated_at timestamp with time zone default timezone('utc'::text, now()) not null,
   unique(sender_id, receiver_id, startup_id)
 );
+
+-- Idempotent column additions for existing tables
+alter table public.connection_requests add column if not exists discussion_terms text;
+alter table public.connection_requests add column if not exists next_steps text;
+alter table public.connection_requests add column if not exists decline_reason text;
 
 -- Enable RLS for connection_requests
 alter table public.connection_requests enable row level security;

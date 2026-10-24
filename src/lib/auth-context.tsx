@@ -1023,17 +1023,20 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       // Sync to Supabase Auth & public.profiles
       try {
         await supabase.auth.updateUser({
-          data: { name: newName, org: newOrg, bio: updates.bio },
+          data: { name: newName, org: newOrg },
         });
-        await (supabase as any).from("profiles").upsert({
+        // Update public.profiles table (strictly omit bio as public.profiles schema does not include bio)
+        const { error: profErr } = await (supabase as any).from("profiles").upsert({
           id: user.id,
           email: user.email,
           name: newName,
           org: newOrg,
           role: user.role,
-          bio: updates.bio,
           updated_at: new Date().toISOString(),
         });
+        if (profErr) {
+          console.warn("[CampusVenture Auth] Profile update DB error:", profErr.message);
+        }
       } catch (err) {
         console.warn("[CampusVenture Auth] Profile update sync notice:", err);
       }

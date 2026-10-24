@@ -1,6 +1,13 @@
-import { createFileRoute } from "@tanstack/react-router";
+import { createFileRoute, Link } from "@tanstack/react-router";
 import { useEffect, useState } from "react";
-import { Download, FileLock2, ShieldCheck } from "lucide-react";
+import {
+  Calendar,
+  CheckCircle2,
+  Download,
+  FileLock2,
+  MessageSquare,
+  ShieldCheck,
+} from "lucide-react";
 import { toast } from "sonner";
 import { AppShell } from "@/components/app-shell";
 import { Badge } from "@/components/ui/badge";
@@ -55,7 +62,21 @@ function InvestorDataRooms() {
   }, [myInvestorId]);
 
   // Merge live requests with store access records
-  const allAccessMap = new Map<string, { id: string; startupId: string; status: string; ndaSigned: boolean; ndaSignedName: string; requestedAt: string; downloads: number }>();
+  const allAccessMap = new Map<
+    string,
+    {
+      id: string;
+      startupId: string;
+      status: string;
+      ndaSigned: boolean;
+      ndaSignedName: string;
+      requestedAt: string;
+      downloads: number;
+      discussionTerms?: string | undefined;
+      nextSteps?: string | undefined;
+      declineReason?: string | undefined;
+    }
+  >();
   
   access.filter((a) => a.investorId === myInvestorId || a.investorId === MY_INVESTOR_ID).forEach((a) => {
     allAccessMap.set(a.startupId, a);
@@ -71,6 +92,9 @@ function InvestorDataRooms() {
       ndaSignedName: r.ndaSignedName || existing?.ndaSignedName || "",
       requestedAt: r.createdAt || existing?.requestedAt || new Date().toISOString(),
       downloads: existing?.downloads || 0,
+      discussionTerms: r.discussionTerms || existing?.discussionTerms,
+      nextSteps: r.nextSteps || existing?.nextSteps,
+      declineReason: r.declineReason || existing?.declineReason,
     });
   });
 
@@ -122,8 +146,56 @@ function InvestorDataRooms() {
                   </div>
                 </div>
               </CardHeader>
-              <CardContent className="space-y-2 text-sm">
-                {a.status !== "granted" ? (
+              <CardContent className="space-y-3 text-sm">
+                {/* ACTIVE COLLABORATION & NEXT STEPS */}
+                {a.status === "granted" && (
+                  <div className="rounded-md border border-emerald-500/20 bg-emerald-500/5 p-3.5 text-xs space-y-2">
+                    <div className="flex items-center justify-between">
+                      <span className="font-semibold text-emerald-700 dark:text-emerald-400 flex items-center gap-1.5">
+                        <CheckCircle2 className="size-3.5" /> Founder Discussion Terms &amp; Projected Next Steps
+                      </span>
+                      <Badge variant="outline" className="text-[10px] bg-background border-emerald-500/30 text-emerald-700 dark:text-emerald-400">
+                        Access Authorized
+                      </Badge>
+                    </div>
+
+                    {a.discussionTerms && (
+                      <div>
+                        <span className="font-semibold text-foreground">Diligence &amp; Discussion Terms: </span>
+                        <span className="text-muted-foreground">{a.discussionTerms}</span>
+                      </div>
+                    )}
+
+                    {a.nextSteps && (
+                      <div>
+                        <span className="font-semibold text-foreground">Agreed Next Steps: </span>
+                        <p className="text-muted-foreground whitespace-pre-line mt-0.5">{a.nextSteps}</p>
+                      </div>
+                    )}
+
+                    <div className="flex flex-wrap items-center gap-2 pt-2 border-t border-emerald-500/10">
+                      <Button size="sm" variant="outline" asChild className="h-7 text-xs gap-1.5">
+                        <Link to="/app/investor/messages">
+                          <MessageSquare className="size-3" />
+                          Start Discussion with Founder
+                        </Link>
+                      </Button>
+                      <Button size="sm" variant="outline" asChild className="h-7 text-xs gap-1.5">
+                        <Link to="/app/investor/meetings">
+                          <Calendar className="size-3" />
+                          Schedule Diligence Meeting
+                        </Link>
+                      </Button>
+                    </div>
+                  </div>
+                )}
+
+                {a.status === "rejected" ? (
+                  <div className="rounded-lg border border-destructive/20 bg-destructive/5 p-4 text-xs text-muted-foreground space-y-1">
+                    <p className="font-semibold text-destructive">Data-Room Access Request Declined</p>
+                    <p>{a.declineReason || "The founder is not expanding diligence access or raising capital for this venture at this time."}</p>
+                  </div>
+                ) : a.status !== "granted" ? (
                   <p className="rounded-lg border border-dashed p-6 text-center text-muted-foreground">
                     Waiting for {startup?.name} to approve your request.
                   </p>

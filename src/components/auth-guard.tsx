@@ -167,8 +167,14 @@ export function AuthGuard({ requiredRole, children }: AuthGuardProps) {
                 <UserPlus className="size-4" />
                 Register as {targetRole.title}
               </Button>
-              <Button variant="ghost" asChild className="w-full text-xs text-muted-foreground">
-                <Link to="/">Return to Homepage</Link>
+              <Button
+                variant="ghost"
+                onClick={async () => {
+                  await signOut();
+                }}
+                className="w-full text-xs text-muted-foreground"
+              >
+                Sign Out of Personal Account
               </Button>
             </div>
           </CardContent>
@@ -221,16 +227,28 @@ export function AuthGuard({ requiredRole, children }: AuthGuardProps) {
 
             <div className="flex flex-col gap-2.5">
               <Button
-                onClick={() => openAuthModal(requiredRole, "signin")}
+                onClick={() => {
+                  signOut();
+                  openAuthModal(requiredRole, "signin");
+                }}
                 className="w-full flex items-center justify-center gap-2"
               >
                 <LogIn className="size-4" />
                 Sign In with a {targetRole.title} Account
               </Button>
-              <Button variant="secondary" asChild className="w-full">
+              <Button
+                variant="outline"
+                onClick={async () => {
+                  await signOut();
+                }}
+                className="w-full text-xs"
+              >
+                Sign Out of Current Account
+              </Button>
+              <Button variant="ghost" asChild className="w-full text-xs text-muted-foreground">
                 <Link to={currentRole.path}>
-                  Return to My {currentRole.title} Dashboard
-                  <ArrowRight className="ml-1 size-4" />
+                  Continue to My {currentRole.title} Dashboard
+                  <ArrowRight className="ml-1 size-3.5" />
                 </Link>
               </Button>
             </div>
