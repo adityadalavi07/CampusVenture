@@ -103,6 +103,7 @@ function ReviewCard({ id }: { id: string }) {
       status === "approved"
         ? `${s.name} is verified by your university and now visible to accredited investors.`
         : `${s.name}: ${note.trim()}`,
+      s.founderEmail ? { recipientEmail: s.founderEmail } : undefined
     );
     if (status === "approved") {
       notify(

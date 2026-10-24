@@ -73,28 +73,48 @@ function StudentDataRoom() {
   const [liveRequests, setLiveRequests] = useState<DataRoomRequestRecord[]>([]);
   const [loadingRequests, setLoadingRequests] = useState(true);
 
-  const currentStartup = startups.find(
+  const userStartups = startups.filter(
     (s) =>
       (user?.email && s.founderEmail?.toLowerCase() === user.email.toLowerCase()) ||
       (user?.name && s.founder === user.name)
   );
+  const currentStartup = userStartups[0];
+  const startupIds = Array.from(new Set([
+    ...(userStartups.map((s) => s.id)),
+    ...(currentStartup?.id ? [currentStartup.id] : []),
+    ...(user?.id ? [user.id] : []),
+    MY_STARTUP_ID,
+  ]));
   const currentStartupId = currentStartup?.id || user?.id || MY_STARTUP_ID;
 
   const myDocs = docs.filter((d) => d.startupId === currentStartupId || d.startupId === MY_STARTUP_ID);
   const myAccess = access.filter((a) => a.startupId === currentStartupId || a.startupId === MY_STARTUP_ID);
 
+  // Real-time synchronization of data room requests from investors across browsers & devices
   useEffect(() => {
     let active = true;
-    requestService.getDataRoomRequestsForStartup(currentStartupId).then((reqs) => {
-      if (active) {
-        setLiveRequests(reqs);
-        setLoadingRequests(false);
-      }
-    });
+    const fetchRequests = () => {
+      requestService
+        .getDataRoomRequestsForStudent({
+          startupIds,
+          ...(user?.id ? { founderId: user.id } : {}),
+          ...(user?.email ? { founderEmail: user.email } : {}),
+        })
+        .then((reqs) => {
+          if (active) {
+            setLiveRequests(reqs);
+            setLoadingRequests(false);
+          }
+        });
+    };
+
+    fetchRequests();
+    const unsub = requestService.subscribeToDataRoomRequests(fetchRequests);
     return () => {
       active = false;
+      unsub();
     };
-  }, [currentStartupId]);
+  }, [startupIds.join(","), user?.id, user?.email]);
 
   const [grantModalOpen, setGrantModalOpen] = useState(false);
   const [declineModalOpen, setDeclineModalOpen] = useState(false);
@@ -139,7 +159,15 @@ function StudentDataRoom() {
           : r
       )
     );
-    notify("investor", "Data-room access granted & terms shared", `${invName} can now view files and review discussion terms.`);
+    notify(
+      "investor",
+      "Data-room access granted & terms shared",
+      `${invName} can now view confidential diligence files and review discussion terms for ${selectedReq.startupName || "Startup"}.`,
+      {
+        ...(selectedReq.investorEmail ? { recipientEmail: selectedReq.investorEmail } : {}),
+        ...(selectedReq.investorId ? { recipientUserId: selectedReq.investorId } : {}),
+      }
+    );
     toast.success(`Access granted to ${invName}! Next steps projected.`);
     setGrantModalOpen(false);
   };
@@ -157,6 +185,15 @@ function StudentDataRoom() {
       prev.map((r) =>
         r.id === reqId ? { ...r, status: "rejected", declineReason } : r
       )
+    );
+    notify(
+      "investor",
+      "Data-room request declined",
+      `Founder declined data-room access for ${selectedReq.startupName || "Startup"}. Feedback: "${declineReason}"`,
+      {
+        ...(selectedReq.investorEmail ? { recipientEmail: selectedReq.investorEmail } : {}),
+        ...(selectedReq.investorId ? { recipientUserId: selectedReq.investorId } : {}),
+      }
     );
     toast.info(`Request declined with feedback note sent to ${invName}`);
     setDeclineModalOpen(false);

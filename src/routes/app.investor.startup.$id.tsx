@@ -127,7 +127,12 @@ function StartupDetail() {
       investorOrg: investor.organization,
       startupName: startup.name,
     });
-    notify("student", "Data-room request", `${investor.organization} requested access.`);
+    notify(
+      "student",
+      "Data-room request",
+      `${investor.name} (${investor.organization || "Accredited Investor"}) requested access to ${startup.name} data room.`,
+      startup.founderEmail ? { recipientEmail: startup.founderEmail } : undefined
+    );
     toast.success(`Data-room request sent to ${startup.name}`);
   };
 
@@ -146,7 +151,12 @@ function StartupDetail() {
       startupName: startup.name,
       message: `Hi ${startup.founder || "Founder"}, I reviewed ${startup.name} on CampusVenture and would love to connect.`,
     });
-    notify("student", "New connection request", `${investor.name} wants to connect.`);
+    notify(
+      "student",
+      "New connection request",
+      `${investor.name} wants to connect regarding ${startup.name}.`,
+      startup.founderEmail ? { recipientEmail: startup.founderEmail } : undefined
+    );
     toast.success(`Connection requested with ${startup.name}`);
   };
 

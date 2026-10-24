@@ -301,6 +301,140 @@ export const requestService = {
     return { success: true };
   },
 
+  /**
+   * Investor signs the mutual NDA for a data room request
+   */
+  async signDataRoomNda(
+    requestId: string,
+    signedName: string
+  ): Promise<{ success: boolean; error?: string }> {
+    const now = new Date().toISOString();
+
+    // Update local cache
+    const local = getLocalDrRequests();
+    const updated = local.map((r) =>
+      r.id === requestId
+        ? {
+            ...r,
+            ndaSigned: true,
+            ndaSignedName: signedName,
+            updatedAt: now,
+          }
+        : r
+    );
+    saveLocalDrRequests(updated);
+
+    if (isValidUUID(requestId)) {
+      try {
+        await (supabase as any)
+          .from("data_room_requests")
+          .update({
+            nda_signed: true,
+            nda_signed_name: signedName,
+            updated_at: now,
+          })
+          .eq("id", requestId);
+      } catch (err) {
+        console.warn("[RequestService] Error signing NDA in DB:", err);
+      }
+    }
+
+    return { success: true };
+  },
+
+  /**
+   * Fetch all data room requests for a student founder across all their startup IDs
+   */
+  async getDataRoomRequestsForStudent(params: {
+    startupIds: string[];
+    founderId?: string | undefined;
+    founderEmail?: string | undefined;
+  }): Promise<DataRoomRequestRecord[]> {
+    const { startupIds, founderId, founderEmail } = params;
+    const cleanIds = startupIds.filter(Boolean);
+
+    const local = getLocalDrRequests().filter((r) =>
+      cleanIds.includes(r.startupId) || r.startupId === "s1"
+    );
+
+    try {
+      const validUuids = cleanIds.filter(isValidUUID);
+      let query = (supabase as any)
+        .from("data_room_requests")
+        .select("*, profiles:investor_id(name, email, org), startups:startup_id(name, university, founder_email, founder_id)")
+        .order("created_at", { ascending: false });
+
+      if (validUuids.length > 0) {
+        query = query.in("startup_id", validUuids);
+      } else if (founderId && isValidUUID(founderId)) {
+        query = query.eq("startups.founder_id", founderId);
+      }
+
+      const { data, error } = await query;
+
+      if (!error && Array.isArray(data)) {
+        const dbRecords: DataRoomRequestRecord[] = data.map((d: any) => ({
+          id: d.id,
+          startupId: d.startup_id,
+          investorId: d.investor_id,
+          investorName: d.profiles?.name || "Investor",
+          investorEmail: d.profiles?.email || "",
+          investorOrg: d.profiles?.org || "Venture Fund",
+          startupName: d.startups?.name || "Venture",
+          status: d.status,
+          ndaSigned: d.nda_signed || false,
+          ndaSignedName: d.nda_signed_name || "",
+          discussionTerms: d.discussion_terms || undefined,
+          nextSteps: d.next_steps || undefined,
+          declineReason: d.decline_reason || undefined,
+          createdAt: d.created_at,
+          updatedAt: d.updated_at,
+        }));
+
+        const map = new Map<string, DataRoomRequestRecord>();
+        dbRecords.forEach((r) => map.set(r.id, r));
+        local.forEach((l) => {
+          if (!map.has(l.id)) map.set(l.id, l);
+        });
+
+        return Array.from(map.values()).sort(
+          (a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime()
+        );
+      }
+    } catch (err) {
+      console.warn("[RequestService] Error in getDataRoomRequestsForStudent:", err);
+    }
+
+    return local;
+  },
+
+  /**
+   * Subscribe to real-time changes on data room requests across browsers/devices
+   */
+  subscribeToDataRoomRequests(onUpdate: () => void) {
+    let pollingTimer: any = null;
+
+    const channel = supabase
+      .channel("public-dr-requests-realtime")
+      .on(
+        "postgres_changes",
+        { event: "*", schema: "public", table: "data_room_requests" },
+        () => {
+          onUpdate();
+        }
+      )
+      .subscribe();
+
+    pollingTimer = setInterval(() => {
+      onUpdate();
+    }, 4000);
+
+    return () => {
+      if (pollingTimer) clearInterval(pollingTimer);
+      supabase.removeChannel(channel);
+    };
+  },
+
   // ============================================================================
   // CONNECTION REQUESTS
   // ============================================================================

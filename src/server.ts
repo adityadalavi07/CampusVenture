@@ -115,8 +115,83 @@ async function handleServerAIAnalyze(request: Request, env: unknown): Promise<Re
     }
 
     const { startup, honestyLevel = "brutal" } = body;
+
+    const countWords = (t: string) => (t || "").trim().split(/\s+/).filter(Boolean).length;
+    const pWords = countWords(startup.problem);
+    const sWords = countWords(startup.solution);
+
+    // Strict institutional screening: If problem or solution is under 50 words or nonsense, return an immediate failing due diligence audit
+    if (pWords < 50 || sWords < 50) {
+      const isBoth = pWords < 50 && sWords < 50;
+      const failReason = isBoth
+        ? `Both problem statement (${pWords}/50 words) and solution description (${sWords}/50 words) fail minimum depth requirements.`
+        : pWords < 50
+        ? `Problem statement contains only ${pWords}/50 words. A minimum of 50 descriptive words is required.`
+        : `Solution statement contains only ${sWords}/50 words. A minimum of 50 descriptive words is required.`;
+
+      const lowScore = isBoth ? 6 : 10;
+      const resultObj = {
+        overallScore: lowScore,
+        investorGrade: "F",
+        verdict: "Uninvestable — Incoherent / Nonsense Submission",
+        honestTake: `Blunt institutional truth: This application fails basic diligence screening. ${failReason} Professional investors and university incubation committees reject submissions lacking sufficient customer discovery and technical architecture.`,
+        redFlags: [
+          `Submission rejected at pre-screening: ${failReason}`,
+          "Incomplete due diligence data: founders must articulate real customer pain and viable technical product.",
+        ],
+        fatalFlaws: [
+          `CRITICAL DEALBREAKER: ${failReason}`,
+          "Cannot conduct venture due diligence on placeholders or unarticulated ideas.",
+        ],
+        grillingQuestions: [
+          "Who specifically is your target customer and what quantifiable financial loss do they suffer today?",
+          "What is your proprietary technical architecture that prevents incumbents from copying this in a weekend?",
+          "Why did you submit an unarticulated proposal without conducting customer discovery interviews?",
+        ],
+        categories: {
+          "Problem clarity": {
+            score: pWords < 50 ? 5 : 45,
+            critique: pWords < 50 ? `CRITICAL GAP: Problem statement has only ${pWords}/50 words. Fails minimum standard.` : "Adequate length, but needs quantifiable evidence.",
+            honestFeedback: pWords < 50 ? "Unacceptable problem statement. Investors will not read past this line." : "Recognizable pain point.",
+            actionItem: "Expand problem statement to at least 50 words with verified customer cost and daily urgency metrics.",
+          },
+          "Solution strength": {
+            score: sWords < 50 ? 5 : 45,
+            critique: sWords < 50 ? `CRITICAL GAP: Solution statement has only ${sWords}/50 words. No technical architecture.` : "Adequate length, but technical moat is unproven.",
+            honestFeedback: sWords < 50 ? "Incoherent technical product statement." : "Viable prototype concept.",
+            actionItem: "Articulate your actual technical solution, workflow, and core algorithmic mechanism in at least 50 words.",
+          },
+          "Market opportunity": { score: 35, critique: "Market sizing cannot be validated without a coherent problem definition.", honestFeedback: "Unquantifiable TAM/SAM.", actionItem: "Model a bottom-up TAM once problem is clarified." },
+          "Business model": { score: 25, critique: "No verified pricing power or unit economics.", honestFeedback: "Pre-revenue unproven model.", actionItem: "Establish pricing model with target users." },
+          "Product readiness": { score: startup.githubUrl ? 40 : 20, critique: startup.githubUrl ? "Repo connected but feature claims unverified." : "No code repository connected.", honestFeedback: "Vaporware risk.", actionItem: "Connect working GitHub repository." },
+          "Traction": { score: startup.revenue ? 40 : 15, critique: "Zero validated user retention metrics.", honestFeedback: "No verified customer pull.", actionItem: "Run a 30-day pilot with at least 5 target users." },
+          "Competitive advantage": { score: 20, critique: "Zero visible moat against competitors.", honestFeedback: "Easily cloned.", actionItem: "Define unique data or campus distribution moat." },
+          "Team readiness": { score: 35, critique: "Team execution ability unproven at this stage.", honestFeedback: "Need to prove delivery speed.", actionItem: "Document founder roles and technical responsibilities." },
+          "Funding clarity": { score: 25, critique: "Funding request lacks milestone-based justification.", honestFeedback: "Arbitrary capital ask.", actionItem: "Upload an 18-month financial use-of-funds roadmap." },
+        },
+        strengths: ["Submitted venture for institutional feedback."],
+        weaknesses: [
+          failReason,
+          "Lacks defensibility and verified customer traction.",
+          "High execution and platform risk.",
+        ],
+        recommendations: [
+          "Expand the problem statement to at least 50 words describing customer pain and financial impact.",
+          "Expand the solution description to at least 50 words detailing technical architecture and moat.",
+          "Conduct 10 in-person customer interviews before requesting investor funding.",
+          "Upload pitch deck and connect a working product demo or repository.",
+        ],
+      };
+
+      return new Response(
+        JSON.stringify({ success: true, rawJson: JSON.stringify(resultObj) }),
+        { status: 200, headers: { "Content-Type": "application/json" } }
+      );
+    }
+
     const systemPrompt = `You are an elite, highly discerning early-stage Venture Capital Principal and Startup Due Diligence Auditor.
 Evaluate the student venture realistically. Do not give vanity scores or false praise.
+MANDATORY QUALITY RULE: If problem or solution contains nonsense, gibberish, placeholder text, or is under 50 words, you MUST award an overallScore between 0 and 15, assign investorGrade 'F', and set verdict to 'Uninvestable — Incoherent / Nonsense Submission'.
 Output strict JSON with fields:
 overallScore (number 0-100),
 investorGrade (one of "A+", "A", "B", "C", "D", "F"),

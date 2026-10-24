@@ -224,12 +224,21 @@ function MyStartup() {
       toast.error("Please enter a one-line tagline for your startup.");
       return;
     }
-    if (!currentProblem || currentProblem.length < 5) {
-      toast.error("Please explain the problem your startup solves (at least 5 characters).");
+
+    const countWords = (text: string) => text.trim().split(/\s+/).filter(Boolean).length;
+    const pWordCount = countWords(currentProblem);
+    const sWordCount = countWords(currentSolution);
+
+    if (pWordCount < 50) {
+      toast.error(
+        `Problem statement must be at least 50 words (currently ${pWordCount}/50 words). Please elaborate on who suffers, the frequency, and the financial/operational cost of inaction.`
+      );
       return;
     }
-    if (!currentSolution || currentSolution.length < 5) {
-      toast.error("Please describe your solution (at least 5 characters).");
+    if (sWordCount < 50) {
+      toast.error(
+        `Solution statement must be at least 50 words (currently ${sWordCount}/50 words). Please elaborate on your technical solution, product architecture, and defensibility.`
+      );
       return;
     }
 
@@ -494,25 +503,50 @@ function MyStartup() {
           <TabsContent value="problem">
             <Card>
               <CardHeader>
-                <CardTitle className="flex items-center gap-2 text-base">
-                  <Target className="size-4" aria-hidden="true" /> Problem statement
-                </CardTitle>
-                <CardDescription>
-                  Who hurts, how often, and what it costs them today. Saved as you type.
-                </CardDescription>
+                <div className="flex flex-wrap items-center justify-between gap-2">
+                  <div>
+                    <CardTitle className="flex items-center gap-2 text-base">
+                      <Target className="size-4" aria-hidden="true" /> Problem statement
+                    </CardTitle>
+                    <CardDescription>
+                      Who hurts, how often, and what it costs them today. Saved as you type.
+                    </CardDescription>
+                  </div>
+                  <Badge
+                    variant={problem.trim().split(/\s+/).filter(Boolean).length >= 50 ? "default" : "outline"}
+                    className={
+                      problem.trim().split(/\s+/).filter(Boolean).length >= 50
+                        ? "bg-emerald-600 text-white"
+                        : "border-amber-500/50 text-amber-600 dark:text-amber-400"
+                    }
+                  >
+                    {problem.trim().split(/\s+/).filter(Boolean).length} / 50 words min
+                  </Badge>
+                </div>
               </CardHeader>
               <CardContent className="space-y-2">
-                <Label htmlFor="problem">Problem</Label>
+                <Label htmlFor="problem">Problem Statement (Minimum 50 words required)</Label>
                 <Textarea
                   id="problem"
                   rows={7}
                   value={problem}
-                  placeholder="Engineering students wait days for coursework feedback…"
+                  placeholder="Articulate the exact customer pain point: who experiences this problem, how frequently it occurs, existing broken workarounds, and the quantifiable financial or time cost of inaction..."
                   onChange={(e) => setProblem(e.target.value)}
                 />
-                <p className="text-xs text-muted-foreground">
-                  {problem.trim().split(/\s+/).filter(Boolean).length} words · aim for 60–120
-                </p>
+                <div className="flex items-center justify-between text-xs">
+                  <span
+                    className={
+                      problem.trim().split(/\s+/).filter(Boolean).length >= 50
+                        ? "text-emerald-600 font-medium"
+                        : "text-amber-600 dark:text-amber-400 font-medium"
+                    }
+                  >
+                    {problem.trim().split(/\s+/).filter(Boolean).length >= 50
+                      ? `✓ Requirement met (${problem.trim().split(/\s+/).filter(Boolean).length} words)`
+                      : `⚠ Minimum 50 words required (${50 - problem.trim().split(/\s+/).filter(Boolean).length} more needed)`}
+                  </span>
+                  <span className="text-muted-foreground">Aim for 60–120 words for best investor scoring</span>
+                </div>
               </CardContent>
             </Card>
           </TabsContent>
@@ -520,21 +554,49 @@ function MyStartup() {
           <TabsContent value="solution">
             <Card>
               <CardHeader>
-                <CardTitle className="flex items-center gap-2 text-base">
-                  <Lightbulb className="size-4" aria-hidden="true" /> Solution
-                </CardTitle>
-                <CardDescription>What you built, and why it wins against the status quo.</CardDescription>
+                <div className="flex flex-wrap items-center justify-between gap-2">
+                  <div>
+                    <CardTitle className="flex items-center gap-2 text-base">
+                      <Lightbulb className="size-4" aria-hidden="true" /> Solution Architecture
+                    </CardTitle>
+                    <CardDescription>What you built, technical workflow, and why it wins against the status quo.</CardDescription>
+                  </div>
+                  <Badge
+                    variant={solution.trim().split(/\s+/).filter(Boolean).length >= 50 ? "default" : "outline"}
+                    className={
+                      solution.trim().split(/\s+/).filter(Boolean).length >= 50
+                        ? "bg-emerald-600 text-white"
+                        : "border-amber-500/50 text-amber-600 dark:text-amber-400"
+                    }
+                  >
+                    {solution.trim().split(/\s+/).filter(Boolean).length} / 50 words min
+                  </Badge>
+                </div>
               </CardHeader>
               <CardContent className="space-y-4">
                 <div className="space-y-2">
-                  <Label htmlFor="solution">Solution</Label>
+                  <Label htmlFor="solution">Solution Description (Minimum 50 words required)</Label>
                   <Textarea
                     id="solution"
                     rows={6}
                     value={solution}
-                    placeholder="An adaptive AI tutor that grades in minutes…"
+                    placeholder="Describe your technical architecture, proprietary mechanisms, workflow automation, and why your solution provides a 10x improvement over legacy alternatives..."
                     onChange={(e) => setSolution(e.target.value)}
                   />
+                  <div className="flex items-center justify-between text-xs">
+                    <span
+                      className={
+                        solution.trim().split(/\s+/).filter(Boolean).length >= 50
+                          ? "text-emerald-600 font-medium"
+                          : "text-amber-600 dark:text-amber-400 font-medium"
+                      }
+                    >
+                      {solution.trim().split(/\s+/).filter(Boolean).length >= 50
+                        ? `✓ Requirement met (${solution.trim().split(/\s+/).filter(Boolean).length} words)`
+                        : `⚠ Minimum 50 words required (${50 - solution.trim().split(/\s+/).filter(Boolean).length} more needed)`}
+                    </span>
+                    <span className="text-muted-foreground">Aim for 60–120 words for best investor scoring</span>
+                  </div>
                 </div>
                 <div className="grid gap-4 sm:grid-cols-2">
                   <div className="space-y-2">

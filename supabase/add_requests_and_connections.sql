@@ -136,3 +136,47 @@ create index if not exists idx_dr_requests_status on public.data_room_requests(s
 create index if not exists idx_conn_sender on public.connection_requests(sender_id);
 create index if not exists idx_conn_receiver on public.connection_requests(receiver_id);
 create index if not exists idx_conn_status on public.connection_requests(status);
+
+-- Centralized Notifications Table
+create table if not exists public.notifications (
+  id uuid default gen_random_uuid() primary key,
+  user_id uuid references public.profiles(id) on delete cascade,
+  recipient_email text,
+  role text not null,
+  title text not null,
+  body text not null,
+  read boolean default false not null,
+  created_at timestamp with time zone default timezone('utc'::text, now()) not null
+);
+
+create index if not exists idx_notifications_user_id on public.notifications(user_id);
+create index if not exists idx_notifications_role on public.notifications(role);
+create index if not exists idx_notifications_email on public.notifications(lower(recipient_email));
+
+alter table public.notifications enable row level security;
+
+drop policy if exists "Allow read access to notifications" on public.notifications;
+drop policy if exists "Allow insert to notifications" on public.notifications;
+drop policy if exists "Allow update to notifications" on public.notifications;
+
+create policy "Allow read access to notifications" on public.notifications
+  for select
+  using (
+    auth.uid() = user_id
+    or (auth.jwt()->>'email' is not null and lower(recipient_email) = lower(auth.jwt()->>'email'))
+    or auth.role() = 'authenticated'
+  );
+
+create policy "Allow insert to notifications" on public.notifications
+  for insert
+  with check (
+    auth.role() = 'authenticated' or true
+  );
+
+create policy "Allow update to notifications" on public.notifications
+  for update
+  using (
+    auth.uid() = user_id
+    or (auth.jwt()->>'email' is not null and lower(recipient_email) = lower(auth.jwt()->>'email'))
+    or auth.role() = 'authenticated'
+  );

@@ -43,6 +43,7 @@ import {
   getSavedAssessment,
   getAIConfig,
   evaluateStartupLocally,
+  isGibberishOrNonsense,
   type AIReadinessResult,
 } from "@/lib/ai-readiness";
 
@@ -65,17 +66,23 @@ export const Route = createFileRoute("/app/student/")({
 /** Derive per-category scores from what the founder has actually filled in. */
 function categoryScores(s: StartupRecord): Record<string, number> {
   const words = (t: string) => t.trim().split(/\s+/).filter(Boolean).length;
-  const clamp = (n: number) => Math.max(20, Math.min(98, Math.round(n)));
+  const pCheck = isGibberishOrNonsense(s.problem, 50);
+  const sCheck = isGibberishOrNonsense(s.solution, 50);
+  const clamp = (n: number) => Math.max(5, Math.min(98, Math.round(n)));
+
+  const pScore = pCheck.isNonsense ? 5 : clamp(35 + (words(s.problem) - 50) * 0.9);
+  const sScore = sCheck.isNonsense ? 5 : clamp(35 + (words(s.solution) - 50) * 0.9 + (s.githubUrl ? 15 : 0));
+
   return {
-    "Problem clarity": clamp(30 + words(s.problem) * 2.2),
-    "Solution strength": clamp(30 + words(s.solution) * 2.2),
-    "Market opportunity": clamp(45 + s.monthlyUsers / 200),
-    "Business model": clamp(35 + words(s.businessModel) * 9),
-    "Product readiness": clamp((s.githubUrl ? 55 : 30) + (s.videoUrl ? 20 : 0) + s.githubStars / 30),
-    Traction: clamp((s.revenue ? 55 : 35) + words(s.traction) * 3),
-    "Competitive advantage": clamp(40 + words(s.solution)),
-    "Team readiness": clamp(45 + s.teamSize * 8),
-    "Funding clarity": clamp((s.fundingRequired > 0 ? 55 : 25) + (s.deckName ? 25 : 0)),
+    "Problem clarity": pScore,
+    "Solution strength": sScore,
+    "Market opportunity": clamp(40 + s.monthlyUsers / 200),
+    "Business model": clamp(30 + words(s.businessModel) * 5),
+    "Product readiness": clamp((s.githubUrl ? 50 : 25) + (s.videoUrl ? 15 : 0) + s.githubStars / 30),
+    Traction: clamp((s.revenue ? 50 : 25) + words(s.traction) * 2),
+    "Competitive advantage": clamp(35 + (sCheck.isNonsense ? 0 : 20)),
+    "Team readiness": clamp(35 + s.teamSize * 8),
+    "Funding clarity": clamp((s.fundingRequired > 0 ? 50 : 25) + (s.deckName ? 20 : 0)),
   };
 }
 
@@ -90,8 +97,10 @@ function assessment(s: StartupRecord, scores: Record<string, number>) {
   if (!s.videoUrl) recs.push("Record a 2–3 minute video pitch");
   if (!s.deckName) recs.push("Upload your pitch deck to the data room");
   if (!s.githubUrl) recs.push("Connect your GitHub repository");
-  if (s.problem.trim().split(/\s+/).filter(Boolean).length < 40)
-    recs.push("Expand the problem statement with cost and frequency data");
+  if (s.problem.trim().split(/\s+/).filter(Boolean).length < 50)
+    recs.push("Expand problem statement to at least 50 words with customer cost & frequency");
+  if (s.solution.trim().split(/\s+/).filter(Boolean).length < 50)
+    recs.push("Expand solution architecture to at least 50 words describing defensibility");
   if (!s.revenue) recs.push("Show a path to first revenue with pricing");
   recs.push("Quantify the addressable market");
   return { strengths, weaknesses, recommendations: recs.slice(0, 4) };
@@ -392,8 +401,14 @@ function StudentDashboard() {
   for (const { key } of READINESS_WEIGHTS) {
     scores[key] = assessmentResult?.categoryScores?.[key]?.score ?? fallbackScores[key] ?? 40;
   }
-  const weighted = assessmentResult?.overallScore ?? Math.round(
-    READINESS_WEIGHTS.reduce((sum, { key, weight }) => sum + (scores[key] ?? 0) * (weight / 100), 0),
+  const pCheck = isGibberishOrNonsense(STARTUP.problem, 50);
+  const sCheck = isGibberishOrNonsense(STARTUP.solution, 50);
+  const weighted = assessmentResult?.overallScore ?? (
+    (pCheck.isNonsense || sCheck.isNonsense)
+      ? (pCheck.isNonsense && sCheck.isNonsense ? 6 : 10)
+      : Math.round(
+          READINESS_WEIGHTS.reduce((sum, { key, weight }) => sum + (scores[key] ?? 0) * (weight / 100), 0),
+        )
   );
   const review = assessment(STARTUP, scores);
   const pct = completeness(STARTUP);
@@ -519,6 +534,32 @@ function StudentDashboard() {
               <Badge variant="outline" className="border-emerald-500/40 text-emerald-700 dark:text-emerald-300">
                 Active in Deal Flow
               </Badge>
+            </div>
+          </div>
+        )}
+
+        {STARTUP.status === "rejected" && (
+          <div className="rounded-xl border border-rose-500/40 bg-rose-500/10 p-5 text-rose-900 dark:text-rose-200 shadow-sm animate-in fade-in-50">
+            <div className="flex items-center justify-between gap-4 flex-wrap">
+              <div className="flex items-start gap-3">
+                <div className="size-9 rounded-lg bg-rose-500/20 flex items-center justify-center text-rose-600 dark:text-rose-400 shrink-0 mt-0.5">
+                  <AlertTriangle className="size-5" />
+                </div>
+                <div>
+                  <div className="flex items-center gap-2">
+                    <h3 className="font-semibold text-base">Revisions Requested by {STARTUP.university || "University Incubator"}</h3>
+                    <Badge variant="destructive" className="text-[10px]">Changes Required</Badge>
+                  </div>
+                  <p className="text-xs text-rose-800/90 dark:text-rose-300/90 mt-1 max-w-2xl">
+                    {STARTUP.reviewNote
+                      ? `Reviewer Feedback: "${STARTUP.reviewNote}"`
+                      : "The incubation committee reviewed your startup submission and requested revisions before verification."}
+                  </p>
+                </div>
+              </div>
+              <Button asChild size="sm" className="bg-rose-600 hover:bg-rose-700 text-white text-xs">
+                <Link to="/app/student/startup">Review Feedback &amp; Resubmit</Link>
+              </Button>
             </div>
           </div>
         )}

@@ -9,6 +9,7 @@ import {
 } from "react";
 import { DEMO_STARTUPS, type Role, type Startup } from "@/lib/demo-data";
 import { ventureService } from "@/services/ventureService";
+import { notificationService } from "@/services/notificationService";
 import { generateUUID, isValidUUID } from "@/lib/uuid";
 
 export type ReviewStatus = "draft" | "pending" | "approved" | "rejected";
@@ -149,7 +150,12 @@ const rid = (p: string) => `${p}${Math.random().toString(36).slice(2, 9)}`;
 interface Ctx extends State {
   hydrated: boolean;
   unread: (role: Role) => number;
-  notify: (role: Role, title: string, body: string) => void;
+  notify: (
+    role: Role,
+    title: string,
+    body: string,
+    meta?: { recipientEmail?: string | undefined; recipientUserId?: string | undefined }
+  ) => void;
   markAllRead: (role: Role) => void;
   updateStartup: (id: string, patch: Partial<StartupRecord>) => void;
   setReview: (id: string, status: ReviewStatus, note?: string) => void;
@@ -234,7 +240,87 @@ export function VentureProvider({ children }: { children: ReactNode }) {
       }
     });
 
-    return () => unsub();
+    const unsubNotifsStudent = notificationService.subscribeToNotifications("student", undefined, (fresh) => {
+      if (Array.isArray(fresh) && fresh.length > 0) {
+        setState((prev) => {
+          const map = new Map<string, Notification>();
+          prev.notifications.forEach((n) => map.set(n.id, n));
+          fresh.forEach((f) => {
+            map.set(f.id, {
+              id: f.id,
+              role: f.role,
+              title: f.title,
+              body: f.body,
+              at: f.createdAt,
+              read: f.read,
+            });
+          });
+          return {
+            ...prev,
+            notifications: Array.from(map.values()).sort(
+              (a, b) => new Date(b.at).getTime() - new Date(a.at).getTime()
+            ),
+          };
+        });
+      }
+    });
+
+    const unsubNotifsInvestor = notificationService.subscribeToNotifications("investor", undefined, (fresh) => {
+      if (Array.isArray(fresh) && fresh.length > 0) {
+        setState((prev) => {
+          const map = new Map<string, Notification>();
+          prev.notifications.forEach((n) => map.set(n.id, n));
+          fresh.forEach((f) => {
+            map.set(f.id, {
+              id: f.id,
+              role: f.role,
+              title: f.title,
+              body: f.body,
+              at: f.createdAt,
+              read: f.read,
+            });
+          });
+          return {
+            ...prev,
+            notifications: Array.from(map.values()).sort(
+              (a, b) => new Date(b.at).getTime() - new Date(a.at).getTime()
+            ),
+          };
+        });
+      }
+    });
+
+    const unsubNotifsUni = notificationService.subscribeToNotifications("university", undefined, (fresh) => {
+      if (Array.isArray(fresh) && fresh.length > 0) {
+        setState((prev) => {
+          const map = new Map<string, Notification>();
+          prev.notifications.forEach((n) => map.set(n.id, n));
+          fresh.forEach((f) => {
+            map.set(f.id, {
+              id: f.id,
+              role: f.role,
+              title: f.title,
+              body: f.body,
+              at: f.createdAt,
+              read: f.read,
+            });
+          });
+          return {
+            ...prev,
+            notifications: Array.from(map.values()).sort(
+              (a, b) => new Date(b.at).getTime() - new Date(a.at).getTime()
+            ),
+          };
+        });
+      }
+    });
+
+    return () => {
+      unsub();
+      unsubNotifsStudent();
+      unsubNotifsInvestor();
+      unsubNotifsUni();
+    };
   }, []);
 
   // Cross-tab and multi-window live sync: updates in one role/tab immediately reflect across all roles
@@ -290,22 +376,38 @@ export function VentureProvider({ children }: { children: ReactNode }) {
   }, [state, hydrated]);
 
 
-  const notify = useCallback((role: Role, title: string, body: string) => {
-    setState((prev) => ({
-      ...prev,
-      notifications: [
-        {
-          id: rid("n"),
-          role,
-          title,
-          body,
-          at: new Date().toISOString(),
-          read: false,
-        },
-        ...prev.notifications,
-      ],
-    }));
-  }, []);
+  const notify = useCallback(
+    (
+      role: Role,
+      title: string,
+      body: string,
+      meta?: { recipientEmail?: string | undefined; recipientUserId?: string | undefined }
+    ) => {
+      notificationService.sendNotification({
+        role,
+        title,
+        body,
+        recipientEmail: meta?.recipientEmail,
+        recipientUserId: meta?.recipientUserId,
+      });
+
+      setState((prev) => ({
+        ...prev,
+        notifications: [
+          {
+            id: rid("n"),
+            role,
+            title,
+            body,
+            at: new Date().toISOString(),
+            read: false,
+          },
+          ...prev.notifications,
+        ],
+      }));
+    },
+    []
+  );
 
   const value = useMemo<Ctx>(
     () => ({
@@ -313,13 +415,15 @@ export function VentureProvider({ children }: { children: ReactNode }) {
       hydrated,
       notify,
       unread: (role) => state.notifications.filter((n) => n.role === role && !n.read).length,
-      markAllRead: (role) =>
+      markAllRead: (role) => {
+        notificationService.markAllRead(role);
         setState((prev) => ({
           ...prev,
           notifications: prev.notifications.map((n) =>
             n.role === role ? { ...n, read: true } : n,
           ),
-        })),
+        }));
+      },
       updateStartup: (id, patch) =>
         setState((prev) => {
           const nextStartups = prev.startups.map((s) => (s.id === id ? { ...s, ...patch } : s));

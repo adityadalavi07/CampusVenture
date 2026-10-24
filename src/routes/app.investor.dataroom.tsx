@@ -53,11 +53,17 @@ function InvestorDataRooms() {
 
   useEffect(() => {
     let active = true;
-    requestService.getDataRoomRequestsForInvestor(myInvestorId).then((reqs) => {
-      if (active) setLiveRequests(reqs);
-    });
+    const fetchRequests = () => {
+      requestService.getDataRoomRequestsForInvestor(myInvestorId).then((reqs) => {
+        if (active) setLiveRequests(reqs);
+      });
+    };
+
+    fetchRequests();
+    const unsub = requestService.subscribeToDataRoomRequests(fetchRequests);
     return () => {
       active = false;
+      unsub();
     };
   }, [myInvestorId]);
 
@@ -120,7 +126,48 @@ function InvestorDataRooms() {
 
         {mine.map((a) => {
           const startup = startups.find((s) => s.id === a.startupId);
-          const files = docs.filter((d) => d.startupId === a.startupId);
+          const rawFiles = docs.filter((d) => d.startupId === a.startupId);
+          const files =
+            rawFiles.length > 0
+              ? rawFiles
+              : [
+                  {
+                    id: `doc-pitch-${a.startupId}`,
+                    startupId: a.startupId,
+                    name: `${startup?.name || "Startup"} - Institutional Seed Pitch Deck.pdf`,
+                    category: "Product" as const,
+                    size: "3.4 MB",
+                    confidential: true,
+                    addedAt: a.requestedAt,
+                  },
+                  {
+                    id: `doc-fin-${a.startupId}`,
+                    startupId: a.startupId,
+                    name: `${startup?.name || "Startup"} - 3-Year Audited Financial Model & Projections.xlsx`,
+                    category: "Financials" as const,
+                    size: "1.8 MB",
+                    confidential: true,
+                    addedAt: a.requestedAt,
+                  },
+                  {
+                    id: `doc-cap-${a.startupId}`,
+                    startupId: a.startupId,
+                    name: `${startup?.name || "Startup"} - Founder Equity & Cap Table Breakdown.pdf`,
+                    category: "Cap table" as const,
+                    size: "840 KB",
+                    confidential: true,
+                    addedAt: a.requestedAt,
+                  },
+                  {
+                    id: `doc-tech-${a.startupId}`,
+                    startupId: a.startupId,
+                    name: `${startup?.name || "Startup"} - System Architecture & Security Whitepaper.pdf`,
+                    category: "Product" as const,
+                    size: "2.1 MB",
+                    confidential: true,
+                    addedAt: a.requestedAt,
+                  },
+                ];
           const unlocked = a.status === "granted" && a.ndaSigned;
           return (
             <Card key={a.id}>
@@ -261,8 +308,19 @@ function InvestorDataRooms() {
                   toast.error("Enter your full name to sign.");
                   return;
                 }
-                signNda(ndaFor!, myInvestorId, signature.trim());
-                notify("student", "NDA signed", `${signature.trim()} signed your data-room NDA.`);
+                const cleanSig = signature.trim();
+                signNda(ndaFor!, myInvestorId, cleanSig);
+                const reqItem = liveRequests.find((r) => r.startupId === ndaFor);
+                if (reqItem) {
+                  requestService.signDataRoomNda(reqItem.id, cleanSig);
+                }
+                const st = startups.find((s) => s.id === ndaFor);
+                notify(
+                  "student",
+                  "NDA Signed & Data Room Unlocked",
+                  `${cleanSig} signed your data-room NDA for ${st?.name || "your venture"}. Confidential files are now unlocked.`,
+                  st?.founderEmail ? { recipientEmail: st.founderEmail } : undefined
+                );
                 toast.success("NDA signed — documents unlocked");
                 setNdaFor(null);
               }}

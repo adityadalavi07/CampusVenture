@@ -133,11 +133,117 @@ export function scoreToGrade(score: number): AIReadinessResult["investorGrade"] 
 
 /** Map score to investor verdict */
 export function scoreToVerdict(score: number): string {
+  if (score <= 15) return "Uninvestable — Incoherent / Nonsense Submission";
   if (score >= 80) return "Investment Ready — High Conviction";
   if (score >= 70) return "Promising — Seed Investable with Refinements";
   if (score >= 55) return "Early Stage — Notable Gaps & Execution Risks";
   if (score >= 40) return "High Risk — Major Deficiencies in Moat/Traction";
   return "Uninvestable in Current State — Pivot or Substantial Overhaul Needed";
+}
+
+/** Check if input text is gibberish, keyboard mash, placeholder or nonsense (minimum 50 words required) */
+export function isGibberishOrNonsense(text: string, minWords = 50): { isNonsense: boolean; wordCount: number; reason?: string } {
+  if (!text || typeof text !== "string") {
+    return { isNonsense: true, wordCount: 0, reason: "Statement is completely empty or missing." };
+  }
+
+  const trimmed = text.trim();
+  const words = trimmed.split(/\s+/).filter(Boolean);
+  const wordCount = words.length;
+
+  if (wordCount < minWords) {
+    return {
+      isNonsense: true,
+      wordCount,
+      reason: `Statement contains only ${wordCount} words (minimum ${minWords} words required for institutional diligence evaluation).`,
+    };
+  }
+
+  const lower = trimmed.toLowerCase();
+
+  // Known placeholder or garbage single/multi-word tokens
+  const junkTokens = new Set([
+    "asdf", "qwer", "qwerty", "zxcv", "test", "testing", "blah", "foo", "bar",
+    "na", "n/a", "none", "nothing", "idk", "xyz", "abc", "demo", "sample",
+    "whatever", "gibberish", "placeholder", "lorem", "ipsum", "filler"
+  ]);
+
+  const cleanWords = words.map((w) => w.toLowerCase().replace(/[^a-z0-9]/g, "")).filter(Boolean);
+  const junkWordCount = cleanWords.filter((w) => junkTokens.has(w)).length;
+  if (cleanWords.length > 0 && junkWordCount / cleanWords.length >= 0.3) {
+    return {
+      isNonsense: true,
+      wordCount,
+      reason: "Contains excessive placeholder or keyboard test words (e.g. asdf, test, foo, bar).",
+    };
+  }
+
+  if (lower.includes("lorem ipsum") || lower.includes("dolor sit amet")) {
+    return {
+      isNonsense: true,
+      wordCount,
+      reason: "Contains Latin placeholder text (Lorem Ipsum).",
+    };
+  }
+
+  // Check for repeated character sequences (e.g. aaaaa, asdfasdf)
+  if (/(.)\1{4,}/i.test(trimmed)) {
+    return {
+      isNonsense: true,
+      wordCount,
+      reason: "Contains repetitive character sequences or keyboard holding.",
+    };
+  }
+
+  // Keyboard row mash words (5+ characters from single keyboard rows without normal vowel flow)
+  const smashRegex = /\b[asdfghjkl]{5,}\b|\b[qwertyuiop]{5,}\b|\b[zxcvbnm]{5,}\b/i;
+  if (smashRegex.test(trimmed)) {
+    return {
+      isNonsense: true,
+      wordCount,
+      reason: "Contains keyboard row mash patterns.",
+    };
+  }
+
+  // Repetition of exact same word over 40% of the sentence
+  const counts = new Map<string, number>();
+  cleanWords.forEach((w) => counts.set(w, (counts.get(w) || 0) + 1));
+  let maxCount = 0;
+  for (const c of counts.values()) {
+    if (c > maxCount) maxCount = c;
+  }
+  if (cleanWords.length >= 4 && maxCount / cleanWords.length >= 0.4) {
+    return {
+      isNonsense: true,
+      wordCount,
+      reason: "Repetitive repetition of the same word without descriptive substance.",
+    };
+  }
+
+  // Letter balance check
+  const alphaChars = trimmed.replace(/[^a-zA-Z]/g, "").toLowerCase();
+  if (alphaChars.length >= 10) {
+    const vowels = alphaChars.replace(/[^aeiouy]/g, "").length;
+    const vowelRatio = vowels / alphaChars.length;
+    if (vowelRatio < 0.15 || vowelRatio > 0.85) {
+      return {
+        isNonsense: true,
+        wordCount,
+        reason: "Unnatural linguistic distribution (lacks proper vowel/consonant balance).",
+      };
+    }
+
+    // Long consonant clusters (e.g. "sdfghjk")
+    if (/[bcdfghjklmnpqrstvwxz]{5,}/i.test(alphaChars)) {
+      return {
+        isNonsense: true,
+        wordCount,
+        reason: "Contains unpronounceable consonant clusters (e.g. keyboard smashes).",
+      };
+    }
+  }
+
+  return { isNonsense: false, wordCount };
 }
 
 function deriveCategoryStatus(score: number): CategoryEvaluation["status"] {
@@ -365,29 +471,41 @@ export function evaluateStartupLocally(
   const tWords = words(startup.traction);
   const mWords = words(startup.businessModel);
 
+  // Check for gibberish / nonsense in core pitch statements
+  const pNonsense = isGibberishOrNonsense(startup.problem);
+  const sNonsense = isGibberishOrNonsense(startup.solution);
+
   // Honesty penalty factor: brutal mode is more rigorous
   const honestyMultiplier = honestyLevel === "brutal" ? 0.88 : honestyLevel === "strict" ? 0.94 : 1.0;
 
   // 1. Problem Clarity (15%)
   let problemScore = 30;
-  if (pWords >= 15) problemScore += 25;
-  if (pWords >= 35) problemScore += 20;
-  if (/\b(cost|hours|waste|delay|loss|inefficiency|expensive|struggle)\b/i.test(startup.problem)) {
-    problemScore += 15;
+  if (pNonsense.isNonsense) {
+    problemScore = 5;
+  } else {
+    if (pWords >= 15) problemScore += 25;
+    if (pWords >= 35) problemScore += 20;
+    if (/\b(cost|hours|waste|delay|loss|inefficiency|expensive|struggle)\b/i.test(startup.problem)) {
+      problemScore += 15;
+    }
+    if (!startup.problem.trim()) problemScore = 5;
+    problemScore = Math.min(95, Math.round(problemScore * honestyMultiplier));
   }
-  if (!startup.problem.trim()) problemScore = 15;
-  problemScore = Math.min(95, Math.round(problemScore * honestyMultiplier));
 
   // 2. Solution Strength (15%)
   let solutionScore = 30;
-  if (sWords >= 15) solutionScore += 20;
-  if (sWords >= 35) solutionScore += 20;
-  if (/\b(adaptive|proprietary|algorithm|patent|hardware|sensor|automated|real-time|deep)\b/i.test(startup.solution)) {
-    solutionScore += 15;
+  if (sNonsense.isNonsense) {
+    solutionScore = 5;
+  } else {
+    if (sWords >= 15) solutionScore += 20;
+    if (sWords >= 35) solutionScore += 20;
+    if (/\b(adaptive|proprietary|algorithm|patent|hardware|sensor|automated|real-time|deep)\b/i.test(startup.solution)) {
+      solutionScore += 15;
+    }
+    if (startup.githubUrl) solutionScore += 10;
+    if (!startup.solution.trim()) solutionScore = 5;
+    solutionScore = Math.min(94, Math.round(solutionScore * honestyMultiplier));
   }
-  if (startup.githubUrl) solutionScore += 10;
-  if (!startup.solution.trim()) solutionScore = 15;
-  solutionScore = Math.min(94, Math.round(solutionScore * honestyMultiplier));
 
   // 3. Market Opportunity (15%)
   let marketScore = 40;
@@ -480,33 +598,41 @@ export function evaluateStartupLocally(
       score: problemScore,
       weight: weightsMap["Problem clarity"] || 15,
       status: deriveCategoryStatus(problemScore),
-      critique:
-        problemScore >= 75
+      critique: pNonsense.isNonsense
+        ? `CRITICAL GAP: Incoherent or placeholder problem statement (${pNonsense.reason || "gibberish detected"}). Founders must state a real-world customer pain point.`
+        : problemScore >= 75
           ? "Well-articulated customer pain point with clear indicators of cost and frequency."
           : problemScore >= 50
             ? "Problem is recognizable but lacks quantitative evidence of economic cost or daily urgency."
             : "Vague, hypothetical problem. Founders have not demonstrated direct customer discovery interviews.",
-      honestFeedback:
-        problemScore >= 75
+      honestFeedback: pNonsense.isNonsense
+        ? "Completely uninvestable problem statement. Investors reject placeholder or gibberish input on sight."
+        : problemScore >= 75
           ? "Credible problem statement. Investors can immediately grasp who suffers from this."
           : "Sounds like a solution in search of a problem. Need hard numbers on how much time or money customers waste.",
-      actionItem: "Interview 15 target users and document their exact annual budget lost to this specific pain.",
+      actionItem: pNonsense.isNonsense
+        ? "Re-write the problem statement completely describing a real user problem with financial and time cost."
+        : "Interview 15 target users and document their exact annual budget lost to this specific pain.",
     },
     "Solution strength": {
       score: solutionScore,
       weight: weightsMap["Solution strength"] || 15,
       status: deriveCategoryStatus(solutionScore),
-      critique:
-        solutionScore >= 75
+      critique: sNonsense.isNonsense
+        ? `CRITICAL GAP: Incoherent or placeholder solution description (${sNonsense.reason || "gibberish detected"}). No tangible product architecture.`
+        : solutionScore >= 75
           ? "Clear value proposition with technical defensibility and clear workflow benefits."
           : solutionScore >= 50
             ? "Functionally viable solution, but risks being viewed as a feature rather than an independent company."
             : "High risk of being an undifferentiated wrapper around commercial LLMs/APIs with low technical depth.",
-      honestFeedback:
-        solutionScore >= 75
+      honestFeedback: sNonsense.isNonsense
+        ? "Incoherent technical product statement. No software or hardware architecture described."
+        : solutionScore >= 75
           ? "Solid product architecture. The workflow differentiation is clear."
           : "Big incumbents could clone this in a sprint. You need a 10x defensible angle.",
-      actionItem: "Specify your proprietary data flywheel or unique technical mechanism in the architecture overview.",
+      actionItem: sNonsense.isNonsense
+        ? "Articulate your actual technical solution, workflow, and core algorithmic mechanism."
+        : "Specify your proprietary data flywheel or unique technical mechanism in the architecture overview.",
     },
     "Market opportunity": {
       score: marketScore,
@@ -725,6 +851,15 @@ export async function runAIReadinessAnalysis(
 ): Promise<AIReadinessResult> {
   const config = { ...getAIConfig(), ...configOverride };
   const honestyLevel = config.honestyLevel || "brutal";
+
+  // Pre-flight check: If problem or solution contains nonsense or is under 50 words, immediately evaluate with penalty
+  const pCheck = isGibberishOrNonsense(startup.problem, 50);
+  const sCheck = isGibberishOrNonsense(startup.solution, 50);
+  if (pCheck.isNonsense || sCheck.isNonsense) {
+    const localResult = evaluateStartupLocally(startup, honestyLevel);
+    saveAssessment(localResult);
+    return localResult;
+  }
 
   // 1. First attempt secure server-side Google Gemini analysis (API key hidden from hackers)
   try {
