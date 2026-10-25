@@ -45,6 +45,7 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { Checkbox } from "@/components/ui/checkbox";
 import { MY_STARTUP_ID, timeAgo, useVenture } from "@/lib/store";
 import { DEMO_STUDENTS } from "@/lib/demo-data";
 import { useAuth } from "@/lib/auth-context";
@@ -247,6 +248,10 @@ function StudentDataRoom() {
   const [grantModalOpen, setGrantModalOpen] = useState(false);
   const [declineModalOpen, setDeclineModalOpen] = useState(false);
   const [revokeModalOpen, setRevokeModalOpen] = useState(false);
+  const [manageDocsModalOpen, setManageDocsModalOpen] = useState(false);
+  const [managingReq, setManagingReq] = useState<DataRoomRequestRecord | null>(null);
+  const [managingDocIds, setManagingDocIds] = useState<string[]>([]);
+  const [selectedDocIdsForGrant, setSelectedDocIdsForGrant] = useState<string[]>([]);
   const [selectedReq, setSelectedReq] = useState<DataRoomRequestRecord | null>(null);
 
   const [durationDays, setDurationDays] = useState(30);
@@ -280,7 +285,41 @@ function StudentDataRoom() {
     if (req.discussionTerms) setDiscussionTerms(req.discussionTerms);
     if (req.nextSteps) setNextSteps(req.nextSteps);
     if (req.accessDurationDays) setDurationDays(req.accessDurationDays);
+    setSelectedDocIdsForGrant(
+      req.permittedDocIds && req.permittedDocIds.length > 0
+        ? req.permittedDocIds
+        : realDocs.map((d) => d.id)
+    );
     setGrantModalOpen(true);
+  };
+
+  const handleOpenManageDocs = (req: DataRoomRequestRecord) => {
+    setManagingReq(req);
+    setManagingDocIds(
+      req.permittedDocIds && req.permittedDocIds.length > 0
+        ? req.permittedDocIds
+        : realDocs.map((d) => d.id)
+    );
+    setManageDocsModalOpen(true);
+  };
+
+  const handleSavePermittedDocs = async () => {
+    if (!managingReq) return;
+    await requestService.updatePermittedDocs(managingReq.id, managingDocIds);
+    setLiveRequests((prev) =>
+      prev.map((r) => (r.id === managingReq.id ? { ...r, permittedDocIds: managingDocIds } : r))
+    );
+    notify(
+      "investor",
+      "Data Room Document Permissions Updated",
+      `${user?.name || "Founder"} updated the authorized documents available to you for ${managingReq.startupName || "Startup"}.`,
+      {
+        recipientEmail: managingReq.investorEmail,
+        recipientUserId: managingReq.investorId,
+      }
+    );
+    toast.success(`Updated document permissions for ${managingReq.investorName || "Investor"}.`);
+    setManageDocsModalOpen(false);
   };
 
   const openDeclineDialog = (req: DataRoomRequestRecord) => {
@@ -304,6 +343,7 @@ function StudentDataRoom() {
       nextSteps,
       durationDays,
       ndaRequired: true,
+      permittedDocIds: selectedDocIdsForGrant,
     });
     setAccessStatus(reqId, "granted");
     setLiveRequests((prev) =>
@@ -315,6 +355,7 @@ function StudentDataRoom() {
               discussionTerms,
               nextSteps,
               accessDurationDays: durationDays,
+              permittedDocIds: selectedDocIdsForGrant,
               ndaStatus: "required",
             }
           : r
@@ -329,7 +370,7 @@ function StudentDataRoom() {
         recipientUserId: selectedReq.investorId,
       }
     );
-    toast.success(`Access granted to ${invName}! Next steps projected for ${durationDays} days.`);
+    toast.success(`Access granted to ${invName}! ${selectedDocIdsForGrant.length} documents permitted.`);
     setGrantModalOpen(false);
   };
 
@@ -813,14 +854,25 @@ function StudentDataRoom() {
                           )}
 
                           {isGranted && (
-                            <Button
-                              size="sm"
-                              variant="outline"
-                              className="h-8 text-xs text-muted-foreground hover:text-destructive"
-                              onClick={() => openRevokeDialog(req)}
-                            >
-                              Revoke Access
-                            </Button>
+                            <div className="flex items-center gap-1.5">
+                              <Button
+                                size="sm"
+                                variant="outline"
+                                className="h-8 text-xs gap-1"
+                                onClick={() => handleOpenManageDocs(req)}
+                              >
+                                <FileText className="size-3.5" />
+                                Permitted Docs ({req.permittedDocIds ? `${req.permittedDocIds.length}/${realDocs.length}` : `${realDocs.length}/${realDocs.length}`})
+                              </Button>
+                              <Button
+                                size="sm"
+                                variant="outline"
+                                className="h-8 text-xs text-muted-foreground hover:text-destructive"
+                                onClick={() => openRevokeDialog(req)}
+                              >
+                                Revoke Access
+                              </Button>
+                            </div>
                           )}
 
                           {(isRejected || isRevoked) && (
@@ -894,95 +946,176 @@ function StudentDataRoom() {
 
           {/* TAB 3: CONNECTIONS */}
           <TabsContent value="connections" className="space-y-4">
+            {/* 1. INCOMING PENDING CONNECTION REQUESTS */}
             <Card>
               <CardHeader>
-                <CardTitle className="text-base">Investor Connection Requests ({connRequests.length})</CardTitle>
-                <CardDescription>
-                  Investors requesting direct introductions and venture discussions.
-                </CardDescription>
+                <div className="flex items-center justify-between">
+                  <div>
+                    <CardTitle className="text-base flex items-center gap-2">
+                      <Clock className="size-4 text-amber-500" />
+                      Incoming Requests ({connRequests.filter((c) => c.status === "pending").length})
+                    </CardTitle>
+                    <CardDescription>
+                      Pending connection requests requiring your review and introduction decision.
+                    </CardDescription>
+                  </div>
+                  <Badge variant="outline" className="border-amber-500/30 text-amber-600 dark:text-amber-400 bg-amber-500/10">
+                    Awaiting Action
+                  </Badge>
+                </div>
               </CardHeader>
               <CardContent className="space-y-3">
-                {connRequests.length === 0 && (
+                {connRequests.filter((c) => c.status === "pending").length === 0 ? (
                   <div className="rounded-lg border border-dashed p-8 text-center text-sm text-muted-foreground space-y-1">
-                    <p className="font-medium text-foreground">No connection requests yet.</p>
-                    <p className="text-xs">When investors request connections with your startup, you can review and accept them here.</p>
+                    <p className="font-medium text-foreground">No pending connection requests.</p>
+                    <p className="text-xs">When new investors request connections with your startup, you can review and accept them here.</p>
                   </div>
-                )}
-                {connRequests.map((conn) => {
-                  const isAccepted = conn.status === "accepted";
-                  const isRejected = conn.status === "rejected";
-                  const isPending = conn.status === "pending";
-
-                  return (
-                    <div key={conn.id} className="rounded-lg border p-4 space-y-3 bg-card">
-                      <div className="flex flex-wrap items-center justify-between gap-3">
-                        <div>
-                          <div className="flex items-center gap-2">
-                            <p className="text-sm font-semibold">{conn.senderName || "Investor Partner"}</p>
-                            {conn.senderOrg && (
-                              <Badge variant="outline" className="text-[11px] gap-1">
-                                <Building className="size-3" />
-                                {conn.senderOrg}
-                              </Badge>
-                            )}
-                          </div>
-                          <p className="text-xs text-muted-foreground mt-0.5">
-                            Sent {timeAgo(conn.createdAt)} {conn.senderEmail ? `· ${conn.senderEmail}` : ""}
-                          </p>
-                        </div>
-
-                        <div className="flex items-center gap-2">
-                          <Badge
-                            variant={isAccepted ? "default" : isRejected ? "destructive" : "outline"}
-                            className="text-xs capitalize"
-                          >
-                            {conn.status}
-                          </Badge>
-
-                          {isPending && (
-                            <div className="flex items-center gap-1.5">
-                              <Button
-                                size="sm"
-                                className="h-8 gap-1 bg-primary text-primary-foreground"
-                                onClick={() => openConnAcceptDialog(conn)}
-                              >
-                                <Check className="size-3.5" />
-                                Accept &amp; Discuss
-                              </Button>
-                              <Button
-                                size="sm"
-                                variant="outline"
-                                className="h-8 gap-1 text-destructive hover:bg-destructive/10"
-                                onClick={() => openConnDeclineDialog(conn)}
-                              >
-                                <X className="size-3.5" />
-                                Decline
-                              </Button>
+                ) : (
+                  connRequests
+                    .filter((c) => c.status === "pending")
+                    .map((conn) => (
+                      <div key={conn.id} className="rounded-lg border p-4 space-y-3 bg-card border-amber-500/20">
+                        <div className="flex flex-wrap items-center justify-between gap-3">
+                          <div>
+                            <div className="flex items-center gap-2">
+                              <p className="text-sm font-semibold">{conn.senderName || "Investor Partner"}</p>
+                              {conn.senderOrg && (
+                                <Badge variant="outline" className="text-[11px] gap-1">
+                                  <Building className="size-3" />
+                                  {conn.senderOrg}
+                                </Badge>
+                              )}
                             </div>
-                          )}
+                            <p className="text-xs text-muted-foreground mt-0.5">
+                              Sent {timeAgo(conn.createdAt)} {conn.senderEmail ? `· ${conn.senderEmail}` : ""}
+                            </p>
+                          </div>
 
-                          {isAccepted && (
-                            <Button size="sm" variant="outline" asChild className="h-8 text-xs gap-1.5">
-                              <Link to="/app/student/messages">
-                                <MessageSquare className="size-3.5" />
-                                Open Chat
-                              </Link>
+                          <div className="flex items-center gap-1.5">
+                            <Button
+                              size="sm"
+                              className="h-8 gap-1 bg-primary text-primary-foreground"
+                              onClick={() => openConnAcceptDialog(conn)}
+                            >
+                              <Check className="size-3.5" />
+                              Accept &amp; Discuss
                             </Button>
-                          )}
+                            <Button
+                              size="sm"
+                              variant="outline"
+                              className="h-8 gap-1 text-destructive hover:bg-destructive/10"
+                              onClick={() => openConnDeclineDialog(conn)}
+                            >
+                              <X className="size-3.5" />
+                              Decline
+                            </Button>
+                          </div>
                         </div>
-                      </div>
 
-                      {conn.message && (
-                        <div className="rounded-md border bg-muted/40 p-3 text-xs text-muted-foreground">
-                          <span className="font-semibold text-foreground">Message from Investor: </span>
-                          "{conn.message}"
-                        </div>
-                      )}
-                    </div>
-                  );
-                })}
+                        {conn.message && (
+                          <div className="rounded-md border bg-muted/40 p-3 text-xs text-muted-foreground">
+                            <span className="font-semibold text-foreground">Investor Introduction Note: </span>
+                            "{conn.message}"
+                          </div>
+                        )}
+                      </div>
+                    ))
+                )}
               </CardContent>
             </Card>
+
+            {/* 2. ACTIVE CONNECTED PARTNERS */}
+            <Card>
+              <CardHeader>
+                <div className="flex items-center justify-between">
+                  <div>
+                    <CardTitle className="text-base flex items-center gap-2">
+                      <CheckCircle2 className="size-4 text-emerald-600" />
+                      Active Connections ({connRequests.filter((c) => c.status === "accepted").length})
+                    </CardTitle>
+                    <CardDescription>
+                      Approved investor partners. Chat is unlocked directly between you two.
+                    </CardDescription>
+                  </div>
+                  <Badge variant="outline" className="border-emerald-500/30 text-emerald-600 dark:text-emerald-400 bg-emerald-500/10">
+                    Connected
+                  </Badge>
+                </div>
+              </CardHeader>
+              <CardContent className="space-y-3">
+                {connRequests.filter((c) => c.status === "accepted").length === 0 ? (
+                  <div className="rounded-lg border border-dashed p-6 text-center text-xs text-muted-foreground">
+                    No active connections yet. Accept an incoming request above to connect and start direct messaging.
+                  </div>
+                ) : (
+                  connRequests
+                    .filter((c) => c.status === "accepted")
+                    .map((conn) => (
+                      <div key={conn.id} className="rounded-lg border p-4 space-y-3 bg-card border-emerald-500/20">
+                        <div className="flex flex-wrap items-center justify-between gap-3">
+                          <div>
+                            <div className="flex items-center gap-2">
+                              <p className="text-sm font-semibold">{conn.senderName || "Investor Partner"}</p>
+                              {conn.senderOrg && (
+                                <Badge variant="outline" className="text-[11px] gap-1">
+                                  <Building className="size-3" />
+                                  {conn.senderOrg}
+                                </Badge>
+                              )}
+                              <Badge variant="default" className="bg-emerald-600 text-white text-[10px]">
+                                Active Partner
+                              </Badge>
+                            </div>
+                            <p className="text-xs text-muted-foreground mt-0.5">
+                              Connected {timeAgo(conn.updatedAt || conn.createdAt)} {conn.senderEmail ? `· ${conn.senderEmail}` : ""}
+                            </p>
+                          </div>
+
+                          <Button size="sm" variant="outline" asChild className="h-8 text-xs gap-1.5 border-primary/40 hover:bg-primary/5">
+                            <Link to={`/app/student/messages?investorId=${conn.senderId}&startupId=${conn.startupId || currentStartupId}`}>
+                              <MessageSquare className="size-3.5 text-primary" />
+                              Open Chat
+                            </Link>
+                          </Button>
+                        </div>
+
+                        {conn.discussionTerms && (
+                          <div className="rounded-md border border-emerald-500/20 bg-emerald-500/5 p-2.5 text-xs text-muted-foreground">
+                            <span className="font-semibold text-emerald-700 dark:text-emerald-400">Discussion Scope: </span>
+                            {conn.discussionTerms}
+                          </div>
+                        )}
+                      </div>
+                    ))
+                )}
+              </CardContent>
+            </Card>
+
+            {/* 3. DECLINED REQUESTS HISTORY */}
+            {connRequests.some((c) => c.status === "rejected") && (
+              <Card>
+                <CardHeader>
+                  <CardTitle className="text-sm font-medium text-muted-foreground">
+                    Declined Connection Requests ({connRequests.filter((c) => c.status === "rejected").length})
+                  </CardTitle>
+                </CardHeader>
+                <CardContent className="space-y-2">
+                  {connRequests
+                    .filter((c) => c.status === "rejected")
+                    .map((conn) => (
+                      <div key={conn.id} className="rounded-lg border p-3 flex flex-wrap items-center justify-between gap-2 text-xs text-muted-foreground">
+                        <div>
+                          <p className="font-medium text-foreground">{conn.senderName || "Investor Partner"} {conn.senderOrg ? `(${conn.senderOrg})` : ""}</p>
+                          <p className="text-[11px]">Reason: {conn.declineReason || "Focusing on other priorities."}</p>
+                        </div>
+                        <Badge variant="outline" className="text-[10px] text-destructive border-destructive/30">
+                          Declined
+                        </Badge>
+                      </div>
+                    ))}
+                </CardContent>
+              </Card>
+            )}
           </TabsContent>
 
           {/* TAB 4: INQUIRIES */}
@@ -1120,6 +1253,54 @@ function StudentDataRoom() {
                 className="text-xs font-mono"
               />
             </div>
+
+            {/* Granular Document Selection */}
+            <div className="space-y-1.5 pt-1 border-t">
+              <div className="flex items-center justify-between">
+                <Label className="text-xs font-semibold">Authorised Documents Scope</Label>
+                <button
+                  type="button"
+                  className="text-[11px] font-medium text-primary hover:underline"
+                  onClick={() => {
+                    if (selectedDocIdsForGrant.length === realDocs.length) {
+                      setSelectedDocIdsForGrant([]);
+                    } else {
+                      setSelectedDocIdsForGrant(realDocs.map((d) => d.id));
+                    }
+                  }}
+                >
+                  {selectedDocIdsForGrant.length === realDocs.length ? "Deselect All" : "Select All"}
+                </button>
+              </div>
+              <div className="max-h-36 overflow-y-auto rounded border p-2 space-y-1.5 bg-muted/20 [scrollbar-width:thin]">
+                {realDocs.length === 0 ? (
+                  <p className="text-[11px] text-muted-foreground">No documents uploaded yet in Data Room.</p>
+                ) : (
+                  realDocs.map((doc) => {
+                    const isChecked = selectedDocIdsForGrant.includes(doc.id);
+                    return (
+                      <label key={doc.id} className="flex items-center gap-2 text-xs cursor-pointer hover:bg-muted/50 p-1 rounded">
+                        <Checkbox
+                          checked={isChecked}
+                          onCheckedChange={(c) => {
+                            if (c) {
+                              setSelectedDocIdsForGrant((prev) => [...prev, doc.id]);
+                            } else {
+                              setSelectedDocIdsForGrant((prev) => prev.filter((id) => id !== doc.id));
+                            }
+                          }}
+                        />
+                        <span className="font-medium truncate flex-1">{doc.name}</span>
+                        <Badge variant="outline" className="text-[10px] py-0 px-1">{doc.category}</Badge>
+                      </label>
+                    );
+                  })
+                )}
+              </div>
+              <p className="text-[10px] text-muted-foreground">
+                Only selected files will be unlocked for this investor. You can change this at any time.
+              </p>
+            </div>
           </div>
 
           <DialogFooter className="gap-2 sm:gap-0">
@@ -1129,6 +1310,76 @@ function StudentDataRoom() {
             <Button size="sm" className="bg-emerald-600 hover:bg-emerald-700 text-white" onClick={handleConfirmGrant}>
               <Check className="size-3.5 mr-1.5" />
               Confirm Grant &amp; Share Terms
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* DIALOG 1.5: MANAGE DOCUMENT PERMISSIONS FOR APPROVED INVESTOR */}
+      <Dialog open={manageDocsModalOpen} onOpenChange={setManageDocsModalOpen}>
+        <DialogContent className="max-w-md">
+          <DialogHeader>
+            <DialogTitle>Manage Authorised Documents</DialogTitle>
+            <DialogDescription>
+              Control which uploaded documents are accessible to {managingReq?.investorName || "Investor"}.
+            </DialogDescription>
+          </DialogHeader>
+
+          <div className="space-y-3 py-2 text-xs">
+            <div className="flex items-center justify-between">
+              <span className="font-medium text-foreground">Authorised Document Access</span>
+              <button
+                type="button"
+                className="text-[11px] font-medium text-primary hover:underline"
+                onClick={() => {
+                  if (managingDocIds.length === realDocs.length) {
+                    setManagingDocIds([]);
+                  } else {
+                    setManagingDocIds(realDocs.map((d) => d.id));
+                  }
+                }}
+              >
+                {managingDocIds.length === realDocs.length ? "Deselect All" : "Select All"}
+              </button>
+            </div>
+
+            <div className="max-h-48 overflow-y-auto rounded border p-2 space-y-1.5 bg-muted/20 [scrollbar-width:thin]">
+              {realDocs.length === 0 ? (
+                <p className="text-[11px] text-muted-foreground">No documents uploaded yet.</p>
+              ) : (
+                realDocs.map((doc) => {
+                  const isChecked = managingDocIds.includes(doc.id);
+                  return (
+                    <label key={doc.id} className="flex items-center gap-2 text-xs cursor-pointer hover:bg-muted/50 p-1.5 rounded">
+                      <Checkbox
+                        checked={isChecked}
+                        onCheckedChange={(c) => {
+                          if (c) {
+                            setManagingDocIds((prev) => [...prev, doc.id]);
+                          } else {
+                            setManagingDocIds((prev) => prev.filter((id) => id !== doc.id));
+                          }
+                        }}
+                      />
+                      <span className="font-medium truncate flex-1">{doc.name}</span>
+                      <Badge variant="outline" className="text-[10px] py-0 px-1">{doc.category}</Badge>
+                    </label>
+                  );
+                })
+              )}
+            </div>
+            <p className="text-[10px] text-muted-foreground">
+              Unchecked files are strictly restricted. The investor will immediately lose access to unselected documents.
+            </p>
+          </div>
+
+          <DialogFooter className="gap-2 sm:gap-0">
+            <Button variant="ghost" size="sm" onClick={() => setManageDocsModalOpen(false)}>
+              Cancel
+            </Button>
+            <Button size="sm" className="bg-primary text-primary-foreground" onClick={handleSavePermittedDocs}>
+              <Check className="size-3.5 mr-1.5" />
+              Save Document Scope ({managingDocIds.length})
             </Button>
           </DialogFooter>
         </DialogContent>

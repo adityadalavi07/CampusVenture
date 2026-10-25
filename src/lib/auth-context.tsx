@@ -90,8 +90,8 @@ interface AuthContextType {
   dbStatus: ConnectionStatus | null;
   isAuthModalOpen: boolean;
   authModalDefaultRole: Role | undefined;
-  authModalDefaultMode: "signin" | "register" | undefined;
-  openAuthModal: (defaultRole?: Role, defaultMode?: "signin" | "register") => void;
+  authModalDefaultMode: "signin" | "register" | "forgot" | undefined;
+  openAuthModal: (defaultRole?: Role, defaultMode?: "signin" | "register" | "forgot") => void;
   closeAuthModal: () => void;
   signIn: (email: string, password: string, role?: Role) => Promise<{ success: boolean; error?: string; user?: AuthUser }>;
   signUp: (data: {
@@ -145,12 +145,13 @@ function extractUserData(
   const rawRole = storedRole || (meta["role"] as Role | undefined);
   const userEmail = (supabaseUser.email || "").toLowerCase().trim();
   
-  // NEVER silently default to investor. If role is explicitly stored, use it;
-  // otherwise, fall back strictly to university check without granting investor privileges to arbitrary emails.
+  // Authoritative role resolution:
+  // If role is explicitly stored in profile/metadata, use it.
+  // Otherwise, fall back strictly: university emails default to student, non-university emails default to investor.
   const role: Role =
     rawRole === "student" || rawRole === "investor" || rawRole === "university"
       ? rawRole
-      : (userEmail && isUniversityEmail(userEmail) ? "student" : "student");
+      : (userEmail && isUniversityEmail(userEmail) ? "student" : "investor");
 
   const rawName = meta["name"] || meta["full_name"];
   const name =
@@ -191,10 +192,11 @@ function getOAuthPendingRole(): Role | null {
     if (fromSession && (fromSession === "student" || fromSession === "investor" || fromSession === "university")) {
       return fromSession;
     }
+    // Only infer from pathname if inside a role portal and no explicit OAuth role was set
     const path = window.location.pathname;
-    if (path.includes("/app/student")) return "student";
-    if (path.includes("/app/university")) return "university";
-    if (path.includes("/app/investor")) return "investor";
+    if (path.startsWith("/app/investor")) return "investor";
+    if (path.startsWith("/app/university")) return "university";
+    if (path.startsWith("/app/student")) return "student";
   } catch {
     /* ignore */
   }
@@ -267,13 +269,33 @@ async function validateAndEnforceInstitutionalRole(
     return { allowed: false, error: errMsg };
   }
 
-  const rawRole = dbProfile?.role || localAccount?.role || (meta["role"] as Role | undefined);
-  const intendedRole: Role =
-    (rawRole && (rawRole === "student" || rawRole === "university" || rawRole === "investor")
-      ? rawRole
-      : pendingRole) || (isUniversityEmail(userEmail) ? "student" : "investor");
+  // The backend role is authoritative. Never grant permissions based only on the role selected in the frontend.
+  const verifiedBackendRole = dbProfile?.role || localAccount?.role;
+  let intendedRole: Role =
+    (verifiedBackendRole && (verifiedBackendRole === "student" || verifiedBackendRole === "university" || verifiedBackendRole === "investor"))
+      ? verifiedBackendRole
+      : (pendingRole || (meta["role"] as Role | undefined) || (isUniversityEmail(userEmail) ? "student" : "investor"));
 
-  // STRICT RULE: Student and University accounts strictly require an official university email
+  // AUTO-HEAL: If an account has a personal email (like @gmail.com) but was previously marked as student,
+  // it CANNOT legally be a student under CampusVenture's institutional verification rules.
+  // Personal emails are strictly for Investors. Auto-correct to investor and update database profile.
+  if (!isUniversityEmail(userEmail) && intendedRole !== "investor") {
+    intendedRole = "investor";
+    if (dbProfile?.id) {
+      try {
+        (supabase as any)
+          .from("profiles")
+          .update({ role: "investor", org: dbProfile.org || "Angel / Venture Investor" })
+          .eq("id", dbProfile.id)
+          .then(() => {});
+      } catch {
+        /* ignore */
+      }
+    }
+  }
+
+  // STRICT RULE: Students require an approved university email and verified university association.
+  // Investors follow investor registration and verification rules and are NEVER blocked by student-only university email checks.
   if (intendedRole === "student" || intendedRole === "university") {
     if (!isUniversityEmail(userEmail)) {
       clearOAuthPendingRole();
@@ -289,13 +311,13 @@ async function validateAndEnforceInstitutionalRole(
       }
 
       const roleLabels: Record<Role, string> = {
-        student: "Student",
+        student: "Student Founder",
         university: "University",
         investor: "Investor",
       };
-      const errMsg = `Institutional Access Denied: "${userEmail}" is a personal email address. ${roleLabels[intendedRole]} accounts strictly require an official university email (@sguk.ac.in, .ac.in, .edu). Personal emails are not permitted.`;
+      const errMsg = `Institutional Access Denied: "${userEmail}" is a personal email address. ${roleLabels[intendedRole]} accounts strictly require an official university email (@sguk.ac.in, .ac.in, .edu). Personal emails are permitted for registered Investors.`;
 
-      toast.error(errMsg, { duration: 10000 });
+      toast.error(errMsg, { id: "institutional-access-denied", duration: 8000 });
       return { allowed: false, error: errMsg };
     }
   }
@@ -376,10 +398,10 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const [dbStatus, setDbStatus] = useState<ConnectionStatus | null>(null);
   const [isAuthModalOpen, setIsAuthModalOpen] = useState(false);
   const [authModalDefaultRole, setAuthModalDefaultRole] = useState<Role | undefined>(undefined);
-  const [authModalDefaultMode, setAuthModalDefaultMode] = useState<"signin" | "register" | undefined>(undefined);
+  const [authModalDefaultMode, setAuthModalDefaultMode] = useState<"signin" | "register" | "forgot" | undefined>(undefined);
   const [registeredUsers, setRegisteredUsers] = useState<RegisteredAccount[]>([]);
 
-  const openAuthModal = useCallback((defaultRole?: Role, defaultMode: "signin" | "register" = "signin") => {
+  const openAuthModal = useCallback((defaultRole?: Role, defaultMode: "signin" | "register" | "forgot" = "signin") => {
     setAuthModalDefaultRole(defaultRole);
     setAuthModalDefaultMode(defaultMode);
     setIsAuthModalOpen(true);
@@ -464,6 +486,32 @@ export function AuthProvider({ children }: { children: ReactNode }) {
             }
           }
         }
+
+        // 3. Hydrate registered users list from database public.profiles
+        try {
+          const { data: dbProfiles } = await (supabase as any)
+            .from("profiles")
+            .select("id, email, name, role, org, created_at");
+          if (dbProfiles && Array.isArray(dbProfiles) && dbProfiles.length > 0 && mounted) {
+            const mapped = dbProfiles.map((p: any) => ({
+              id: p.id,
+              email: p.email,
+              name: p.name || p.email.split("@")[0],
+              role: p.role,
+              org: p.org || "CampusVenture",
+              createdAt: p.created_at || new Date().toISOString(),
+            }));
+            const combined = [...loadedAccounts];
+            for (const m of mapped) {
+              if (!combined.some((c) => c.email.toLowerCase() === m.email.toLowerCase())) {
+                combined.push(m);
+              }
+            }
+            setRegisteredUsers(combined);
+          }
+        } catch {
+          /* ignore */
+        }
       } catch (err) {
         console.error("Auth init error:", err);
       } finally {
@@ -530,11 +578,11 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       if ((expectedRole === "student" || expectedRole === "university") && !isUniversityEmail(cleanEmail)) {
         return {
           success: false,
-          error: `Institutional Access Denied: ${cleanEmail} is a personal email. ${roleLabels[expectedRole]} accounts strictly require an official university email (@sguk.ac.in, .ac.in, .edu). Personal emails are not permitted.`,
+          error: `Institutional Access Denied: ${cleanEmail} is a personal email. ${roleLabels[expectedRole]} accounts strictly require an official university email (@sguk.ac.in, .ac.in, .edu). Personal emails are permitted for Investors.`,
         };
       }
 
-      // 2. Check database public.profiles to verify account exists and fetch stored server-side role
+      // 2. Fetch public.profiles to verify stored server-side role
       let dbProfile: any = null;
       try {
         const { data, error } = await (supabase as any)
@@ -556,37 +604,10 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         (acc) => acc.email.toLowerCase() === cleanEmail
       );
 
-      // If account does not exist in central DB or local registered registry:
-      if (!dbProfile && !localAccount) {
-        return {
-          success: false,
-          error: "This account has not been registered yet. Please register first.",
-        };
-      }
-
-      const actualRole: Role = (dbProfile?.role || localAccount?.role) as Role;
-
-      // 3. Prevent role spoofing: a user's selected role must never override the server-stored role
-      if (expectedRole && actualRole !== expectedRole) {
-        return {
-          success: false,
-          error: `This account is registered as ${roleLabels[actualRole]}, not ${roleLabels[expectedRole]}. Please sign in through the ${roleLabels[actualRole]} portal.`,
-        };
-      }
-
-      // 4. Verify institutional domain for Student and University roles
-      if ((actualRole === "student" || actualRole === "university") && !isUniversityEmail(cleanEmail)) {
-        return {
-          success: false,
-          error: `Institutional Access Denied: ${cleanEmail} is a personal email. ${roleLabels[actualRole]} accounts strictly require an official university email (@sguk.ac.in, .ac.in, .edu). Personal emails are not permitted.`,
-        };
-      }
-
-      // 5. Authenticate credentials
+      // 3. Authenticate credentials via Supabase Auth and/or Local Store
       let authenticated = false;
-      let authenticatedId = dbProfile?.id || localAccount?.id || generateUUID();
-      let userName = dbProfile?.name || localAccount?.name || cleanEmail.split("@")[0];
-      let userOrg = dbProfile?.org || localAccount?.org || ROLE_PROFILES[actualRole]?.org || "CampusVenture";
+      let authenticatedUser: any = null;
+      let authErrorMessage = "";
 
       // Try local password match first
       if (localAccount && localAccount.password === password) {
@@ -602,21 +623,89 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
         if (!authError && authData.user) {
           authenticated = true;
-          authenticatedId = authData.user.id;
-          const meta = authData.user.user_metadata || {};
-          if (meta["name"]) userName = String(meta["name"]);
-          if (meta["org"]) userOrg = String(meta["org"]);
-        } else if (!authenticated) {
-          // If neither local nor Supabase password matched
+          authenticatedUser = authData.user;
+        } else if (authError) {
+          authErrorMessage = authError.message;
+        }
+      } catch (err: any) {
+        authErrorMessage = err?.message || "";
+      }
+
+      // If user is completely unregistered in central DB, Supabase Auth, and local registry:
+      if (!authenticated && !dbProfile && !localAccount && !authenticatedUser) {
+        if (authErrorMessage && authErrorMessage.toLowerCase().includes("invalid login credentials")) {
           return {
             success: false,
-            error: "Incorrect password. Please verify your credentials or reset your password.",
+            error: "Incorrect password or account not found. Please register first or reset your password.",
           };
         }
-      } catch (err) {
-        if (!authenticated) {
-          const message = err instanceof Error ? err.message : "Authentication error.";
-          return { success: false, error: message };
+        return {
+          success: false,
+          error: "This account has not been registered yet. Please register first.",
+        };
+      }
+
+      // If account exists but password failed:
+      if (!authenticated) {
+        return {
+          success: false,
+          error: "Incorrect password. Please verify your credentials or reset your password.",
+        };
+      }
+
+      // 4. Determine authoritative role with auto-healing for personal emails
+      let actualRole: Role = (dbProfile?.role || localAccount?.role || authenticatedUser?.user_metadata?.role || (isUniversityEmail(cleanEmail) ? "student" : "investor")) as Role;
+
+      // Auto-heal: If an account has a personal email (like @gmail.com) but was previously marked as student,
+      // it CANNOT be a student under institutional rules. Personal emails are strictly for Investors.
+      if (!isUniversityEmail(cleanEmail) && actualRole !== "investor") {
+        actualRole = "investor";
+        if (dbProfile?.id) {
+          try {
+            await (supabase as any)
+              .from("profiles")
+              .update({ role: "investor", org: dbProfile.org || "Angel / Venture Investor" })
+              .eq("id", dbProfile.id);
+          } catch {
+            /* ignore */
+          }
+        }
+      }
+
+      // 5. Prevent role spoofing: a user's selected role must match their authoritative role
+      if (expectedRole && actualRole !== expectedRole) {
+        return {
+          success: false,
+          error: `This account is registered as ${roleLabels[actualRole]}, not ${roleLabels[expectedRole]}. Please sign in through the ${roleLabels[actualRole]} portal.`,
+        };
+      }
+
+      // 6. Verify institutional domain for Student and University roles
+      if ((actualRole === "student" || actualRole === "university") && !isUniversityEmail(cleanEmail)) {
+        return {
+          success: false,
+          error: `Institutional Access Denied: ${cleanEmail} is a personal email. ${roleLabels[actualRole]} accounts strictly require an official university email (@sguk.ac.in, .ac.in, .edu). Personal emails are permitted for Investors.`,
+        };
+      }
+
+      // 7. Build authenticated user
+      let authenticatedId = dbProfile?.id || authenticatedUser?.id || localAccount?.id || generateUUID();
+      let userName = dbProfile?.name || authenticatedUser?.user_metadata?.name || localAccount?.name || cleanEmail.split("@")[0];
+      let userOrg = dbProfile?.org || authenticatedUser?.user_metadata?.org || localAccount?.org || ROLE_PROFILES[actualRole]?.org || "CampusVenture";
+
+      // Sync to public.profiles table if missing
+      if (!dbProfile) {
+        try {
+          await (supabase as any).from("profiles").upsert({
+            id: authenticatedId,
+            email: cleanEmail,
+            name: userName,
+            role: actualRole,
+            org: userOrg,
+            updated_at: new Date().toISOString(),
+          });
+        } catch {
+          /* ignore */
         }
       }
 

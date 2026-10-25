@@ -1,6 +1,6 @@
 import { createFileRoute } from "@tanstack/react-router";
 import { useEffect, useState } from "react";
-import { Building2, Eye, HandCoins } from "lucide-react";
+import { Building2, Eye, HandCoins, ShieldCheck, FileCheck2, ShieldAlert, CheckCircle2, Clock } from "lucide-react";
 import { AppShell } from "@/components/app-shell";
 import { Badge } from "@/components/ui/badge";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
@@ -17,7 +17,12 @@ import { timeAgo, useVenture } from "@/lib/store";
 import { useAuth } from "@/lib/auth-context";
 import { isSameUniversity } from "@/lib/university-matcher";
 import { investorService } from "@/services/investorService";
-import { requestService, type DataRoomRequestRecord, type ConnectionRequestRecord } from "@/services/requestService";
+import {
+  requestService,
+  type DataRoomRequestRecord,
+  type ConnectionRequestRecord,
+  type DataRoomAuditLogRecord,
+} from "@/services/requestService";
 
 const TITLE = "Investor Interest — CampusVenture University";
 const DESCRIPTION =
@@ -47,6 +52,7 @@ function InvestorInterest() {
   const [investors, setInvestors] = useState<Investor[]>([]);
   const [liveDrRequests, setLiveDrRequests] = useState<DataRoomRequestRecord[]>([]);
   const [liveConnRequests, setLiveConnRequests] = useState<ConnectionRequestRecord[]>([]);
+  const [auditLogs, setAuditLogs] = useState<DataRoomAuditLogRecord[]>([]);
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
@@ -59,6 +65,7 @@ function InvestorInterest() {
         setInvestors(invList);
         setLiveDrRequests(activity.dataRoomRequests);
         setLiveConnRequests(activity.connectionRequests);
+        setAuditLogs(activity.auditLogs);
         setLoading(false);
       }
     });
@@ -220,6 +227,111 @@ function InvestorInterest() {
                 </Badge>
               </div>
             ))}
+          </CardContent>
+        </Card>
+
+        {/* INSTITUTIONAL DILIGENCE & RULES ACCEPTANCE AUDIT VIEW */}
+        <Card>
+          <CardHeader>
+            <div className="flex flex-wrap items-center justify-between gap-3">
+              <div>
+                <div className="flex items-center gap-2">
+                  <ShieldCheck className="size-5 text-emerald-600" />
+                  <CardTitle className="text-base">Diligence &amp; Rules Acceptance Audit Log</CardTitle>
+                </div>
+                <CardDescription>
+                  Verified records of investor diligence requests, founder decisions, and acknowledged platform compliance rules (v1.0-cv-reg) for {myUniversity || "your campus"}.
+                </CardDescription>
+              </div>
+              <Badge variant="outline" className="text-xs border-emerald-500/30 text-emerald-700 dark:text-emerald-300">
+                Oversight Only · Confidential Files Restricted
+              </Badge>
+            </div>
+          </CardHeader>
+          <CardContent className="space-y-3">
+            {liveDrRequests.length === 0 ? (
+              <div className="rounded-lg border border-dashed p-8 text-center text-xs text-muted-foreground space-y-1">
+                <p className="font-medium text-foreground">No Data Room Diligence Requests Recorded Yet</p>
+                <p>When accredited investors request Data Room access for startups from your institution, diligence status and compliance acknowledgments will be tracked here.</p>
+              </div>
+            ) : (
+              <div className="rounded-md border overflow-x-auto">
+                <Table>
+                  <TableHeader>
+                    <TableRow>
+                      <TableHead>Startup &amp; Founder</TableHead>
+                      <TableHead>Investor</TableHead>
+                      <TableHead>Decision / Status</TableHead>
+                      <TableHead>Rules Version</TableHead>
+                      <TableHead>Rules Accepted</TableHead>
+                      <TableHead className="text-right">Decision Timestamp</TableHead>
+                    </TableRow>
+                  </TableHeader>
+                  <TableBody>
+                    {liveDrRequests.map((req) => {
+                      const st = campusStartups.find((s) => s.id === req.startupId);
+                      return (
+                        <TableRow key={req.id}>
+                          <TableCell>
+                            <p className="font-medium text-sm">{req.startupName || st?.name || "Campus Venture"}</p>
+                            <p className="text-xs text-muted-foreground">Founder: {req.founderEmail || st?.founder || "Verified Student"}</p>
+                          </TableCell>
+                          <TableCell>
+                            <p className="font-medium text-sm">{req.investorName || "Investor"}</p>
+                            <p className="text-xs text-muted-foreground">{req.investorOrg || req.investorEmail || "Accredited Entity"}</p>
+                          </TableCell>
+                          <TableCell>
+                            <Badge
+                              variant={
+                                req.status === "granted"
+                                  ? "default"
+                                  : req.status === "rejected" || req.status === "revoked"
+                                  ? "destructive"
+                                  : "outline"
+                              }
+                              className="text-xs capitalize"
+                            >
+                              {req.status}
+                            </Badge>
+                            {req.status === "granted" && (
+                              <p className="text-[11px] text-muted-foreground mt-0.5">
+                                {Array.isArray(req.permittedDocIds) && req.permittedDocIds.length > 0
+                                  ? `${req.permittedDocIds.length} docs permitted`
+                                  : "All docs permitted"}
+                              </p>
+                            )}
+                          </TableCell>
+                          <TableCell>
+                            {req.rulesAccepted ? (
+                              <Badge variant="outline" className="bg-emerald-500/10 text-emerald-700 dark:text-emerald-300 border-emerald-500/20 text-xs">
+                                {req.rulesVersion || "v1.0-cv-reg"}
+                              </Badge>
+                            ) : (
+                              <span className="text-xs text-muted-foreground">Pending Opening</span>
+                            )}
+                          </TableCell>
+                          <TableCell>
+                            {req.rulesAccepted && req.rulesAcceptedAt ? (
+                              <span className="text-xs text-muted-foreground">
+                                {new Date(req.rulesAcceptedAt).toLocaleString()}
+                              </span>
+                            ) : (
+                              <span className="text-xs text-muted-foreground">—</span>
+                            )}
+                          </TableCell>
+                          <TableCell className="text-right text-xs text-muted-foreground">
+                            {req.updatedAt ? new Date(req.updatedAt).toLocaleString() : timeAgo(req.createdAt)}
+                          </TableCell>
+                        </TableRow>
+                      );
+                    })}
+                  </TableBody>
+                </Table>
+              </div>
+            )}
+            <p className="text-[11px] text-muted-foreground pt-1 italic">
+              Notice: Under platform privacy rules, university incubators monitor institutional diligence interactions, compliance status, and regulatory execution. Proprietary file payloads, cap table details, and IP downloads remain private to the founder and approved investor.
+            </p>
           </CardContent>
         </Card>
       </div>

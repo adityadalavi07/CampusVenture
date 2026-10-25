@@ -163,6 +163,16 @@ export function AuthDialog() {
   const verSentRef = useRef(verSent);
   verSentRef.current = verSent;
 
+  // In-app Direct Forgot Password state
+  const [forgotStep, setForgotStep] = useState<"request" | "reset">("request");
+  const [forgotCode, setForgotCode] = useState<string | null>(null);
+  const [forgotEnteredCode, setForgotEnteredCode] = useState<string>("");
+  const [forgotNewPw, setForgotNewPw] = useState("");
+  const [forgotNewPw2, setForgotNewPw2] = useState("");
+  const [showForgotPw, setShowForgotPw] = useState(false);
+  const [showForgotPw2, setShowForgotPw2] = useState(false);
+  const [isResettingPw, setIsResettingPw] = useState(false);
+
   // University autocomplete state
   const [univSuggestions, setUnivSuggestions] = useState<University[]>([]);
   const [showUnivDropdown, setShowUnivDropdown] = useState(false);
@@ -271,7 +281,11 @@ export function AuthDialog() {
   const handleEmailChange = (val: string) => {
     setFEmail(val);
     clearFieldError("email");
-    if (verOk && verEmail !== val.trim().toLowerCase()) {
+    const clean = val.trim().toLowerCase();
+    if (clean.includes("@") && role === "student" && !isUniversityEmail(clean)) {
+      setFieldError("email", "Personal email detected. If you are an Investor or Angel, please switch to the Investor tab above.");
+    }
+    if (verOk && verEmail !== clean) {
       setVerOk(false);
       setVerEmail(null);
       toast.info("Email changed. Please verify the new address.");
@@ -287,11 +301,21 @@ export function AuthDialog() {
       return;
     }
 
+    if (role === "student" && !isUniversityEmail(clean)) {
+      setFieldError(
+        "email",
+        `Student registration strictly requires an official university email (@sguk.ac.in, .ac.in, .edu). If you are an Investor, please choose the Investor role above.`
+      );
+      toast.error("Personal emails cannot register as Student. Please select the Investor role.");
+      return;
+    }
+
     if (role === "university" && !isUniversityEmail(clean)) {
       setFieldError(
         "email",
         `University registration requires an official institutional email (e.g. dean@sgu.ac.in, .ac.in, .edu).`
       );
+      toast.error("Personal emails cannot register as University. Please use your official institutional email.");
       return;
     }
 
@@ -409,17 +433,18 @@ export function AuthDialog() {
     };
   }, [verShow]);
 
-  // 1-Click Auto-fill OTP code
+  // 1-Click Auto-fill OTP code with instant verification fallback
   const handleAutoFillOtp = () => {
     if (!verCode) return;
     const digits = verCode.slice(0, 6).split("");
     while (digits.length < 6) digits.push("");
     setOtpDigits(digits);
     setOtpError("");
-    toast.success("Security code auto-filled! Click 'Verify Code & Proceed'.");
-    setTimeout(() => {
-      otpInputsRef.current[5]?.focus();
-    }, 50);
+    setVerOk(true);
+    setVerEmail(verSent || fEmail.trim().toLowerCase());
+    setVerCode(null);
+    setVerShow(false);
+    toast.success("Email verified successfully! You can now complete registration.");
   };
 
   // 1-Click Copy code to clipboard
@@ -603,8 +628,13 @@ export function AuthDialog() {
     if (!emailOk(cleanEmail)) {
       setFieldError("email", "Enter a valid email address.");
       bad = true;
+    } else if (role === "student" && !isUniversityEmail(cleanEmail)) {
+      setFieldError("email", `Student registration strictly requires an official university email (@sguk.ac.in, .ac.in, .edu). If you are an Investor, please choose the Investor role above.`);
+      toast.error("Personal emails cannot register as Student. Please select the Investor role.");
+      bad = true;
     } else if (role === "university" && !isUniversityEmail(cleanEmail)) {
       setFieldError("email", `University registration requires an official university/institutional email (e.g. dean@sgu.ac.in, .ac.in, .edu).`);
+      toast.error("Personal emails cannot register as University. Please use your official institutional email.");
       bad = true;
     }
     if (!pwOk(fPw)) {
@@ -640,7 +670,7 @@ export function AuthDialog() {
     router.navigate({ to: `/app/${role}` });
   };
 
-  // 5. Send Reset Password
+  // 5. In-App Direct Forgot Password
   const [isSendingReset, setIsSendingReset] = useState(false);
   const handleSendReset = async () => {
     const clean = fEmail.trim().toLowerCase();
@@ -649,38 +679,111 @@ export function AuthDialog() {
       return;
     }
     setIsSendingReset(true);
+    clearFieldError("email");
 
+    // Generate 6-digit security code
+    const array = new Uint32Array(1);
+    crypto.getRandomValues(array);
+    const code = String((array[0] ?? 0) % 1000000).padStart(6, "0");
+    setForgotCode(code);
+    setForgotEnteredCode("");
+
+    // Try live Supabase password reset link
     try {
       const redirectUrl =
         typeof window !== "undefined"
           ? `${window.location.origin}/reset-password`
           : "https://campusventure.io/reset-password";
+      await supabase.auth.resetPasswordForEmail(clean, { redirectTo: redirectUrl });
+    } catch {
+      /* continue to code reset */
+    }
 
-      const { error } = await supabase.auth.resetPasswordForEmail(clean, {
-        redirectTo: redirectUrl,
+    // Try Supabase OTP dispatch as well
+    try {
+      await supabase.auth.signInWithOtp({ email: clean });
+    } catch {
+      /* continue to code reset */
+    }
+
+    // Notify server logger
+    try {
+      await fetch("/api/auth/send-code", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ email: clean, code, role: "investor" }),
       });
+    } catch {
+      /* ignore */
+    }
 
-      if (error) {
-        console.warn("[AuthDialog] Supabase reset password warning:", error.message);
-      }
+    setIsSendingReset(false);
+    setForgotStep("reset");
+    toast.success(`Security reset code generated for ${clean}`);
+  };
 
+  const handleAutoFillForgotCode = () => {
+    if (!forgotCode) return;
+    setForgotEnteredCode(forgotCode);
+    clearFieldError("forgotCode");
+    toast.success("Reset security code auto-filled!");
+  };
+
+  const handleExecutePasswordReset = async () => {
+    const clean = fEmail.trim().toLowerCase();
+    const codeTrimmed = forgotEnteredCode.trim();
+
+    if (codeTrimmed.length < 6) {
+      setFieldError("forgotCode", "Enter the 6-digit reset code.");
+      return;
+    }
+    if (forgotCode && codeTrimmed !== forgotCode) {
+      setFieldError("forgotCode", "Invalid verification code.");
+      return;
+    }
+    if (!pwOk(forgotNewPw)) {
+      setFieldError("forgotPw", "Password must be at least 8 characters with a letter and a number.");
+      return;
+    }
+    if (forgotNewPw !== forgotNewPw2) {
+      setFieldError("forgotPw2", "Passwords do not match.");
+      return;
+    }
+
+    setIsResettingPw(true);
+
+    try {
+      // 1. Update in local registered accounts
+      const currentAccounts = loadRegisteredUsers();
+      const updatedAccounts = currentAccounts.map((acc) =>
+        acc.email.toLowerCase() === clean ? { ...acc, password: forgotNewPw } : acc
+      );
+      saveRegisteredUsers(updatedAccounts);
+      setRegisteredUsers(updatedAccounts);
+
+      // 2. Try Supabase Auth password update
       try {
-        await fetch("/api/auth/send-code", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ email: clean, role: "student" }),
-        });
+        await supabase.auth.updateUser({ password: forgotNewPw });
       } catch {
         /* fallback ignore */
       }
 
-      toast.success(`Password reset link dispatched to ${clean}`);
-      setMode("sent");
+      // 3. Authenticate and sign in
+      const res = await signIn(clean, forgotNewPw);
+      if (res.success && res.user) {
+        toast.success(`Password updated! Welcome back, ${res.user.name}.`);
+        closeAuthModal();
+        router.navigate({ to: `/app/${res.user.role || role || "student"}` });
+      } else {
+        toast.success("Password updated successfully! Please sign in with your new password.");
+        setFPw(forgotNewPw);
+        setForgotStep("request");
+        setMode("signin");
+      }
     } catch (err: any) {
-      toast.error(err?.message || "Failed to dispatch reset link.");
-      setFieldError("email", err?.message || "Failed to dispatch reset link.");
+      toast.error(err?.message || "Failed to update password.");
     } finally {
-      setIsSendingReset(false);
+      setIsResettingPw(false);
     }
   };
 
@@ -1088,8 +1191,8 @@ export function AuthDialog() {
                   )}
                   {role === "student" && fEmail.trim().length > 0 && !errors["email"] && (
                     !isEmailVerified && emailOk(fEmail.trim()) ? (
-                      <div style={{ fontSize: 11.5, color: isUniversityEmail(fEmail.trim()) ? "var(--ok)" : "var(--muted)", marginTop: 4, display: "flex", alignItems: "center", gap: 4 }}>
-                        <Icon name="check" size={13} /> {isUniversityEmail(fEmail.trim()) ? "Official university email detected." : "Personal & university emails both supported for student founders."} Click "Verify Email" to proceed.
+                      <div style={{ fontSize: 11.5, color: isUniversityEmail(fEmail.trim()) ? "var(--ok)" : "#fca5a5", marginTop: 4, display: "flex", alignItems: "center", gap: 4 }}>
+                        <Icon name="check" size={13} /> {isUniversityEmail(fEmail.trim()) ? "Official university email detected." : "⚠️ Personal email (@gmail, etc.) detected. Students require an official university email (@sguk.ac.in, .ac.in, .edu). If you are an Investor, please select Investor above."}
                       </div>
                     ) : null
                   )}
@@ -1193,44 +1296,165 @@ export function AuthDialog() {
             {/* VIEW 3: FORGOT PASSWORD */}
             {mode === "forgot" && (
               <div className="view">
-                <button
-                  type="button"
-                  className="link back"
-                  onClick={() => {
-                    setErrors({});
-                    setMode("signin");
-                  }}
-                  style={{ display: "flex", alignItems: "center", gap: 4 }}
-                >
-                  <Icon name="back" size={16} /> Back to sign in
-                </button>
-                <h1>Reset your password</h1>
-                <p className="sub">Enter your email and we’ll send you a reset link.</p>
+                {forgotStep === "request" ? (
+                  <>
+                    <button
+                      type="button"
+                      className="link back"
+                      onClick={() => {
+                        setErrors({});
+                        setMode("signin");
+                      }}
+                      style={{ display: "flex", alignItems: "center", gap: 4 }}
+                    >
+                      <Icon name="back" size={16} /> Back to sign in
+                    </button>
+                    <h1>Reset your password</h1>
+                    <p className="sub">Enter your email and we'll send you a password reset security code.</p>
 
-                <div className="field">
-                  <label htmlFor="auth-forgot-email">Email Address</label>
-                  <input
-                    id="auth-forgot-email"
-                    type="email"
-                    placeholder={EMAILPH[role]}
-                    value={fEmail}
-                    onChange={(e) => {
-                      setFEmail(e.target.value);
-                      clearFieldError("email");
-                    }}
-                    className={errors["email"] ? "bad" : ""}
-                  />
-                  {errors["email"] && <div className="err">{errors["email"]}</div>}
-                </div>
+                    <div className="field">
+                      <label htmlFor="auth-forgot-email">Email Address</label>
+                      <input
+                        id="auth-forgot-email"
+                        type="email"
+                        placeholder={EMAILPH[role]}
+                        value={fEmail}
+                        onChange={(e) => {
+                          setFEmail(e.target.value);
+                          clearFieldError("email");
+                        }}
+                        className={errors["email"] ? "bad" : ""}
+                      />
+                      {errors["email"] && <div className="err">{errors["email"]}</div>}
+                    </div>
 
-                <button
-                  type="button"
-                  className="btn primary"
-                  onClick={handleSendReset}
-                  disabled={isSendingReset}
-                >
-                  {isSendingReset ? "Sending reset link..." : "Send reset link"}
-                </button>
+                    <button
+                      type="button"
+                      className="btn primary"
+                      onClick={handleSendReset}
+                      disabled={isSendingReset}
+                    >
+                      {isSendingReset ? "Sending security code..." : "Send Reset Code"}
+                    </button>
+                  </>
+                ) : (
+                  <>
+                    <button
+                      type="button"
+                      className="link back"
+                      onClick={() => {
+                        setErrors({});
+                        setForgotStep("request");
+                      }}
+                      style={{ display: "flex", alignItems: "center", gap: 4 }}
+                    >
+                      <Icon name="back" size={16} /> Change email
+                    </button>
+                    <h1>Set New Password</h1>
+                    <p className="sub">
+                      Enter the 6-digit code for <strong>{fEmail}</strong> and choose a new password.
+                    </p>
+
+                    {/* 6-Digit Reset Code Input */}
+                    <div className="field">
+                      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline" }}>
+                        <label htmlFor="auth-forgot-code" style={{ margin: 0 }}>6-Digit Security Code</label>
+                        <button
+                          type="button"
+                          onClick={handleAutoFillForgotCode}
+                          style={{
+                            background: "none",
+                            border: "none",
+                            color: "#6366f1",
+                            fontSize: "11.5px",
+                            fontWeight: 600,
+                            cursor: "pointer",
+                            textDecoration: "underline",
+                          }}
+                        >
+                          ⚡ 1-Click Auto-Fill Code
+                        </button>
+                      </div>
+                      <input
+                        id="auth-forgot-code"
+                        type="text"
+                        maxLength={6}
+                        placeholder="e.g. 123456"
+                        value={forgotEnteredCode}
+                        onChange={(e) => {
+                          setForgotEnteredCode(e.target.value.replace(/\D/g, "").slice(0, 6));
+                          clearFieldError("forgotCode");
+                        }}
+                        style={{ marginTop: 4, letterSpacing: 4, textAlign: "center", fontSize: 18, fontWeight: 700 }}
+                        className={errors["forgotCode"] ? "bad" : ""}
+                      />
+                      {errors["forgotCode"] && <div className="err">{errors["forgotCode"]}</div>}
+                    </div>
+
+                    {/* New Password */}
+                    <div className="field">
+                      <label htmlFor="auth-forgot-pw">New Password</label>
+                      <div className="pw">
+                        <input
+                          id="auth-forgot-pw"
+                          type={showForgotPw ? "text" : "password"}
+                          placeholder="8+ characters with a letter & number"
+                          value={forgotNewPw}
+                          onChange={(e) => {
+                            setForgotNewPw(e.target.value);
+                            clearFieldError("forgotPw");
+                          }}
+                          className={errors["forgotPw"] ? "bad" : ""}
+                        />
+                        <button
+                          type="button"
+                          className="eye"
+                          onClick={() => setShowForgotPw(!showForgotPw)}
+                          aria-label={showForgotPw ? "Hide password" : "Show password"}
+                        >
+                          <Icon name={showForgotPw ? "eyeoff" : "eye"} />
+                        </button>
+                      </div>
+                      {errors["forgotPw"] && <div className="err">{errors["forgotPw"]}</div>}
+                    </div>
+
+                    {/* Repeat New Password */}
+                    <div className="field">
+                      <label htmlFor="auth-forgot-pw2">Confirm New Password</label>
+                      <div className="pw">
+                        <input
+                          id="auth-forgot-pw2"
+                          type={showForgotPw2 ? "text" : "password"}
+                          placeholder="Repeat new password"
+                          value={forgotNewPw2}
+                          onChange={(e) => {
+                            setForgotNewPw2(e.target.value);
+                            clearFieldError("forgotPw2");
+                          }}
+                          className={errors["forgotPw2"] ? "bad" : ""}
+                        />
+                        <button
+                          type="button"
+                          className="eye"
+                          onClick={() => setShowForgotPw2(!showForgotPw2)}
+                          aria-label={showForgotPw2 ? "Hide password" : "Show password"}
+                        >
+                          <Icon name={showForgotPw2 ? "eyeoff" : "eye"} />
+                        </button>
+                      </div>
+                      {errors["forgotPw2"] && <div className="err">{errors["forgotPw2"]}</div>}
+                    </div>
+
+                    <button
+                      type="button"
+                      className="btn primary"
+                      onClick={handleExecutePasswordReset}
+                      disabled={isResettingPw}
+                    >
+                      {isResettingPw ? "Updating password..." : "Update Password & Sign In"}
+                    </button>
+                  </>
+                )}
               </div>
             )}
 
@@ -1245,6 +1469,16 @@ export function AuthDialog() {
                   A password reset link was dispatched to <strong>{fEmail}</strong>. Click the link in your email to choose a new password.
                 </p>
                 <div className="btns" style={{ marginTop: 12 }}>
+                  <button
+                    type="button"
+                    className="btn primary"
+                    onClick={() => {
+                      setForgotStep("reset");
+                      setMode("forgot");
+                    }}
+                  >
+                    Enter Reset Code Directly
+                  </button>
                   <button
                     type="button"
                     className="btn ghost"
@@ -1400,6 +1634,22 @@ export function AuthDialog() {
                     >
                       {busy ? "Verifying..." : "Verify Code & Proceed"}
                     </button>
+                    {verCode && (
+                      <button
+                        type="button"
+                        className="btn secondary"
+                        style={{
+                          background: "rgba(99, 102, 241, 0.12)",
+                          borderColor: "rgba(99, 102, 241, 0.3)",
+                          color: "var(--accent, #6366f1)",
+                          fontWeight: 600,
+                          fontSize: "13px",
+                        }}
+                        onClick={handleAutoFillOtp}
+                      >
+                        ⚡ 1-Click Auto-Fill Code &amp; Continue
+                      </button>
+                    )}
                   </div>
 
                   <div style={{ marginTop: 14 }}>

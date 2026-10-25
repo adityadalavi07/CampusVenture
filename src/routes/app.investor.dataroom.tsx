@@ -144,6 +144,15 @@ function InvestorDataRooms() {
   // Category filter state for accessible tab
   const [selectedCategory, setSelectedCategory] = useState<string>("All");
 
+  // Platform Rules & Regulations (v1.0-cv-reg) intercept state
+  const [rulesModalRequest, setRulesModalRequest] = useState<{
+    req: DataRoomRequestRecord;
+    action: "preview" | "download";
+    doc: DataRoomDocRecord;
+  } | null>(null);
+  const [rulesConfirmed, setRulesConfirmed] = useState(false);
+  const [isSavingRules, setIsSavingRules] = useState(false);
+
   useEffect(() => {
     let active = true;
     const fetchRequests = async () => {
@@ -295,6 +304,80 @@ function InvestorDataRooms() {
     }
   };
 
+  // Intercept document viewing/downloading until platform rules (v1.0-cv-reg) are acknowledged
+  const onInitiatePreview = (doc: DataRoomDocRecord, req: DataRoomRequestRecord) => {
+    if (!req.rulesAccepted || req.rulesVersion !== "v1.0-cv-reg") {
+      setRulesModalRequest({ req, action: "preview", doc });
+      setRulesConfirmed(false);
+      return;
+    }
+    handlePreview(doc, req.startupId);
+  };
+
+  const onInitiateDownload = (doc: DataRoomDocRecord, req: DataRoomRequestRecord) => {
+    if (!req.rulesAccepted || req.rulesVersion !== "v1.0-cv-reg") {
+      setRulesModalRequest({ req, action: "download", doc });
+      setRulesConfirmed(false);
+      return;
+    }
+    handleDownload(doc, req.startupId, req.startupName, req.founderEmail);
+  };
+
+  // Record rules acceptance permanently in Supabase and audit ledger
+  const handleAcceptRulesAndProceed = async () => {
+    if (!rulesModalRequest || !rulesConfirmed) return;
+    setIsSavingRules(true);
+    const { req, action, doc } = rulesModalRequest;
+    const startup = startups.find((s) => s.id === req.startupId);
+
+    try {
+      const res = await requestService.recordRulesAcceptance({
+        requestId: req.id,
+        investorId: user?.id || myInvestorId,
+        investorName,
+        investorEmail: user?.email || "",
+        founderId: req.founderId,
+        founderEmail: req.founderEmail,
+        startupId: req.startupId,
+        rulesVersion: "v1.0-cv-reg",
+        universityId: startup?.universityId,
+        universityName: startup?.university || req.universityName,
+      });
+
+      if (!res.success) {
+        toast.error(res.error || "Failed to record compliance acceptance.");
+        setIsSavingRules(false);
+        return;
+      }
+
+      setLiveRequests((prev) =>
+        prev.map((r) =>
+          r.id === req.id
+            ? {
+                ...r,
+                rulesAccepted: true,
+                rulesVersion: "v1.0-cv-reg",
+                rulesAcceptedAt: new Date().toISOString(),
+              }
+            : r
+        )
+      );
+
+      toast.success("Platform Rules & Regulations (v1.0-cv-reg) acknowledged.");
+      setRulesModalRequest(null);
+      setIsSavingRules(false);
+
+      if (action === "preview") {
+        handlePreview(doc, req.startupId);
+      } else {
+        handleDownload(doc, req.startupId, req.startupName, req.founderEmail);
+      }
+    } catch (err: any) {
+      toast.error(err?.message || "Failed to record compliance acceptance.");
+      setIsSavingRules(false);
+    }
+  };
+
   // Open NDA modal
   const openNdaModal = (req: DataRoomRequestRecord) => {
     setNdaRequest(req);
@@ -436,10 +519,16 @@ function InvestorDataRooms() {
               accessibleRequests.map((req) => {
                 const startup = startups.find((s) => s.id === req.startupId);
                 const allFiles = startupDocsMap[req.startupId] || [];
+                // Filter strictly to founder-permitted documents if permittedDocIds is specified
+                const hasRestrictedScope = Array.isArray(req.permittedDocIds) && req.permittedDocIds.length > 0;
+                const authorizedFiles = hasRestrictedScope
+                  ? allFiles.filter((f) => req.permittedDocIds!.includes(f.id))
+                  : allFiles;
+
                 const filteredFiles =
                   selectedCategory === "All"
-                    ? allFiles
-                    : allFiles.filter((f) => f.category === selectedCategory);
+                    ? authorizedFiles
+                    : authorizedFiles.filter((f) => f.category === selectedCategory);
 
                 const daysRemaining = req.expiresAt
                   ? Math.max(0, Math.ceil((new Date(req.expiresAt).getTime() - Date.now()) / (1000 * 60 * 60 * 24)))
@@ -474,6 +563,12 @@ function InvestorDataRooms() {
                             <ShieldCheck className="size-3 mr-1" />
                             NDA Signed {req.ndaVersion ? `(${req.ndaVersion})` : ""}
                           </Badge>
+                          {req.rulesAccepted && (
+                            <Badge variant="outline" className="bg-emerald-500/10 text-emerald-700 dark:text-emerald-300 border-emerald-500/20 text-xs">
+                              <CheckCircle2 className="size-3 mr-1" />
+                              Rules Verified ({req.rulesVersion || "v1.0-cv-reg"})
+                            </Badge>
+                          )}
                           {daysRemaining !== null && (
                             <Badge variant="outline" className="text-xs border-amber-500/30 text-amber-700 dark:text-amber-300">
                               <Clock className="size-3 mr-1" />
@@ -529,10 +624,17 @@ function InvestorDataRooms() {
                       {/* CONFIDENTIAL DOCUMENTS SECTION */}
                       <div className="space-y-3">
                         <div className="flex flex-wrap items-center justify-between gap-2 border-b pb-2">
-                          <h4 className="font-medium text-sm flex items-center gap-2">
-                            <FileCheck2 className="size-4 text-emerald-600" />
-                            Confidential Documents ({allFiles.length})
-                          </h4>
+                          <div className="flex items-center gap-2">
+                            <h4 className="font-medium text-sm flex items-center gap-2">
+                              <FileCheck2 className="size-4 text-emerald-600" />
+                              Confidential Documents ({authorizedFiles.length})
+                            </h4>
+                            {hasRestrictedScope && (
+                              <Badge variant="secondary" className="text-[10px]">
+                                Custom Scope
+                              </Badge>
+                            )}
+                          </div>
 
                           {/* Category Filter Pills */}
                           <div className="flex flex-wrap items-center gap-1 text-xs">
@@ -542,10 +644,10 @@ function InvestorDataRooms() {
                               className="h-6 px-2 text-xs"
                               onClick={() => setSelectedCategory("All")}
                             >
-                              All ({allFiles.length})
+                              All ({authorizedFiles.length})
                             </Button>
                             {CATEGORIES.map((cat) => {
-                              const count = allFiles.filter((f) => f.category === cat).length;
+                              const count = authorizedFiles.filter((f) => f.category === cat).length;
                               if (count === 0) return null;
                               return (
                                 <Button
@@ -562,13 +664,22 @@ function InvestorDataRooms() {
                           </div>
                         </div>
 
-                        {allFiles.length === 0 ? (
-                          <div className="rounded-lg border border-dashed p-6 text-center text-xs text-muted-foreground space-y-1">
-                            <p className="font-medium text-foreground">No documents uploaded yet by founder.</p>
-                            <p>
-                              The founder has not uploaded materials for this venture yet. You can message the founder directly to request specific diligence files.
-                            </p>
-                          </div>
+                        {authorizedFiles.length === 0 ? (
+                          allFiles.length > 0 ? (
+                            <div className="rounded-lg border border-amber-500/20 bg-amber-500/5 p-6 text-center text-xs space-y-1">
+                              <p className="font-semibold text-amber-800 dark:text-amber-300">Access Scope Restricted by Founder</p>
+                              <p className="text-muted-foreground max-w-md mx-auto">
+                                The founder has granted your Data Room access, but has scoped specific documents. Please contact the founder via chat to authorize file permissions.
+                              </p>
+                            </div>
+                          ) : (
+                            <div className="rounded-lg border border-dashed p-6 text-center text-xs text-muted-foreground space-y-1">
+                              <p className="font-medium text-foreground">No documents uploaded yet by founder.</p>
+                              <p>
+                                The founder has not uploaded materials for this venture yet. You can message the founder directly to request specific diligence files.
+                              </p>
+                            </div>
+                          )
                         ) : filteredFiles.length === 0 ? (
                           <div className="rounded-lg border border-dashed p-6 text-center text-xs text-muted-foreground">
                             No documents in the "{selectedCategory}" category.
@@ -602,7 +713,7 @@ function InvestorDataRooms() {
                                     size="sm"
                                     variant="outline"
                                     className="h-8 gap-1.5 text-xs"
-                                    onClick={() => handlePreview(doc, req.startupId)}
+                                    onClick={() => onInitiatePreview(doc, req)}
                                   >
                                     <Eye className="size-3.5" />
                                     Preview
@@ -611,9 +722,7 @@ function InvestorDataRooms() {
                                     size="sm"
                                     variant="default"
                                     className="h-8 gap-1.5 text-xs"
-                                    onClick={() =>
-                                      handleDownload(doc, req.startupId, req.startupName, req.founderEmail)
-                                    }
+                                    onClick={() => onInitiateDownload(doc, req)}
                                   >
                                     <Download className="size-3.5" />
                                     Download
@@ -1083,6 +1192,134 @@ function InvestorDataRooms() {
                 <Download className="size-4" /> Download File
               </Button>
             )}
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* ==================================================================== */}
+      {/* PLATFORM RULES & REGULATIONS (v1.0-cv-reg) INTERCEPT MODAL          */}
+      {/* ==================================================================== */}
+      <Dialog
+        open={rulesModalRequest !== null}
+        onOpenChange={(open) => {
+          if (!open) {
+            setRulesModalRequest(null);
+            setRulesConfirmed(false);
+          }
+        }}
+      >
+        <DialogContent className="max-w-2xl max-h-[90vh] flex flex-col">
+          <DialogHeader className="space-y-1">
+            <div className="flex items-center gap-2">
+              <ShieldAlert className="size-5 text-amber-600" />
+              <DialogTitle className="text-lg">
+                Platform Rules &amp; Regulations (v1.0-cv-reg)
+              </DialogTitle>
+            </div>
+            <DialogDescription className="text-xs">
+              Before opening or downloading confidential documents for{" "}
+              <strong className="text-foreground">
+                {rulesModalRequest?.req.startupName || "this venture"}
+              </strong>
+              , you must acknowledge your responsibilities, confidentiality covenants, and consequences of violations.
+            </DialogDescription>
+          </DialogHeader>
+
+          <ScrollArea className="flex-1 max-h-[340px] rounded-lg border bg-muted/30 p-4 text-xs text-muted-foreground space-y-3 [scrollbar-width:thin]">
+            <div className="font-semibold text-foreground text-sm border-b pb-2">
+              CAMPUSVENTURE DILIGENCE COMPLIANCE &amp; CONFIDENTIALITY COVENANT (v1.0-cv-reg)
+            </div>
+
+            <p>
+              This Compliance Agreement governs the review and handling of proprietary student venture materials accessed via
+              CampusVenture by accredited investors, institutional partners, and angel syndicates.
+            </p>
+
+            <div className="space-y-1.5">
+              <p className="font-semibold text-foreground">1. Bona Fide Diligence &amp; Permitted Use</p>
+              <p>
+                All documents, cap tables, software blueprints, financial projections, and customer traction data
+                are disclosed strictly and exclusively for evaluating a potential venture investment, financing, or strategic
+                partnership with the founder. No competitive benchmarking, product copying, or exploratory reverse-engineering
+                is permitted.
+              </p>
+            </div>
+
+            <div className="space-y-1.5">
+              <p className="font-semibold text-foreground">2. Absolute Confidentiality &amp; Non-Circumvention</p>
+              <p>
+                You covenant to maintain all materials in strict confidence. You shall not duplicate, publish, distribute,
+                transmit, or disclose any confidential materials to unauthorized third parties or competitive ventures without
+                prior explicit written approval from the student founder.
+              </p>
+            </div>
+
+            <div className="space-y-1.5">
+              <p className="font-semibold text-foreground">3. Student Founder Protection &amp; Academic IP Integrity</p>
+              <p>
+                CampusVenture maintains zero tolerance for idea appropriation, unauthorized IP transfer, or predatory deal
+                structures. You acknowledge that venture assets may be incubated under university guidelines and are protected
+                by applicable academic and trade secret protections.
+              </p>
+            </div>
+
+            <div className="space-y-1.5">
+              <p className="font-semibold text-foreground">4. Diligence Oversight &amp; Audit Logging</p>
+              <p>
+                Your authenticated investor identity, acceptance timestamp, rules version, and document access events are
+                permanently recorded in a tamper-resistant audit ledger accessible to the venture's authorized university incubation
+                office for institutional diligence oversight.
+              </p>
+            </div>
+
+            <div className="space-y-1.5">
+              <p className="font-semibold text-foreground">5. Consequences of Violations</p>
+              <p>
+                Any breach of these rules will result in immediate termination of platform privileges, revocation of accredited
+                status, formal reporting to university administration and partner investment networks, and civil liability
+                for damages and equitable injunctive relief under applicable commercial laws.
+              </p>
+            </div>
+          </ScrollArea>
+
+          <div className="space-y-3 pt-2">
+            <div className="flex items-start gap-2.5 rounded-lg border bg-muted/40 p-3">
+              <Checkbox
+                id="rules-agree"
+                checked={rulesConfirmed}
+                onCheckedChange={(c) => setRulesConfirmed(Boolean(c))}
+                className="mt-0.5"
+              />
+              <Label
+                htmlFor="rules-agree"
+                className="text-xs font-normal leading-relaxed text-foreground cursor-pointer"
+              >
+                I confirm that I am the named investor (<strong>{investorName}</strong>), that I am accessing this Data Room solely for evaluation of a bona fide investment or partnership with this venture, and that I accept the responsibilities, confidentiality covenants, and consequences of violations under <strong>v1.0-cv-reg</strong>.
+              </Label>
+            </div>
+          </div>
+
+          <DialogFooter className="gap-2 pt-2 border-t">
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={() => {
+                setRulesModalRequest(null);
+                setRulesConfirmed(false);
+              }}
+              disabled={isSavingRules}
+            >
+              Decline &amp; Cancel
+            </Button>
+            <Button
+              size="sm"
+              onClick={handleAcceptRulesAndProceed}
+              disabled={!rulesConfirmed || isSavingRules}
+              className="gap-1.5"
+            >
+              <ShieldCheck className="size-4" />
+              {isSavingRules ? "Recording Acceptance..." : "Accept Rules & Proceed"}
+            </Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>

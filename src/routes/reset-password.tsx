@@ -33,6 +33,7 @@ function ResetPasswordPage() {
   const [isLoading, setIsLoading] = useState(false);
   const [isSuccess, setIsSuccess] = useState(false);
   const [errorMsg, setErrorMsg] = useState("");
+  const [hasSession, setHasSession] = useState<boolean>(true);
 
   // Check if recovery token or hash fragment is present
   useEffect(() => {
@@ -44,6 +45,13 @@ function ResetPasswordPage() {
         setErrorMsg(desc || "This password reset link has expired or is invalid. Please request a new one.");
       }
     }
+
+    supabase.auth.getSession().then(({ data }) => {
+      const hasTokenInHash = typeof window !== "undefined" && window.location.hash.includes("access_token");
+      if (!data.session && !hasTokenInHash) {
+        setHasSession(false);
+      }
+    });
   }, []);
 
   const handleResetPassword = async (e: React.FormEvent) => {
@@ -132,8 +140,33 @@ function ResetPasswordPage() {
             ) : (
               <form onSubmit={handleResetPassword} className="space-y-4">
                 {errorMsg && (
-                  <div className="rounded-lg border border-destructive/20 bg-destructive/10 p-3 text-xs text-destructive">
-                    {errorMsg}
+                  <div className="rounded-lg border border-destructive/20 bg-destructive/10 p-3 text-xs text-destructive space-y-2">
+                    <p>{errorMsg}</p>
+                    <Button
+                      type="button"
+                      variant="outline"
+                      size="sm"
+                      className="w-full text-xs font-semibold"
+                      onClick={() => openAuthModal(undefined, "forgot")}
+                    >
+                      🔑 Try In-App Password Reset
+                    </Button>
+                  </div>
+                )}
+
+                {!hasSession && !errorMsg && (
+                  <div className="rounded-lg border border-amber-500/20 bg-amber-500/10 p-3 text-xs text-amber-800 dark:text-amber-300 space-y-2">
+                    <p className="font-medium">No active recovery link session detected.</p>
+                    <p className="text-[11px] opacity-90">If you navigated here directly or your link expired, use the fast in-app reset with a 6-digit security code:</p>
+                    <Button
+                      type="button"
+                      variant="outline"
+                      size="sm"
+                      className="w-full text-xs font-semibold bg-background"
+                      onClick={() => openAuthModal(undefined, "forgot")}
+                    >
+                      🔑 Open In-App Password Reset
+                    </Button>
                   </div>
                 )}
 

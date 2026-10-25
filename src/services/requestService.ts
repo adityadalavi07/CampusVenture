@@ -20,6 +20,11 @@ export interface DataRoomRequestRecord {
   ndaSignedName?: string | undefined;
   ndaSignedAt?: string | undefined;
   ndaVersion: string;
+  rulesAccepted?: boolean | undefined;
+  rulesVersion?: string | undefined;
+  rulesAcceptedAt?: string | undefined;
+  universityName?: string | undefined;
+  permittedDocIds?: string[] | undefined;
   discussionTerms?: string | undefined;
   nextSteps?: string | undefined;
   declineReason?: string | undefined;
@@ -377,6 +382,7 @@ export const requestService = {
       declineReason?: string | undefined;
       durationDays?: number | undefined;
       ndaRequired?: boolean | undefined;
+      permittedDocIds?: string[] | undefined;
       revokedBy?: string | undefined;
       revokedReason?: string | undefined;
     }
@@ -399,6 +405,7 @@ export const requestService = {
           nextSteps: options?.nextSteps ?? r.nextSteps,
           declineReason: options?.declineReason ?? r.declineReason,
           accessDurationDays: durationDays,
+          ...(options?.permittedDocIds ? { permittedDocIds: options.permittedDocIds } : {}),
           ...(expiresAt ? { expiresAt } : {}),
           ...(status === "revoked"
             ? {
@@ -424,6 +431,7 @@ export const requestService = {
       if (options?.nextSteps !== undefined) payload["next_steps"] = options.nextSteps;
       if (options?.declineReason !== undefined) payload["decline_reason"] = options.declineReason;
       if (options?.durationDays !== undefined) payload["access_duration_days"] = options.durationDays;
+      if (options?.permittedDocIds !== undefined) payload["permitted_doc_ids"] = options.permittedDocIds;
       if (expiresAt) payload["expires_at"] = expiresAt;
       if (status === "revoked") {
         payload["revoked_at"] = now;
@@ -515,6 +523,213 @@ export const requestService = {
     }
 
     return { success: true };
+  },
+
+  /**
+   * Founder updates granular document access permissions for an approved investor.
+   */
+  async updatePermittedDocs(
+    requestId: string,
+    docIds: string[]
+  ): Promise<{ success: boolean; error?: string }> {
+    const now = new Date().toISOString();
+    const local = getLocalDrRequests();
+    const updated = local.map((r) =>
+      r.id === requestId
+        ? {
+            ...r,
+            permittedDocIds: docIds,
+            updatedAt: now,
+          }
+        : r
+    );
+    saveLocalDrRequests(updated);
+
+    try {
+      await (supabase as any)
+        .from("data_room_requests")
+        .update({
+          permitted_doc_ids: docIds,
+          updated_at: now,
+        })
+        .eq("id", requestId);
+    } catch (err) {
+      console.warn("[RequestService] DB updatePermittedDocs exception:", err);
+    }
+
+    const currentReq = local.find((r) => r.id === requestId);
+    if (currentReq) {
+      this.logDataRoomAudit({
+        requestId,
+        startupId: currentReq.startupId,
+        userId: currentReq.founderId,
+        action: "granted",
+        details: `Permitted document scope updated: ${docIds.length} document(s) authorized for investor ${currentReq.investorName || currentReq.investorEmail}.`,
+      });
+    }
+
+    return { success: true };
+  },
+
+  /**
+   * Record legal acceptance of the platform's Rules and Regulations by an authenticated investor.
+   * Persistently records investor details, timestamp, version, and university context.
+   */
+  async recordRulesAcceptance(params: {
+    requestId: string;
+    startupId: string;
+    investorUserId: string;
+    investorName: string;
+    investorEmail: string;
+    founderUserId?: string | undefined;
+    founderName?: string | undefined;
+    founderEmail?: string | undefined;
+    startupName: string;
+    universityName?: string | undefined;
+    rulesVersion?: string | undefined;
+    accessScope?: string[] | undefined;
+  }): Promise<{ success: boolean; error?: string }> {
+    const now = new Date().toISOString();
+    const {
+      requestId,
+      startupId,
+      investorUserId,
+      investorName,
+      investorEmail,
+      startupName,
+      universityName,
+      rulesVersion = "v1.0-cv-reg",
+      accessScope = [],
+    } = params;
+
+    const local = getLocalDrRequests();
+    const updated = local.map((r) =>
+      r.id === requestId || (r.startupId === startupId && (r.investorId === investorUserId || r.investorEmail === investorEmail))
+        ? {
+            ...r,
+            ndaStatus: "signed" as const,
+            ndaSigned: true,
+            ndaSignedName: investorName,
+            ndaSignedAt: now,
+            ndaVersion: rulesVersion,
+            rulesAccepted: true,
+            rulesVersion,
+            rulesAcceptedAt: now,
+            universityName: universityName || r.universityName,
+            updatedAt: now,
+          }
+        : r
+    );
+    saveLocalDrRequests(updated);
+
+    try {
+      const payload: Record<string, any> = {
+        nda_status: "signed",
+        nda_signed: true,
+        nda_signed_name: investorName,
+        nda_signed_at: now,
+        nda_version: rulesVersion,
+        rules_accepted: true,
+        rules_version: rulesVersion,
+        rules_accepted_at: now,
+        updated_at: now,
+      };
+      if (universityName) {
+        payload["university_name"] = universityName;
+      }
+
+      await (supabase as any)
+        .from("data_room_requests")
+        .update(payload)
+        .eq("id", requestId);
+    } catch (err) {
+      console.warn("[RequestService] DB recordRulesAcceptance notice:", err);
+    }
+
+    // Persistently log in verifiable audit trail
+    await this.logDataRoomAudit({
+      requestId,
+      startupId,
+      userId: investorUserId,
+      userEmail: investorEmail,
+      action: "nda_signed",
+      details: `Rules & Regulations (${rulesVersion}) accepted by investor ${investorName} (${investorEmail}) for ${startupName} (${universityName || "University Partner"}). Scope: ${accessScope.length > 0 ? accessScope.join(", ") : "All founder-approved materials"}.`,
+    });
+
+    return { success: true };
+  },
+
+  /**
+   * Fetch aggregated investor activity and audit trail strictly for startups belonging to this campus.
+   * Universities W, Y and Z cannot see University X's requests or records.
+   */
+  async getUniversityInvestorActivity(campusStartupIds: string[]): Promise<{
+    dataRoomRequests: DataRoomRequestRecord[];
+    connectionRequests: ConnectionRequestRecord[];
+    auditLogs: DataRoomAuditRecord[];
+  }> {
+    if (!campusStartupIds || campusStartupIds.length === 0) {
+      return { dataRoomRequests: [], connectionRequests: [], auditLogs: [] };
+    }
+
+    const localDr = getLocalDrRequests().filter((r) => campusStartupIds.includes(r.startupId));
+    const localConn = getLocalConnRequests().filter((c) => c.startupId && campusStartupIds.includes(c.startupId));
+    const localAudit = getLocalAuditLogs().filter((a) => campusStartupIds.includes(a.startupId));
+
+    try {
+      const [drRes, connRes, auditRes] = await Promise.all([
+        (supabase as any)
+          .from("data_room_requests")
+          .select("*")
+          .in("startup_id", campusStartupIds)
+          .order("created_at", { ascending: false }),
+        (supabase as any)
+          .from("connection_requests")
+          .select("*")
+          .in("startup_id", campusStartupIds)
+          .order("created_at", { ascending: false }),
+        (supabase as any)
+          .from("data_room_audit_logs")
+          .select("*")
+          .in("startup_id", campusStartupIds)
+          .order("created_at", { ascending: false }),
+      ]);
+
+      const dbDr = Array.isArray(drRes?.data) ? drRes.data.map((d: any) => this.mapDbRequestToRecord(d)) : [];
+      const dbConn = Array.isArray(connRes?.data) ? connRes.data.map((c: any) => this.mapDbConnToRecord(c)) : [];
+      const dbAudit = Array.isArray(auditRes?.data) ? auditRes.data.map((a: any) => this.mapDbAuditToRecord(a)) : [];
+
+      const mergedDrMap = new Map<string, DataRoomRequestRecord>();
+      localDr.forEach((r) => mergedDrMap.set(r.id, r));
+      dbDr.forEach((r) => mergedDrMap.set(r.id, r));
+
+      const mergedConnMap = new Map<string, ConnectionRequestRecord>();
+      localConn.forEach((c) => mergedConnMap.set(c.id, c));
+      dbConn.forEach((c) => mergedConnMap.set(c.id, c));
+
+      const mergedAuditMap = new Map<string, DataRoomAuditRecord>();
+      localAudit.forEach((a) => mergedAuditMap.set(a.id, a));
+      dbAudit.forEach((a) => mergedAuditMap.set(a.id, a));
+
+      return {
+        dataRoomRequests: Array.from(mergedDrMap.values()).sort(
+          (a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime()
+        ),
+        connectionRequests: Array.from(mergedConnMap.values()).sort(
+          (a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime()
+        ),
+        auditLogs: Array.from(mergedAuditMap.values()).sort(
+          (a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime()
+        ),
+      };
+    } catch (err) {
+      console.warn("[RequestService] DB getUniversityInvestorActivity exception:", err);
+      return {
+        dataRoomRequests: localDr,
+        connectionRequests: localConn,
+        auditLogs: localAudit,
+      };
+    }
   },
 
   /**
@@ -621,6 +836,15 @@ export const requestService = {
       ndaSignedName: d.nda_signed_name || "",
       ndaSignedAt: d.nda_signed_at || undefined,
       ndaVersion: d.nda_version || "v1.0",
+      rulesAccepted: Boolean(d.rules_accepted || d.nda_signed),
+      rulesVersion: d.rules_version || d.nda_version || "v1.0-cv-reg",
+      rulesAcceptedAt: d.rules_accepted_at || d.nda_signed_at || undefined,
+      universityName: d.university_name || undefined,
+      permittedDocIds: Array.isArray(d.permitted_doc_ids)
+        ? d.permitted_doc_ids
+        : typeof d.permitted_doc_ids === "string" && d.permitted_doc_ids.trim().length > 0
+          ? (d.permitted_doc_ids.startsWith("[") ? JSON.parse(d.permitted_doc_ids) : d.permitted_doc_ids.split(",").filter(Boolean))
+          : undefined,
       discussionTerms: d.discussion_terms || undefined,
       nextSteps: d.next_steps || undefined,
       declineReason: d.decline_reason || undefined,
@@ -1294,6 +1518,18 @@ export const requestService = {
           success: false,
           error:
             "Access denied: You do not have an active, signed Data Room agreement for this venture or your access has expired.",
+        };
+      }
+
+      // Check per-document permissions set by the founder
+      if (
+        activeGrant.permittedDocIds &&
+        activeGrant.permittedDocIds.length > 0 &&
+        !activeGrant.permittedDocIds.includes(docId)
+      ) {
+        return {
+          success: false,
+          error: "Access restricted: The founder has not permitted access to this specific document.",
         };
       }
     }

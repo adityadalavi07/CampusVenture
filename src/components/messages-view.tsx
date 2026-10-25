@@ -117,6 +117,18 @@ export function MessagesView({ as }: { as: "student" | "investor" }) {
     };
   }, [user?.id, user?.email, as, startupIds.join(",")]);
 
+  // Deep-link from connection requests or notifications directly into active thread
+  useEffect(() => {
+    if (typeof window !== "undefined") {
+      const sp = new URLSearchParams(window.location.search);
+      const invId = sp.get("investorId");
+      const stId = sp.get("startupId") || currentStartupId;
+      if (invId) {
+        setActive(`${stId}:${invId}`);
+      }
+    }
+  }, [currentStartupId]);
+
   const handleOpenAcceptModal = (req: ConnectionRequestRecord) => {
     setSelectedConn(req);
     if (req.discussionTerms) setConnTerms(req.discussionTerms);
