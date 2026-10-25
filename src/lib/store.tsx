@@ -37,6 +37,8 @@ export interface Notification {
   role: Role;
   recipientEmail?: string | undefined;
   recipientUserId?: string | undefined;
+  senderEmail?: string | undefined;
+  senderUserId?: string | undefined;
   title: string;
   body: string;
   at: string;
@@ -156,9 +158,15 @@ interface Ctx extends State {
     role: Role,
     title: string,
     body: string,
-    meta?: { recipientEmail?: string | undefined; recipientUserId?: string | undefined }
+    meta?: {
+      recipientEmail?: string | undefined;
+      recipientUserId?: string | undefined;
+      senderEmail?: string | undefined;
+      senderUserId?: string | undefined;
+    }
   ) => void;
   markAllRead: (role: Role) => void;
+  clearAllNotifications: (role: Role) => void;
   updateStartup: (id: string, patch: Partial<StartupRecord>) => void;
   setReview: (id: string, status: ReviewStatus, note?: string) => void;
   toggleSaved: (id: string) => boolean;
@@ -253,6 +261,8 @@ export function VentureProvider({ children }: { children: ReactNode }) {
               role: f.role,
               recipientEmail: f.recipientEmail,
               recipientUserId: f.recipientUserId,
+              senderEmail: f.senderEmail,
+              senderUserId: f.senderUserId,
               title: f.title,
               body: f.body,
               at: f.createdAt,
@@ -280,6 +290,8 @@ export function VentureProvider({ children }: { children: ReactNode }) {
               role: f.role,
               recipientEmail: f.recipientEmail,
               recipientUserId: f.recipientUserId,
+              senderEmail: f.senderEmail,
+              senderUserId: f.senderUserId,
               title: f.title,
               body: f.body,
               at: f.createdAt,
@@ -307,6 +319,8 @@ export function VentureProvider({ children }: { children: ReactNode }) {
               role: f.role,
               recipientEmail: f.recipientEmail,
               recipientUserId: f.recipientUserId,
+              senderEmail: f.senderEmail,
+              senderUserId: f.senderUserId,
               title: f.title,
               body: f.body,
               at: f.createdAt,
@@ -389,7 +403,12 @@ export function VentureProvider({ children }: { children: ReactNode }) {
       role: Role,
       title: string,
       body: string,
-      meta?: { recipientEmail?: string | undefined; recipientUserId?: string | undefined }
+      meta?: {
+        recipientEmail?: string | undefined;
+        recipientUserId?: string | undefined;
+        senderEmail?: string | undefined;
+        senderUserId?: string | undefined;
+      }
     ) => {
       notificationService.sendNotification({
         role,
@@ -397,6 +416,8 @@ export function VentureProvider({ children }: { children: ReactNode }) {
         body,
         recipientEmail: meta?.recipientEmail,
         recipientUserId: meta?.recipientUserId,
+        senderEmail: meta?.senderEmail,
+        senderUserId: meta?.senderUserId,
       });
     },
     []
@@ -415,6 +436,13 @@ export function VentureProvider({ children }: { children: ReactNode }) {
           notifications: prev.notifications.map((n) =>
             n.role === role ? { ...n, read: true } : n,
           ),
+        }));
+      },
+      clearAllNotifications: (role) => {
+        notificationService.clearAllNotifications(role);
+        setState((prev) => ({
+          ...prev,
+          notifications: prev.notifications.filter((n) => n.role !== role),
         }));
       },
       updateStartup: (id, patch) =>

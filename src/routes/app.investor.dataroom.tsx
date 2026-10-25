@@ -110,9 +110,29 @@ function InvestorDataRooms() {
   const [liveRequests, setLiveRequests] = useState<DataRoomRequestRecord[]>([]);
   const [startupDocsMap, setStartupDocsMap] = useState<Record<string, DataRoomDocRecord[]>>({});
   const [loading, setLoading] = useState(true);
-  const [activeTab, setActiveTab] = useState<"accessible" | "requests" | "rejected" | "expired">(
-    "accessible"
-  );
+  const [activeTab, setActiveTab] = useState<"accessible" | "requests" | "rejected" | "expired">(() => {
+    if (typeof window !== "undefined") {
+      const p = new URLSearchParams(window.location.search).get("tab");
+      if (p && ["accessible", "requests", "rejected", "expired"].includes(p)) {
+        return p as any;
+      }
+    }
+    return "accessible";
+  });
+
+  useEffect(() => {
+    if (typeof window !== "undefined") {
+      const p = new URLSearchParams(window.location.search).get("tab");
+      if (p && ["accessible", "requests", "rejected", "expired"].includes(p)) {
+        setActiveTab(p as any);
+      }
+    }
+  }, []);
+
+  // In-app preview state
+  const [previewDoc, setPreviewDoc] = useState<DataRoomDocRecord | null>(null);
+  const [previewUrl, setPreviewUrl] = useState<string | null>(null);
+  const [previewStartupId, setPreviewStartupId] = useState<string>("");
 
   // NDA signing state
   const [ndaRequest, setNdaRequest] = useState<DataRoomRequestRecord | null>(null);
@@ -205,26 +225,30 @@ function InvestorDataRooms() {
     );
   }, [liveRequests]);
 
-  // Handle document preview with short-lived signed URL
+  // Handle in-app document preview
   const handlePreview = async (doc: DataRoomDocRecord, startupId: string) => {
-    toast.loading("Generating secure preview link...", { id: "preview-link" });
-    const res = await requestService.getDocumentSignedUrl({
-      docId: doc.id,
-      startupId,
-      storagePath: doc.storagePath,
-      requesterUserId: user?.id || myInvestorId,
-      requesterEmail: user?.email,
-      requesterRole: "investor",
-      isDownload: false,
-    });
+    setPreviewDoc(doc);
+    setPreviewUrl(null);
+    setPreviewStartupId(startupId);
+    toast.loading("Loading document preview...", { id: "preview-link" });
 
-    if (res.success && res.signedUrl) {
-      toast.dismiss("preview-link");
-      window.open(res.signedUrl, "_blank", "noopener,noreferrer");
-    } else {
-      toast.error(res.error || "Unable to open document preview. Access may be restricted.", {
-        id: "preview-link",
+    try {
+      const res = await requestService.getDocumentSignedUrl({
+        docId: doc.id,
+        startupId,
+        storagePath: doc.storagePath,
+        requesterUserId: user?.id || myInvestorId,
+        requesterEmail: user?.email,
+        requesterRole: "investor",
+        isDownload: false,
       });
+
+      toast.dismiss("preview-link");
+      if (res.success && res.signedUrl) {
+        setPreviewUrl(res.signedUrl);
+      }
+    } catch {
+      toast.dismiss("preview-link");
     }
   };
 
@@ -978,6 +1002,87 @@ function InvestorDataRooms() {
               <FileCheck2 className="size-4" />
               {isSigning ? "Executing NDA..." : "Sign NDA & Unlock Data Room"}
             </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* IN-APP DOCUMENT PREVIEW DIALOG FOR INVESTORS */}
+      <Dialog open={previewDoc !== null} onOpenChange={(open) => !open && setPreviewDoc(null)}>
+        <DialogContent className="max-w-2xl max-h-[85vh] flex flex-col p-6">
+          <DialogHeader className="space-y-1">
+            <div className="flex items-center justify-between">
+              <div className="flex items-center gap-2">
+                <FileLock2 className="size-5 text-primary" />
+                <DialogTitle className="text-base truncate max-w-[380px]">{previewDoc?.name}</DialogTitle>
+              </div>
+              <Badge variant="outline" className="text-xs">
+                {previewDoc?.category}
+              </Badge>
+            </div>
+            <DialogDescription className="text-xs">
+              Confidential diligence asset · {previewDoc?.size} · Uploaded {previewDoc ? timeAgo(previewDoc.createdAt) : ""}
+            </DialogDescription>
+          </DialogHeader>
+
+          <div className="flex-1 my-3 rounded-lg border bg-muted/20 p-4 overflow-y-auto max-h-[380px] space-y-4 [scrollbar-width:thin]">
+            <div className="rounded-md border border-emerald-500/20 bg-emerald-500/10 p-3 text-xs text-emerald-900 dark:text-emerald-200 flex items-center justify-between">
+              <span className="font-semibold flex items-center gap-1.5">
+                <ShieldCheck className="size-4 text-emerald-600 dark:text-emerald-400" />
+                AUTHORIZED DILIGENCE ACCESS — NDA v1.0 ACTIVE
+              </span>
+              <span className="text-[10px] font-mono opacity-80">VERIFIED ACCREDITED INVESTOR</span>
+            </div>
+
+            {previewUrl && (previewDoc?.mimeType?.startsWith("image/") || previewDoc?.name.match(/\.(png|jpe?g|gif|webp)$/i)) ? (
+              <div className="grid place-items-center bg-background rounded-lg border p-2">
+                <img src={previewUrl} alt={previewDoc.name} className="max-h-[300px] object-contain rounded" />
+              </div>
+            ) : previewUrl && (previewDoc?.mimeType === "application/pdf" || previewDoc?.name.endsWith(".pdf")) ? (
+              <div className="h-[320px] rounded border bg-background overflow-hidden">
+                <iframe src={previewUrl} title={previewDoc.name} className="size-full" />
+              </div>
+            ) : (
+              <div className="space-y-3 bg-card rounded-lg border p-4 text-xs">
+                <div className="border-b pb-2">
+                  <h4 className="font-semibold text-sm text-foreground">{previewDoc?.name}</h4>
+                  <p className="text-muted-foreground mt-0.5">Category: {previewDoc?.category}</p>
+                </div>
+                <div className="grid grid-cols-2 gap-2 text-muted-foreground py-1">
+                  <div>
+                    <span className="font-medium text-foreground">Format:</span> {previewDoc?.mimeType || "application/octet-stream"}
+                  </div>
+                  <div>
+                    <span className="font-medium text-foreground">File Size:</span> {previewDoc?.size}
+                  </div>
+                  <div>
+                    <span className="font-medium text-foreground">Access Scope:</span> Authorized Diligence Review
+                  </div>
+                  <div>
+                    <span className="font-medium text-foreground">Confidentiality:</span> Governed by executed Mutual NDA
+                  </div>
+                </div>
+                <div className="rounded border bg-muted/40 p-3 text-[11px] text-muted-foreground leading-relaxed">
+                  This document contains proprietary information regarding the venture including technical architectures, capitalization terms, and operational milestones. Viewing and downloading are logged under the founder's audit ledger.
+                </div>
+              </div>
+            )}
+          </div>
+
+          <DialogFooter className="gap-2 pt-2 border-t flex items-center justify-between">
+            <Button variant="outline" size="sm" onClick={() => setPreviewDoc(null)}>
+              Close Preview
+            </Button>
+            {previewDoc && (
+              <Button
+                size="sm"
+                className="gap-1.5"
+                onClick={() =>
+                  handleDownload(previewDoc, previewStartupId)
+                }
+              >
+                <Download className="size-4" /> Download File
+              </Button>
+            )}
           </DialogFooter>
         </DialogContent>
       </Dialog>

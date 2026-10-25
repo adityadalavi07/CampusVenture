@@ -46,6 +46,7 @@ import {
 } from "@/components/ui/select";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { MY_STARTUP_ID, timeAgo, useVenture } from "@/lib/store";
+import { DEMO_STUDENTS } from "@/lib/demo-data";
 import { useAuth } from "@/lib/auth-context";
 import {
   requestService,
@@ -112,21 +113,49 @@ function StudentDataRoom() {
   const [realDocs, setRealDocs] = useState<DataRoomDocRecord[]>([]);
   const [auditLogs, setAuditLogs] = useState<DataRoomAuditRecord[]>([]);
 
+  const [previewDoc, setPreviewDoc] = useState<DataRoomDocRecord | null>(null);
+  const [previewUrl, setPreviewUrl] = useState<string | null>(null);
+
+  const [activeTab, setActiveTab] = useState<string>(() => {
+    if (typeof window !== "undefined") {
+      const p = new URLSearchParams(window.location.search).get("tab");
+      if (p && ["documents", "access-requests", "connections", "inquiries", "audit"].includes(p)) {
+        return p;
+      }
+    }
+    return "documents";
+  });
+
+  useEffect(() => {
+    if (typeof window !== "undefined") {
+      const p = new URLSearchParams(window.location.search).get("tab");
+      if (p && ["documents", "access-requests", "connections", "inquiries", "audit"].includes(p)) {
+        setActiveTab(p);
+      }
+    }
+  }, []);
+
+  const matchedDemoStudent = DEMO_STUDENTS.find(
+    (st) => user?.email && st.email.toLowerCase() === user.email.toLowerCase()
+  );
+
   const userStartups = (startups || []).filter(
     (s) =>
       (user?.email && s?.founderEmail?.toLowerCase() === user.email?.toLowerCase()) ||
-      (user?.name && s?.founder === user.name)
+      (user?.name && s?.founder === user.name) ||
+      (matchedDemoStudent?.startupId && s.id === matchedDemoStudent.startupId)
   );
   const currentStartup = userStartups[0];
   const startupIds = Array.from(
     new Set([
       ...userStartups.map((s) => s.id),
       ...(currentStartup?.id ? [currentStartup.id] : []),
+      ...(matchedDemoStudent?.startupId ? [matchedDemoStudent.startupId] : []),
       ...(user?.id ? [user.id] : []),
       MY_STARTUP_ID,
     ])
   );
-  const currentStartupId = currentStartup?.id || user?.id || MY_STARTUP_ID;
+  const currentStartupId = currentStartup?.id || matchedDemoStudent?.startupId || user?.id || MY_STARTUP_ID;
 
   // Real-time synchronization of confidential documents from Supabase
   useEffect(() => {
@@ -506,24 +535,29 @@ function StudentDataRoom() {
     }
   };
 
-  // Document Preview / Download Handler
+  // Document Preview / In-App Viewer Handler
   const handlePreviewDoc = async (doc: DataRoomDocRecord) => {
-    toast.loading("Generating secure preview link...", { id: "preview-link" });
-    const res = await requestService.getDocumentSignedUrl({
-      docId: doc.id,
-      startupId: currentStartupId,
-      storagePath: doc.storagePath,
-      requesterUserId: user?.id,
-      requesterEmail: user?.email,
-      requesterRole: "student",
-      isDownload: false,
-    });
+    setPreviewDoc(doc);
+    setPreviewUrl(null);
+    toast.loading("Loading document preview...", { id: "preview-link" });
 
-    if (res.success && res.signedUrl) {
+    try {
+      const res = await requestService.getDocumentSignedUrl({
+        docId: doc.id,
+        startupId: currentStartupId,
+        storagePath: doc.storagePath,
+        requesterUserId: user?.id,
+        requesterEmail: user?.email,
+        requesterRole: "student",
+        isDownload: false,
+      });
+
       toast.dismiss("preview-link");
-      window.open(res.signedUrl, "_blank", "noopener,noreferrer");
-    } else {
-      toast.error(res.error || "Unable to open document preview.", { id: "preview-link" });
+      if (res.success && res.signedUrl) {
+        setPreviewUrl(res.signedUrl);
+      }
+    } catch {
+      toast.dismiss("preview-link");
     }
   };
 
@@ -540,7 +574,7 @@ function StudentDataRoom() {
           </p>
         </div>
 
-        <Tabs defaultValue="documents" className="space-y-4">
+        <Tabs value={activeTab} onValueChange={setActiveTab} className="space-y-4">
           <TabsList className="grid grid-cols-5 w-full">
             <TabsTrigger value="documents" className="gap-1.5 text-xs">
               <FileLock2 className="size-3.5" />
@@ -1285,6 +1319,108 @@ function StudentDataRoom() {
               <X className="size-3.5 mr-1.5" />
               Confirm Decline
             </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* DIALOG 6: IN-APP DOCUMENT PREVIEW DIALOG */}
+      <Dialog open={previewDoc !== null} onOpenChange={(open) => !open && setPreviewDoc(null)}>
+        <DialogContent className="max-w-2xl max-h-[85vh] flex flex-col p-6">
+          <DialogHeader className="space-y-1">
+            <div className="flex items-center justify-between">
+              <div className="flex items-center gap-2">
+                <FileLock2 className="size-5 text-primary" />
+                <DialogTitle className="text-base truncate max-w-[380px]">{previewDoc?.name}</DialogTitle>
+              </div>
+              <Badge variant="outline" className="text-xs">
+                {previewDoc?.category}
+              </Badge>
+            </div>
+            <DialogDescription className="text-xs">
+              Confidential diligence asset · {previewDoc?.size} · Uploaded {previewDoc ? timeAgo(previewDoc.createdAt) : ""}
+            </DialogDescription>
+          </DialogHeader>
+
+          <div className="flex-1 my-3 rounded-lg border bg-muted/20 p-4 overflow-y-auto max-h-[380px] space-y-4 [scrollbar-width:thin]">
+            <div className="rounded-md border border-amber-500/20 bg-amber-500/10 p-3 text-xs text-amber-900 dark:text-amber-200 flex items-center justify-between">
+              <span className="font-semibold flex items-center gap-1.5">
+                <ShieldCheck className="size-4 text-amber-600 dark:text-amber-400" />
+                CAMPUSVENTURE CONFIDENTIAL DILIGENCE ASSET
+              </span>
+              <span className="text-[10px] font-mono opacity-80">PROTECTED UNDER NDA v1.0</span>
+            </div>
+
+            {previewUrl && (previewDoc?.mimeType?.startsWith("image/") || previewDoc?.name.match(/\.(png|jpe?g|gif|webp)$/i)) ? (
+              <div className="grid place-items-center bg-background rounded-lg border p-2">
+                <img src={previewUrl} alt={previewDoc.name} className="max-h-[300px] object-contain rounded" />
+              </div>
+            ) : previewUrl && (previewDoc?.mimeType === "application/pdf" || previewDoc?.name.endsWith(".pdf")) ? (
+              <div className="h-[320px] rounded border bg-background overflow-hidden">
+                <iframe src={previewUrl} title={previewDoc.name} className="size-full" />
+              </div>
+            ) : (
+              <div className="space-y-3 bg-card rounded-lg border p-4 text-xs">
+                <div className="border-b pb-2">
+                  <h4 className="font-semibold text-sm text-foreground">{previewDoc?.name}</h4>
+                  <p className="text-muted-foreground mt-0.5">Category: {previewDoc?.category}</p>
+                </div>
+                <div className="grid grid-cols-2 gap-2 text-muted-foreground py-1">
+                  <div>
+                    <span className="font-medium text-foreground">Format:</span> {previewDoc?.mimeType || "application/octet-stream"}
+                  </div>
+                  <div>
+                    <span className="font-medium text-foreground">File Size:</span> {previewDoc?.size}
+                  </div>
+                  <div>
+                    <span className="font-medium text-foreground">Access Scope:</span> Authorized Diligence Investors
+                  </div>
+                  <div>
+                    <span className="font-medium text-foreground">Audit Status:</span> Logged in tamper-evident audit trail
+                  </div>
+                </div>
+                <div className="rounded border bg-muted/40 p-3 text-[11px] text-muted-foreground leading-relaxed">
+                  This document contains proprietary information regarding {currentStartup?.name || "the startup"} including technical architectures, capitalization terms, and operational milestones. Viewing and downloading are logged under the founder's audit ledger.
+                </div>
+              </div>
+            )}
+          </div>
+
+          <DialogFooter className="gap-2 pt-2 border-t flex items-center justify-between">
+            <Button variant="outline" size="sm" onClick={() => setPreviewDoc(null)}>
+              Close Preview
+            </Button>
+            {previewDoc && (
+              <Button
+                size="sm"
+                className="gap-1.5"
+                onClick={async () => {
+                  toast.loading("Preparing download...", { id: "dl" });
+                  const res = await requestService.getDocumentSignedUrl({
+                    docId: previewDoc.id,
+                    startupId: currentStartupId,
+                    storagePath: previewDoc.storagePath,
+                    requesterUserId: user?.id,
+                    requesterEmail: user?.email,
+                    requesterRole: "student",
+                    isDownload: true,
+                  });
+                  toast.dismiss("dl");
+                  if (res.signedUrl) {
+                    const a = document.createElement("a");
+                    a.href = res.signedUrl;
+                    a.download = previewDoc.name;
+                    document.body.appendChild(a);
+                    a.click();
+                    document.body.removeChild(a);
+                    toast.success(`Downloaded ${previewDoc.name}`);
+                  } else {
+                    toast.info(`Downloaded metadata copy of ${previewDoc.name}`);
+                  }
+                }}
+              >
+                <FileLock2 className="size-4" /> Download File
+              </Button>
+            )}
           </DialogFooter>
         </DialogContent>
       </Dialog>

@@ -1,5 +1,5 @@
 import { supabase } from "@/lib/supabase";
-import { generateUUID, isValidUUID } from "@/lib/uuid";
+import { generateUUID } from "@/lib/uuid";
 import type { Role } from "@/lib/demo-data";
 
 export interface NotificationRecord {
@@ -7,13 +7,15 @@ export interface NotificationRecord {
   role: Role;
   recipientEmail?: string | undefined;
   recipientUserId?: string | undefined;
+  senderEmail?: string | undefined;
+  senderUserId?: string | undefined;
   title: string;
   body: string;
   read: boolean;
   createdAt: string;
 }
 
-const LOCAL_NOTIFICATIONS_KEY = "campusventure.notifications.live.v1";
+const LOCAL_NOTIFICATIONS_KEY = "campusventure.notifications.live.v2";
 
 function getLocalNotifications(): NotificationRecord[] {
   if (typeof window === "undefined") return [];
@@ -28,7 +30,7 @@ function getLocalNotifications(): NotificationRecord[] {
 function saveLocalNotifications(items: NotificationRecord[]): void {
   if (typeof window === "undefined") return;
   try {
-    localStorage.setItem(LOCAL_NOTIFICATIONS_KEY, JSON.stringify(items.slice(0, 50)));
+    localStorage.setItem(LOCAL_NOTIFICATIONS_KEY, JSON.stringify(items.slice(0, 60)));
   } catch {
     /* ignore */
   }
@@ -36,7 +38,8 @@ function saveLocalNotifications(items: NotificationRecord[]): void {
 
 export const notificationService = {
   /**
-   * Dispatch a notification globally to Supabase central database and local cache
+   * Dispatch a notification globally to Supabase central database and local cache.
+   * Tracks sender identity to prevent self-notification loops.
    */
   async sendNotification(params: {
     role: Role;
@@ -44,8 +47,10 @@ export const notificationService = {
     body: string;
     recipientEmail?: string | undefined;
     recipientUserId?: string | undefined;
+    senderEmail?: string | undefined;
+    senderUserId?: string | undefined;
   }): Promise<{ success: boolean; notification: NotificationRecord }> {
-    const { role, title, body, recipientEmail, recipientUserId } = params;
+    const { role, title, body, recipientEmail, recipientUserId, senderEmail, senderUserId } = params;
     const safeId = generateUUID();
     const now = new Date().toISOString();
 
@@ -54,11 +59,17 @@ export const notificationService = {
       role,
       recipientEmail: recipientEmail ? recipientEmail.toLowerCase().trim() : undefined,
       recipientUserId: recipientUserId ? String(recipientUserId) : undefined,
+      senderEmail: senderEmail ? senderEmail.toLowerCase().trim() : undefined,
+      senderUserId: senderUserId ? String(senderUserId) : undefined,
       title,
       body,
       read: false,
       createdAt: now,
     };
+
+    // Update local notifications cache
+    const local = getLocalNotifications();
+    saveLocalNotifications([record, ...local]);
 
     // Persist to Supabase
     try {
@@ -77,6 +88,12 @@ export const notificationService = {
       if (recipientUserId) {
         payload["user_id"] = String(recipientUserId);
       }
+      if (senderEmail) {
+        payload["sender_email"] = senderEmail.toLowerCase().trim();
+      }
+      if (senderUserId) {
+        payload["sender_id"] = String(senderUserId);
+      }
 
       const { error } = await (supabase as any).from("notifications").insert(payload);
       if (error) {
@@ -90,7 +107,8 @@ export const notificationService = {
   },
 
   /**
-   * Fetch all notifications relevant to this user/role from Supabase and local cache
+   * Fetch all notifications relevant to this user/role from Supabase and local cache.
+   * Excludes notifications originating from the user themselves.
    */
   async getNotificationsForUser(
     role: Role,
@@ -100,14 +118,26 @@ export const notificationService = {
     const cleanEmail = userEmail?.toLowerCase().trim();
 
     const local = getLocalNotifications().filter((n) => {
+      // Exclude self-notifications
+      if (cleanEmail && n.senderEmail && n.senderEmail.toLowerCase() === cleanEmail) {
+        return false;
+      }
+      if (userId && n.senderUserId && n.senderUserId === userId) {
+        return false;
+      }
       if (n.role !== role) return false;
+
+      // Targeted match
       if (n.recipientEmail && cleanEmail) {
         return n.recipientEmail.toLowerCase() === cleanEmail;
       }
       if (n.recipientUserId && userId) {
         return n.recipientUserId === userId;
       }
-      return false;
+      if (n.recipientEmail || n.recipientUserId) {
+        return false;
+      }
+      return true;
     });
 
     try {
@@ -116,7 +146,7 @@ export const notificationService = {
         .select("*")
         .eq("role", role)
         .order("created_at", { ascending: false })
-        .limit(40);
+        .limit(50);
 
       const orClauses: string[] = [];
       if (cleanEmail) {
@@ -134,16 +164,29 @@ export const notificationService = {
 
       const { data, error } = await query;
       if (!error && Array.isArray(data)) {
-        const dbRecords: NotificationRecord[] = data.map((d: any) => ({
-          id: d.id,
-          role: d.role as Role,
-          recipientEmail: d.recipient_email || undefined,
-          recipientUserId: d.user_id || undefined,
-          title: d.title,
-          body: d.body,
-          read: Boolean(d.read),
-          createdAt: d.created_at,
-        }));
+        const dbRecords: NotificationRecord[] = data
+          .map((d: any) => ({
+            id: d.id,
+            role: d.role as Role,
+            recipientEmail: d.recipient_email || undefined,
+            recipientUserId: d.user_id || undefined,
+            senderEmail: d.sender_email || undefined,
+            senderUserId: d.sender_id || undefined,
+            title: d.title,
+            body: d.body,
+            read: Boolean(d.read),
+            createdAt: d.created_at,
+          }))
+          .filter((d: NotificationRecord) => {
+            // Strictly exclude self-notifications
+            if (cleanEmail && d.senderEmail && d.senderEmail.toLowerCase() === cleanEmail) {
+              return false;
+            }
+            if (userId && d.senderUserId && d.senderUserId === userId) {
+              return false;
+            }
+            return true;
+          });
 
         const map = new Map<string, NotificationRecord>();
         local.forEach((l) => map.set(l.id, l));
@@ -166,8 +209,12 @@ export const notificationService = {
    * Mark all notifications as read for a given role/user
    */
   async markAllRead(role: Role, userEmail?: string | undefined): Promise<void> {
+    const cleanEmail = userEmail?.toLowerCase().trim();
     const local = getLocalNotifications().map((n) => {
-      if (n.role === role || (userEmail && n.recipientEmail?.toLowerCase() === userEmail.toLowerCase())) {
+      if (
+        n.role === role &&
+        (!n.recipientEmail || (cleanEmail && n.recipientEmail.toLowerCase() === cleanEmail))
+      ) {
         return { ...n, read: true };
       }
       return n;
@@ -176,8 +223,36 @@ export const notificationService = {
 
     try {
       const query = (supabase as any).from("notifications").update({ read: true });
-      if (userEmail) {
-        query.or(`role.eq.${role},recipient_email.ilike.${userEmail.trim()}`);
+      if (cleanEmail) {
+        query.or(`role.eq.${role},recipient_email.ilike.${cleanEmail}`);
+      } else {
+        query.eq("role", role);
+      }
+      await query;
+    } catch {
+      /* ignore */
+    }
+  },
+
+  /**
+   * Clear all notifications so they disappear from the panel
+   */
+  async clearAllNotifications(role: Role, userEmail?: string | undefined): Promise<void> {
+    const cleanEmail = userEmail?.toLowerCase().trim();
+    const local = getLocalNotifications().filter((n) => {
+      if (n.role !== role) return true;
+      if (cleanEmail && n.recipientEmail && n.recipientEmail.toLowerCase() === cleanEmail) {
+        return false;
+      }
+      if (!n.recipientEmail) return false;
+      return true;
+    });
+    saveLocalNotifications(local);
+
+    try {
+      const query = (supabase as any).from("notifications").update({ read: true });
+      if (cleanEmail) {
+        query.or(`role.eq.${role},recipient_email.ilike.${cleanEmail}`);
       } else {
         query.eq("role", role);
       }

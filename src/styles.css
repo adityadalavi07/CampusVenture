@@ -226,6 +226,22 @@
 
 /* Auth Flow Modal Styles */
 .auth-flow {
+  --bg: #ffffff;
+  --panel: #ffffff;
+  --field: #f8fafc;
+  --line: #e2e8f0;
+  --line2: #cbd5e1;
+  --text: #0f172a;
+  --mute: #64748b;
+  --acc: #4f46e5;
+  --accbg: #eef2ff;
+  --ok: #10b981;
+  --err: #ef4444;
+  font-family: Inter, system-ui, -apple-system, "Segoe UI", sans-serif;
+  color: var(--text);
+}
+
+.dark .auth-flow {
   --bg: #05070d;
   --panel: #090d17;
   --field: #0a0f1b;
@@ -237,7 +253,6 @@
   --accbg: #131a30;
   --ok: #34d399;
   --err: #f87171;
-  font-family: Inter, system-ui, -apple-system, "Segoe UI", sans-serif;
   color: var(--text);
 }
 
@@ -251,6 +266,11 @@
   border: 1px solid var(--line);
   border-radius: 16px;
   padding: 18px 22px;
+  box-shadow: 0 20px 60px rgba(0, 0, 0, 0.12);
+  transition: all 0.2s ease-in-out;
+}
+
+.dark .auth-flow .modal {
   box-shadow: 0 30px 80px rgba(0, 0, 0, 0.6);
 }
 
@@ -264,12 +284,12 @@
   left: 0;
   right: 0;
   z-index: 50;
-  background: #0d1322;
+  background: var(--panel);
   border: 1px solid var(--line2);
   border-radius: 12px;
   max-height: 230px;
   overflow-y: auto;
-  box-shadow: 0 16px 40px rgba(0, 0, 0, 0.7);
+  box-shadow: 0 16px 40px rgba(0, 0, 0, 0.2);
   padding: 4px;
 }
 
@@ -415,7 +435,7 @@
 }
 
 .auth-flow input::placeholder {
-  color: #59627a;
+  color: var(--mute);
 }
 
 .auth-flow input:focus {

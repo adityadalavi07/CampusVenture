@@ -372,6 +372,7 @@ async function handleServerSendCode(request: Request, env: unknown): Promise<Res
  */
 async function handleServerCofounderInvite(request: Request, env: unknown): Promise<Response> {
   try {
+    const requestOrigin = new URL(request.url).origin;
     const body = (await request.json()) as any;
     const { startupName, founderName, founderEmail, cofounderName, cofounderEmail, role, equity } = body || {};
 
@@ -411,7 +412,7 @@ async function handleServerCofounderInvite(request: Request, env: unknown): Prom
                   ${equity ? `<br /><br /><strong>Equity Allocation:</strong> ${equity}` : ""}
                 </p>
                 <div style="margin: 28px 0; text-align: center;">
-                  <a href="https://campus-venture.vercel.app/app/student" style="display: inline-block; background: #4f46e5; color: #ffffff; padding: 12px 28px; border-radius: 8px; font-size: 15px; font-weight: 600; text-decoration: none;">Review & Accept Invitation</a>
+                  <a href="${requestOrigin}/app/student" style="display: inline-block; background: #4f46e5; color: #ffffff; padding: 12px 28px; border-radius: 8px; font-size: 15px; font-weight: 600; text-decoration: none;">Review & Accept Invitation</a>
                 </div>
                 <p style="color: #64748b; font-size: 13px; line-height: 1.5;">
                   Log into CampusVenture using <strong>${cofounderEmail}</strong> (both university and personal emails accepted) to review this invitation and become an official co-founder.

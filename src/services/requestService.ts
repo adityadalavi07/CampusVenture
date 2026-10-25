@@ -525,15 +525,16 @@ export const requestService = {
     founderId?: string | undefined;
     founderEmail?: string | undefined;
   }): Promise<DataRoomRequestRecord[]> {
-    const { startupIds, founderEmail } = params;
+    const { startupIds, founderId, founderEmail } = params;
     const cleanIds = startupIds.filter(Boolean);
     const cleanEmail = founderEmail?.toLowerCase().trim();
 
     const local = getLocalDrRequests().filter(
       (r) =>
         cleanIds.includes(r.startupId) ||
-        r.startupId === "s1" ||
-        (cleanEmail && r.founderEmail?.toLowerCase() === cleanEmail)
+        (cleanEmail && r.founderEmail?.toLowerCase() === cleanEmail) ||
+        (founderId && r.founderId === founderId) ||
+        (cleanIds.length === 0 && r.startupId === "s1")
     );
 
     try {
@@ -542,12 +543,19 @@ export const requestService = {
         .select("*")
         .order("created_at", { ascending: false });
 
-      if (cleanIds.length > 0 && cleanEmail) {
-        query = query.or(`startup_id.in.(${cleanIds.join(",")}),founder_email.ilike.${cleanEmail}`);
-      } else if (cleanIds.length > 0) {
-        query = query.in("startup_id", cleanIds);
-      } else if (cleanEmail) {
-        query = query.ilike("founder_email", cleanEmail);
+      const orClauses: string[] = [];
+      if (cleanIds.length > 0) {
+        orClauses.push(`startup_id.in.(${cleanIds.join(",")})`);
+      }
+      if (cleanEmail) {
+        orClauses.push(`founder_email.ilike.${cleanEmail}`);
+      }
+      if (founderId) {
+        orClauses.push(`founder_id.eq.${founderId}`);
+      }
+
+      if (orClauses.length > 0) {
+        query = query.or(orClauses.join(","));
       }
 
       const { data, error } = await query;
@@ -1257,7 +1265,7 @@ export const requestService = {
     requesterEmail?: string | undefined;
     requesterRole?: string | undefined;
     isDownload?: boolean | undefined;
-  }): Promise<{ success: boolean; signedUrl?: string; error?: string }> {
+  }): Promise<{ success: boolean; signedUrl?: string; inAppPreview?: boolean; error?: string }> {
     const {
       docId,
       startupId,
@@ -1318,12 +1326,27 @@ export const requestService = {
       }
     }
 
-    // Fallback: If storage bucket isn't provisioned yet in user's Supabase dashboard, generate simulated secure view
+    // Check if doc has local data/fileUrl
+    const localDoc = getLocalDocs().find((d) => d.id === docId);
+    if (localDoc?.fileUrl) {
+      return { success: true, signedUrl: localDoc.fileUrl, inAppPreview: true };
+    }
+
+    // Log the view or download action in audit trail
+    this.logDataRoomAudit({
+      startupId,
+      docId,
+      userId: requesterUserId,
+      userEmail: requesterEmail,
+      action: isDownload ? "downloaded" : "viewed",
+      details: isDownload
+        ? "Confidential file downloaded"
+        : "Confidential file previewed in-app",
+    });
+
     return {
       success: true,
-      signedUrl: `https://view.officeapps.live.com/op/view.aspx?src=${encodeURIComponent(
-        "https://raw.githubusercontent.com/adityadalavi07/CampusVenture/main/README.md"
-      )}`,
+      inAppPreview: true,
     };
   },
 

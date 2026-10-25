@@ -28,7 +28,7 @@ import {
 } from "@/components/ui/dialog";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
-import { DEMO_INVESTORS, formatMoney, matchScore } from "@/lib/demo-data";
+import { DEMO_INVESTORS, DEMO_STUDENTS, formatMoney, matchScore } from "@/lib/demo-data";
 import { STATUS_LABEL, useVenture } from "@/lib/store";
 import { useAuth } from "@/lib/auth-context";
 import { supabase } from "@/lib/supabase";
@@ -214,13 +214,18 @@ function StartupDetail() {
     requestAccess(startup.id, investor.id);
     setDrStatus("pending");
 
+    const resolvedFounderEmail =
+      startup.founderEmail ||
+      DEMO_STUDENTS.find((s) => s.startupId === startup.id)?.email ||
+      (startup.id === "s1" ? "aarav@coep.ac.in" : undefined);
+
     let resolvedFounderId = startup.founder;
-    if (startup.founderEmail) {
+    if (resolvedFounderEmail) {
       try {
         const { data: prof } = await (supabase as any)
           .from("profiles")
           .select("id")
-          .ilike("email", startup.founderEmail.trim())
+          .ilike("email", resolvedFounderEmail.trim())
           .limit(1)
           .maybeSingle();
         if (prof?.id) {
@@ -239,7 +244,7 @@ function StartupDetail() {
       investorOrg: investor.organization,
       startupName: startup.name,
       founderId: resolvedFounderId,
-      founderEmail: startup.founderEmail,
+      founderEmail: resolvedFounderEmail,
       message: drMessage.trim() || undefined,
     });
 
@@ -255,7 +260,13 @@ function StartupDetail() {
       "student",
       "Data-room access requested",
       `${investor.name} (${investor.organization || "Accredited Investor"}) requested access to ${startup.name} Data Room under mutual NDA.`,
-      startup.founderEmail ? { recipientEmail: startup.founderEmail } : undefined
+      resolvedFounderEmail
+        ? {
+            recipientEmail: resolvedFounderEmail,
+            senderEmail: user?.email,
+            senderUserId: investor.id,
+          }
+        : undefined
     );
     toast.success(`Data-room access request sent to ${startup.name}`);
   };
@@ -264,13 +275,18 @@ function StartupDetail() {
     addRequest(startup.id, investor.id, "connection");
     setConnStatus("pending");
 
+    const resolvedFounderEmail =
+      startup.founderEmail ||
+      DEMO_STUDENTS.find((s) => s.startupId === startup.id)?.email ||
+      (startup.id === "s1" ? "aarav@coep.ac.in" : undefined);
+
     let resolvedReceiverId = startup.founder;
-    if (startup.founderEmail) {
+    if (resolvedFounderEmail) {
       try {
         const { data: prof } = await (supabase as any)
           .from("profiles")
           .select("id")
-          .ilike("email", startup.founderEmail.trim())
+          .ilike("email", resolvedFounderEmail.trim())
           .limit(1)
           .maybeSingle();
         if (prof?.id) {
@@ -289,7 +305,7 @@ function StartupDetail() {
       senderOrg: investor.organization,
       receiverId: resolvedReceiverId || startup.id,
       receiverName: startup.founder || startup.name,
-      receiverEmail: startup.founderEmail,
+      receiverEmail: resolvedFounderEmail,
       startupId: startup.id,
       startupName: startup.name,
       message: `Hi ${startup.founder || "Founder"}, I reviewed ${startup.name} on CampusVenture and would love to connect.`,
@@ -304,7 +320,13 @@ function StartupDetail() {
       "student",
       "New connection request",
       `${investor.name} (${investor.organization || "Accredited Investor"}) wants to connect regarding ${startup.name}.`,
-      startup.founderEmail ? { recipientEmail: startup.founderEmail } : undefined
+      resolvedFounderEmail
+        ? {
+            recipientEmail: resolvedFounderEmail,
+            senderEmail: user?.email,
+            senderUserId: investor.id,
+          }
+        : undefined
     );
     toast.success(`Connection requested with ${startup.name}`);
   };

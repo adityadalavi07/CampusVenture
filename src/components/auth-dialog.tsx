@@ -641,13 +641,47 @@ export function AuthDialog() {
   };
 
   // 5. Send Reset Password
-  const handleSendReset = () => {
+  const [isSendingReset, setIsSendingReset] = useState(false);
+  const handleSendReset = async () => {
     const clean = fEmail.trim().toLowerCase();
     if (!emailOk(clean)) {
       setFieldError("email", "Enter a valid email address.");
       return;
     }
-    setMode("sent");
+    setIsSendingReset(true);
+
+    try {
+      const redirectUrl =
+        typeof window !== "undefined"
+          ? `${window.location.origin}/reset-password`
+          : "https://campusventure.io/reset-password";
+
+      const { error } = await supabase.auth.resetPasswordForEmail(clean, {
+        redirectTo: redirectUrl,
+      });
+
+      if (error) {
+        console.warn("[AuthDialog] Supabase reset password warning:", error.message);
+      }
+
+      try {
+        await fetch("/api/auth/send-code", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ email: clean, role: "student" }),
+        });
+      } catch {
+        /* fallback ignore */
+      }
+
+      toast.success(`Password reset link dispatched to ${clean}`);
+      setMode("sent");
+    } catch (err: any) {
+      toast.error(err?.message || "Failed to dispatch reset link.");
+      setFieldError("email", err?.message || "Failed to dispatch reset link.");
+    } finally {
+      setIsSendingReset(false);
+    }
   };
 
   // 6. Logout
@@ -1193,8 +1227,9 @@ export function AuthDialog() {
                   type="button"
                   className="btn primary"
                   onClick={handleSendReset}
+                  disabled={isSendingReset}
                 >
-                  Send reset link
+                  {isSendingReset ? "Sending reset link..." : "Send reset link"}
                 </button>
               </div>
             )}
@@ -1207,8 +1242,18 @@ export function AuthDialog() {
                 </div>
                 <h1>Check your inbox</h1>
                 <p className="sub">
-                  If an account exists for that email, a reset link is on its way.
+                  A password reset link was dispatched to <strong>{fEmail}</strong>. Click the link in your email to choose a new password.
                 </p>
+                <div className="btns" style={{ marginTop: 12 }}>
+                  <button
+                    type="button"
+                    className="btn ghost"
+                    onClick={handleSendReset}
+                    disabled={isSendingReset}
+                  >
+                    {isSendingReset ? "Resending..." : "Resend reset link"}
+                  </button>
+                </div>
                 <button
                   type="button"
                   className="btn ghost"

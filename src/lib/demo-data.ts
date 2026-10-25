@@ -45,6 +45,8 @@ export interface Startup {
   traction: string;
   businessModel: string;
   updatedAt: string;
+  founder?: string;
+  founderEmail?: string;
 }
 
 export interface Investor {
@@ -79,6 +81,8 @@ export const DEMO_STARTUPS: Startup[] = [
     traction: "6.4k MAU, 3 campus pilots, ₹4.2L ARR",
     businessModel: "B2B2C campus licences",
     updatedAt: "2026-08-12",
+    founder: "Aarav Mehta",
+    founderEmail: "aarav@coep.ac.in",
   },
   {
     id: "s2",
@@ -97,6 +101,8 @@ export const DEMO_STARTUPS: Startup[] = [
     traction: "12 farm pilots, 900 monitored acres",
     businessModel: "Hardware + subscription",
     updatedAt: "2026-08-15",
+    founder: "Pooja Deshmukh",
+    founderEmail: "pooja@vjti.ac.in",
   },
   {
     id: "s3",
@@ -115,6 +121,8 @@ export const DEMO_STARTUPS: Startup[] = [
     traction: "Design partners: 2 neobank startups",
     businessModel: "SaaS subscription",
     updatedAt: "2026-08-05",
+    founder: "Rohan Iyer",
+    founderEmail: "rohan@iiitb.ac.in",
   },
   {
     id: "s4",
@@ -133,6 +141,8 @@ export const DEMO_STARTUPS: Startup[] = [
     traction: "2.1k devices sold, 2 hospital partnerships",
     businessModel: "Device + care subscription",
     updatedAt: "2026-08-17",
+    founder: "Ananya Sharma",
+    founderEmail: "ananya@iitd.ac.in",
   },
   {
     id: "s5",
@@ -151,6 +161,8 @@ export const DEMO_STARTUPS: Startup[] = [
     traction: "18% energy savings in 3-building pilot",
     businessModel: "B2B SaaS",
     updatedAt: "2026-08-10",
+    founder: "Vikram Nambiar",
+    founderEmail: "vikram@bits-pilani.ac.in",
   },
   {
     id: "s6",
@@ -169,6 +181,8 @@ export const DEMO_STARTUPS: Startup[] = [
     traction: "15.2k trained users across 5 institutions",
     businessModel: "Per-seat SaaS",
     updatedAt: "2026-08-16",
+    founder: "Sneha Sen",
+    founderEmail: "sneha@ju.ac.in",
   },
 ];
 
@@ -224,6 +238,59 @@ export const DEMO_INVESTORS: Investor[] = [
     geography: "India",
     thesis: "First cheque for verified student founders shipping real products.",
     verified: false,
+  },
+];
+
+export interface DemoStudent {
+  id: string;
+  name: string;
+  email: string;
+  university: string;
+  startupId: string;
+}
+
+export const DEMO_STUDENTS: DemoStudent[] = [
+  {
+    id: "stu-1",
+    name: "Aarav Mehta",
+    email: "aarav@coep.ac.in",
+    university: "COEP Technological University",
+    startupId: "s1",
+  },
+  {
+    id: "stu-2",
+    name: "Pooja Deshmukh",
+    email: "pooja@vjti.ac.in",
+    university: "VJTI Mumbai",
+    startupId: "s2",
+  },
+  {
+    id: "stu-3",
+    name: "Rohan Iyer",
+    email: "rohan@iiitb.ac.in",
+    university: "IIIT Bangalore",
+    startupId: "s3",
+  },
+  {
+    id: "stu-4",
+    name: "Ananya Sharma",
+    email: "ananya@iitd.ac.in",
+    university: "IIT Delhi",
+    startupId: "s4",
+  },
+  {
+    id: "stu-5",
+    name: "Vikram Nambiar",
+    email: "vikram@bits-pilani.ac.in",
+    university: "BITS Pilani",
+    startupId: "s5",
+  },
+  {
+    id: "stu-6",
+    name: "Sneha Sen",
+    email: "sneha@ju.ac.in",
+    university: "Jadavpur University",
+    startupId: "s6",
   },
 ];
 
