@@ -768,37 +768,112 @@ export const requestService = {
    * Fetch aggregated investor activity and audit trail strictly for startups belonging to this campus.
    * Universities W, Y and Z cannot see University X's requests or records.
    */
-  async getUniversityInvestorActivity(campusStartupIds: string[]): Promise<{
+  async getUniversityInvestorActivity(
+    arg:
+      | string[]
+      | {
+          campusStartupIds?: string[];
+          universityName?: string;
+          universityEmail?: string;
+          universityOrg?: string;
+        }
+  ): Promise<{
     dataRoomRequests: DataRoomRequestRecord[];
     connectionRequests: ConnectionRequestRecord[];
     auditLogs: DataRoomAuditRecord[];
+    discoveredStartupIds: string[];
   }> {
-    if (!campusStartupIds || campusStartupIds.length === 0) {
-      return { dataRoomRequests: [], connectionRequests: [], auditLogs: [] };
+    let cleanIds: string[] = Array.isArray(arg) ? arg.filter(Boolean) : (arg.campusStartupIds || []).filter(Boolean);
+    const univName = (!Array.isArray(arg) ? (arg.universityName || arg.universityOrg || "") : "").trim();
+    const univEmail = (!Array.isArray(arg) ? (arg.universityEmail || "") : "").trim();
+    const domain = univEmail.includes("@") ? univEmail.split("@")[1].toLowerCase().trim() : "";
+
+    // If cleanIds is empty, dynamically query all campus startups from Supabase
+    if (cleanIds.length === 0 && (univName || domain)) {
+      try {
+        const { data: dbStartups } = await (supabase as any)
+          .from("startups")
+          .select("id, name, university, founder_email");
+        if (Array.isArray(dbStartups)) {
+          const matched = dbStartups.filter((s: any) => {
+            const sUniv = (s.university || "").toLowerCase();
+            const sEmail = (s.founder_email || "").toLowerCase();
+            if (domain && sEmail.endsWith(domain)) return true;
+            if (univName && (sUniv.includes(univName.toLowerCase()) || univName.toLowerCase().includes(sUniv))) return true;
+            return false;
+          });
+          cleanIds = matched.map((s: any) => String(s.id));
+        }
+      } catch (err) {
+        console.warn("[RequestService] Error discovering campus startups:", err);
+      }
     }
 
-    const localDr = getLocalDrRequests().filter((r) => campusStartupIds.includes(r.startupId));
-    const localConn = getLocalConnRequests().filter((c) => c.startupId && campusStartupIds.includes(c.startupId));
-    const localAudit = getLocalAuditLogs().filter((a) => campusStartupIds.includes(a.startupId));
+    if (cleanIds.length === 0 && !domain) {
+      return { dataRoomRequests: [], connectionRequests: [], auditLogs: [], discoveredStartupIds: [] };
+    }
+
+    const localDr = getLocalDrRequests().filter(
+      (r) =>
+        (cleanIds.length > 0 && cleanIds.includes(r.startupId)) ||
+        (domain && r.founderEmail?.toLowerCase().endsWith(domain))
+    );
+    const localConn = getLocalConnRequests().filter(
+      (c) =>
+        (cleanIds.length > 0 && c.startupId && cleanIds.includes(c.startupId)) ||
+        (domain && (c.receiverEmail?.toLowerCase().endsWith(domain) || c.senderEmail?.toLowerCase().endsWith(domain)))
+    );
+    const localAudit = getLocalAuditLogs().filter(
+      (a) =>
+        (cleanIds.length > 0 && cleanIds.includes(a.startupId)) ||
+        (domain && a.userEmail?.toLowerCase().endsWith(domain))
+    );
 
     try {
-      const [drRes, connRes, auditRes] = await Promise.all([
-        (supabase as any)
-          .from("data_room_requests")
-          .select("*")
-          .in("startup_id", campusStartupIds)
-          .order("created_at", { ascending: false }),
-        (supabase as any)
-          .from("connection_requests")
-          .select("*")
-          .in("startup_id", campusStartupIds)
-          .order("created_at", { ascending: false }),
-        (supabase as any)
-          .from("data_room_audit_logs")
-          .select("*")
-          .in("startup_id", campusStartupIds)
-          .order("created_at", { ascending: false }),
-      ]);
+      let drQuery = (supabase as any)
+        .from("data_room_requests")
+        .select("*")
+        .order("created_at", { ascending: false });
+
+      const drOrClauses: string[] = [];
+      if (cleanIds.length > 0) {
+        drOrClauses.push(`startup_id.in.(${cleanIds.join(",")})`);
+      }
+      if (domain) {
+        drOrClauses.push(`founder_email.ilike.%${domain}`);
+      }
+      if (drOrClauses.length > 0) {
+        drQuery = drQuery.or(drOrClauses.join(","));
+      }
+
+      let connQuery = (supabase as any)
+        .from("connection_requests")
+        .select("*")
+        .order("created_at", { ascending: false });
+
+      const connOrClauses: string[] = [];
+      if (cleanIds.length > 0) {
+        connOrClauses.push(`startup_id.in.(${cleanIds.join(",")})`);
+      }
+      if (domain) {
+        connOrClauses.push(`receiver_email.ilike.%${domain}`, `sender_email.ilike.%${domain}`);
+      }
+      if (connOrClauses.length > 0) {
+        connQuery = connQuery.or(connOrClauses.join(","));
+      }
+
+      let auditQuery = (supabase as any)
+        .from("data_room_audit_logs")
+        .select("*")
+        .order("created_at", { ascending: false });
+
+      if (cleanIds.length > 0) {
+        auditQuery = auditQuery.in("startup_id", cleanIds);
+      } else if (domain) {
+        auditQuery = auditQuery.ilike("user_email", `%${domain}`);
+      }
+
+      const [drRes, connRes, auditRes] = await Promise.all([drQuery, connQuery, auditQuery]);
 
       const dbDr = Array.isArray(drRes?.data) ? drRes.data.map((d: any) => this.mapDbRequestToRecord(d)) : [];
       const dbConn = Array.isArray(connRes?.data) ? connRes.data.map((c: any) => this.mapDbConnToRecord(c)) : [];
@@ -826,6 +901,7 @@ export const requestService = {
         auditLogs: Array.from(mergedAuditMap.values()).sort(
           (a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime()
         ),
+        discoveredStartupIds: cleanIds,
       };
     } catch (err) {
       console.warn("[RequestService] DB getUniversityInvestorActivity exception:", err);
@@ -833,6 +909,7 @@ export const requestService = {
         dataRoomRequests: localDr,
         connectionRequests: localConn,
         auditLogs: localAudit,
+        discoveredStartupIds: cleanIds,
       };
     }
   },

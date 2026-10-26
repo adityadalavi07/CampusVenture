@@ -71,8 +71,13 @@ function InvestorInterest() {
   const { user } = useAuth();
   const myUniversity = user?.org || "";
 
-  // Strictly filter startups belonging to this authenticated university
-  const campusStartups = startups.filter((s) => isSameUniversity(myUniversity, s.university));
+  // Strictly filter startups belonging to this authenticated university using email domain & name
+  const campusStartups = startups.filter((s) =>
+    isSameUniversity(
+      { org: user?.org, email: user?.email },
+      { university: s.university, email: s.founderEmail }
+    )
+  );
   const campusStartupIds = campusStartups.map((s) => s.id);
 
   const [investors, setInvestors] = useState<Investor[]>([]);
@@ -87,27 +92,64 @@ function InvestorInterest() {
 
   useEffect(() => {
     let active = true;
-    Promise.all([
-      investorService.getAllInvestors(),
-      requestService.getUniversityInvestorActivity(campusStartupIds),
-      messageService.getAllMessagesForUser({ startupIds: campusStartupIds }),
-      Promise.all(campusStartupIds.map((id) => requestService.getDataRoomDocsForStartup(id))),
-    ]).then(([invList, activity, msgs, docsArrays]) => {
-      if (active) {
-        setInvestors(invList);
-        setLiveDrRequests(activity.dataRoomRequests);
-        setLiveConnRequests(activity.connectionRequests);
-        setAuditLogs(activity.auditLogs);
-        setCampusMessages(msgs);
-        setCampusDocs(docsArrays.flat());
-        setLoading(false);
+
+    const fetchAll = async () => {
+      try {
+        const [invList, activity, msgs] = await Promise.all([
+          investorService.getAllInvestors(),
+          requestService.getUniversityInvestorActivity({
+            campusStartupIds,
+            universityName: myUniversity,
+            universityEmail: user?.email,
+            universityOrg: user?.org,
+          }),
+          messageService.getAllMessagesForUser({
+            startupIds: campusStartupIds.length > 0 ? campusStartupIds : undefined,
+            userEmail: user?.email,
+          }),
+        ]);
+
+        if (active) {
+          setInvestors(invList);
+          setLiveDrRequests(activity.dataRoomRequests);
+          setLiveConnRequests(activity.connectionRequests);
+          setAuditLogs(activity.auditLogs);
+          setCampusMessages(msgs);
+
+          const allStIds = Array.from(
+            new Set([...campusStartupIds, ...(activity.discoveredStartupIds || [])])
+          );
+          if (allStIds.length > 0) {
+            const docsArrays = await Promise.all(
+              allStIds.map((id) => requestService.getDataRoomDocsForStartup(id))
+            );
+            if (active) setCampusDocs(docsArrays.flat());
+          }
+          setLoading(false);
+        }
+      } catch (err) {
+        console.warn("Error fetching university investor activity:", err);
+        if (active) setLoading(false);
       }
+    };
+
+    fetchAll();
+
+    // Subscribe to real-time updates and poll every 4s to ensure cross-browser synchronization
+    const unsubDr = requestService.subscribeToDataRoomRequests(() => {
+      fetchAll();
     });
+
+    const interval = setInterval(() => {
+      fetchAll();
+    }, 4000);
 
     return () => {
       active = false;
+      unsubDr();
+      clearInterval(interval);
     };
-  }, [campusStartupIds.length, myUniversity]);
+  }, [user?.email, user?.org, campusStartupIds.join(",")]);
 
   // Combine store state with live database requests
   const campusRequests = [
