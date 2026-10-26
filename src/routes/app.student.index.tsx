@@ -37,9 +37,10 @@ import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import { Progress } from "@/components/ui/progress";
 import { Skeleton } from "@/components/ui/skeleton";
-import { DEMO_INVESTORS, READINESS_WEIGHTS, formatMoney, matchScore } from "@/lib/demo-data";
+import { READINESS_WEIGHTS, formatMoney, matchScore, type Investor } from "@/lib/demo-data";
 import { STATUS_LABEL, completeness, useVenture, type StartupRecord } from "@/lib/store";
 import { useAuth } from "@/lib/auth-context";
+import { investorService } from "@/services/investorService";
 import {
   runAIReadinessAnalysis,
   getSavedAssessment,
@@ -182,20 +183,34 @@ function StudentDashboard() {
     }
   }, [user, STARTUP, updateStartup]);
 
-  // Weekly updates state
+  // Weekly updates state (scoped to user identity)
+  const weeklyStorageKey = `cv_student_weekly_updates_${user?.id || user?.email || "anon"}`;
   const [weeklyUpdates, setWeeklyUpdates] = useState<WeeklyUpdate[]>(() => {
     if (typeof window !== "undefined") {
       try {
-        const raw = window.localStorage.getItem("cv_student_weekly_updates");
+        const raw = window.localStorage.getItem(weeklyStorageKey);
         if (raw) return JSON.parse(raw);
       } catch {
         /* ignore */
       }
     }
-    return DEFAULT_WEEKLY_UPDATES;
+    return [];
   });
   const [newUpdateContent, setNewUpdateContent] = useState("");
   const [selectedTags, setSelectedTags] = useState<string[]>(["ShippedFeature"]);
+
+  // Registered investors from Supabase
+  const [investors, setInvestors] = useState<Investor[]>([]);
+
+  useEffect(() => {
+    let active = true;
+    investorService.getAllInvestors().then((data) => {
+      if (active) setInvestors(data);
+    });
+    return () => {
+      active = false;
+    };
+  }, []);
 
   // Co-founders state
   const [coFounders, setCoFounders] = useState<CoFounder[]>(() => {
@@ -299,7 +314,7 @@ function StudentDashboard() {
     const updated = [newEntry, ...weeklyUpdates];
     setWeeklyUpdates(updated);
     try {
-      window.localStorage.setItem("cv_student_weekly_updates", JSON.stringify(updated));
+      window.localStorage.setItem(weeklyStorageKey, JSON.stringify(updated));
     } catch {
       /* ignore */
     }
@@ -313,7 +328,7 @@ function StudentDashboard() {
     const updated = weeklyUpdates.filter((u) => u.id !== id);
     setWeeklyUpdates(updated);
     try {
-      window.localStorage.setItem("cv_student_weekly_updates", JSON.stringify(updated));
+      window.localStorage.setItem(weeklyStorageKey, JSON.stringify(updated));
     } catch {
       /* ignore */
     }
@@ -571,7 +586,7 @@ function StudentDashboard() {
   const review = assessment(STARTUP, scores);
   const pct = completeness(STARTUP);
 
-  const matches = DEMO_INVESTORS.map((investor) => ({
+  const matches = investors.map((investor) => ({
     investor,
     ...matchScore(investor, STARTUP),
   })).sort((a, b) => b.score - a.score);

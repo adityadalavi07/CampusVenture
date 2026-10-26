@@ -103,11 +103,17 @@ function DiscoverInvestors() {
       senderOrg: user?.org || startup.university,
       receiverId: investor.id,
       receiverName: investor.name,
+      receiverEmail: investor.email,
       startupId: startup.id,
       startupName: startup.name,
       message: `Hi ${investor.name.split(" ")[0]}, I am the founder of ${startup.name} (${startup.university}). We would love to connect with ${investor.organization}.`,
     });
-    notify("investor", "New connection request", `${startup.name} founder sent a connection request.`);
+    notify("investor", "New connection request", `${startup.name} founder sent a connection request.`, {
+      recipientEmail: investor.email,
+      recipientUserId: investor.id,
+      senderEmail: user?.email,
+      senderUserId: user?.id,
+    });
     toast.success(`Connection request sent to ${investor.name}`);
   };
 
@@ -232,7 +238,12 @@ function DiscoverInvestors() {
                             "student",
                             `Hi ${investor.name.split(" ")[0]}, I'm building ${startup.name} — ${startup.tagline} Would you be open to a short intro call?`
                           );
-                          notify("investor", "New intro message", `${startup.name} reached out.`);
+                          notify("investor", "New intro message", `${startup.name} reached out.`, {
+                            recipientEmail: investor.email,
+                            recipientUserId: investor.id,
+                            senderEmail: user?.email,
+                            senderUserId: user?.id,
+                          });
                           toast.success(`Intro message sent to ${investor.name}`);
                         }}
                       >

@@ -28,7 +28,7 @@ import {
 } from "@/components/ui/dialog";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
-import { DEMO_INVESTORS, DEMO_STUDENTS, formatMoney, matchScore } from "@/lib/demo-data";
+import { formatMoney, matchScore, type Investor } from "@/lib/demo-data";
 import { STATUS_LABEL, useVenture } from "@/lib/store";
 import { useAuth } from "@/lib/auth-context";
 import { supabase } from "@/lib/supabase";
@@ -143,11 +143,18 @@ function StartupDetail() {
     } catch {}
   }
 
-  const investor = {
-    ...DEMO_INVESTORS[0]!,
-    id: user?.id || DEMO_INVESTORS[0]!.id,
-    name: user?.name || DEMO_INVESTORS[0]!.name,
-    organization: user?.org || savedInvestorOrg || DEMO_INVESTORS[0]!.organization,
+  const investor: Investor = {
+    id: user?.id || "",
+    name: user?.name || "Investor Partner",
+    organization: user?.org || savedInvestorOrg || "Venture Fund",
+    email: user?.email,
+    sectors: [],
+    stages: [],
+    thesis: "",
+    ticketMin: 0,
+    ticketMax: 0,
+    geography: "India",
+    type: "Angel / Fund",
   };
   const { score, reasons } = matchScore(investor, startup);
   const isSaved = saved.includes(startup.id);
@@ -216,9 +223,7 @@ function StartupDetail() {
 
     let resolvedFounderEmail =
       startup.founderEmail ||
-      (startup as any).founder_email ||
-      DEMO_STUDENTS.find((s) => s.startupId === startup.id)?.email ||
-      (startup.id === "s1" ? "aarav@coep.ac.in" : undefined);
+      (startup as any).founder_email;
 
     let resolvedFounderId = (startup as any).founderId || (startup as any).founder_id;
 
@@ -297,9 +302,7 @@ function StartupDetail() {
 
     let resolvedFounderEmail =
       startup.founderEmail ||
-      (startup as any).founder_email ||
-      DEMO_STUDENTS.find((s) => s.startupId === startup.id)?.email ||
-      (startup.id === "s1" ? "aarav@coep.ac.in" : undefined);
+      (startup as any).founder_email;
 
     let resolvedReceiverId = (startup as any).founderId || (startup as any).founder_id;
 

@@ -37,7 +37,6 @@ import { Label } from "@/components/ui/label";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Checkbox } from "@/components/ui/checkbox";
 import { ScrollArea } from "@/components/ui/scroll-area";
-import { DEMO_INVESTORS } from "@/lib/demo-data";
 import { timeAgo, useVenture } from "@/lib/store";
 import { useAuth } from "@/lib/auth-context";
 import {
@@ -104,8 +103,8 @@ const CATEGORIES: DataRoomDocCategory[] = [
 function InvestorDataRooms() {
   const { startups, signNda, registerDownload, notify } = useVenture();
   const { user } = useAuth();
-  const myInvestorId = user?.id || "usr-investor";
-  const investorName = user?.name || DEMO_INVESTORS[0]?.name || "Investor";
+  const myInvestorId = user?.id || "";
+  const investorName = user?.name || "Investor Partner";
 
   const [liveRequests, setLiveRequests] = useState<DataRoomRequestRecord[]>([]);
   const [startupDocsMap, setStartupDocsMap] = useState<Record<string, DataRoomDocRecord[]>>({});
@@ -137,7 +136,7 @@ function InvestorDataRooms() {
   // NDA signing state
   const [ndaRequest, setNdaRequest] = useState<DataRoomRequestRecord | null>(null);
   const [signerName, setSignerName] = useState(investorName);
-  const [signerOrg, setSignerOrg] = useState(user?.org || DEMO_INVESTORS[0]?.organization || "Venture Capital Partner");
+  const [signerOrg, setSignerOrg] = useState(user?.org || "Venture Capital Partner");
   const [ndaAgreed, setNdaAgreed] = useState(false);
   const [isSigning, setIsSigning] = useState(false);
 
@@ -415,7 +414,7 @@ function InvestorDataRooms() {
   const openNdaModal = (req: DataRoomRequestRecord) => {
     setNdaRequest(req);
     setSignerName(user?.name || investorName);
-    setSignerOrg(user?.org || DEMO_INVESTORS[0]?.organization || "Venture Capital Partner");
+    setSignerOrg(user?.org || "Venture Capital Partner");
     setNdaAgreed(false);
   };
 

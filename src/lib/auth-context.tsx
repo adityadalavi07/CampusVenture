@@ -844,7 +844,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     []
   );
 
-  // Sign out
+  // Sign out - complete session teardown & storage purge to prevent cross-account leaks
   const signOut = useCallback(async () => {
     try {
       await supabase.auth.signOut();
@@ -853,10 +853,33 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     }
 
     setUser(null);
-    try {
-      window.localStorage.removeItem(AUTH_STORAGE_KEY);
-    } catch {
-      /* ignore */
+    if (typeof window !== "undefined") {
+      try {
+        window.localStorage.removeItem(AUTH_STORAGE_KEY);
+        window.localStorage.removeItem("campusventure.saas.live.v3");
+        window.localStorage.removeItem("campusventure.state.v1");
+        window.localStorage.removeItem("campusventure.state.v2");
+        window.localStorage.removeItem("campusventure.dataroom.requests.v3");
+        window.localStorage.removeItem("campusventure.connections.requests.v2");
+        window.localStorage.removeItem("campusventure.notifications.live.v2");
+        window.localStorage.removeItem("campusventure.profile.investor");
+        window.localStorage.removeItem("cv_oauth_pending_role");
+        window.sessionStorage.clear();
+
+        // Remove any user-scoped keys
+        const keysToRemove: string[] = [];
+        for (let i = 0; i < window.localStorage.length; i++) {
+          const key = window.localStorage.key(i);
+          if (key && (key.startsWith("campusventure.saved.") || key.startsWith("campusventure.state."))) {
+            keysToRemove.push(key);
+          }
+        }
+        keysToRemove.forEach((k) => window.localStorage.removeItem(k));
+
+        window.dispatchEvent(new CustomEvent("cv:session-cleared"));
+      } catch {
+        /* ignore */
+      }
     }
 
     toast.success("You have been logged out.");

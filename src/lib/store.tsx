@@ -11,6 +11,7 @@ import { DEMO_STARTUPS, type Role, type Startup } from "@/lib/demo-data";
 import { ventureService } from "@/services/ventureService";
 import { notificationService } from "@/services/notificationService";
 import { generateUUID, isValidUUID } from "@/lib/uuid";
+import { useAuth } from "@/lib/auth-context";
 
 export type ReviewStatus = "draft" | "pending" | "approved" | "rejected";
 
@@ -194,8 +195,26 @@ interface Ctx extends State {
 const VentureContext = createContext<Ctx | null>(null);
 
 export function VentureProvider({ children }: { children: ReactNode }) {
+  const { user } = useAuth();
   const [state, setState] = useState<State>(() => seed());
   const [hydrated, setHydrated] = useState(false);
+
+  // Synchronize user-isolated watchlist (saved startups)
+  useEffect(() => {
+    if (!user?.id) {
+      setState((prev) => ({ ...prev, saved: [] }));
+      return;
+    }
+    if (typeof window !== "undefined") {
+      try {
+        const raw = window.localStorage.getItem(`campusventure.saved.${user.id}`);
+        const userSaved = raw ? JSON.parse(raw) : [];
+        setState((prev) => ({ ...prev, saved: Array.isArray(userSaved) ? userSaved : [] }));
+      } catch {
+        setState((prev) => ({ ...prev, saved: [] }));
+      }
+    }
+  }, [user?.id]);
 
   useEffect(() => {
     try {
@@ -207,13 +226,44 @@ export function VentureProvider({ children }: { children: ReactNode }) {
       if (raw) {
         const parsed = JSON.parse(raw);
         if (parsed && typeof parsed === "object") {
-          setState((prev) => ({ ...prev, ...parsed }));
+          setState((prev) => ({
+            ...prev,
+            startups: Array.isArray(parsed.startups) ? parsed.startups : prev.startups,
+            programs: Array.isArray(parsed.programs) ? parsed.programs : prev.programs,
+            // Strictly enforce empty initial state for user-private collections
+            saved: user?.id
+              ? (() => {
+                  try {
+                    const s = window.localStorage.getItem(`campusventure.saved.${user.id}`);
+                    return s ? JSON.parse(s) : [];
+                  } catch {
+                    return [];
+                  }
+                })()
+              : [],
+            requests: [],
+            notifications: [],
+            messages: [],
+            meetings: [],
+          }));
         }
       }
     } catch {
       /* corrupt storage: keep clean seed */
     }
     setHydrated(true);
+
+    const handleSessionCleared = () => {
+      setState((prev) => ({
+        ...prev,
+        saved: [],
+        requests: [],
+        notifications: [],
+        messages: [],
+        meetings: [],
+      }));
+    };
+    window.addEventListener("cv:session-cleared", handleSessionCleared);
 
     const unsub = ventureService.subscribeToStartups((remoteStartups) => {
       if (Array.isArray(remoteStartups) && remoteStartups.length > 0) {
@@ -250,100 +300,54 @@ export function VentureProvider({ children }: { children: ReactNode }) {
       }
     });
 
-    const unsubNotifsStudent = notificationService.subscribeToNotifications("student", undefined, (fresh) => {
-      if (Array.isArray(fresh) && fresh.length > 0) {
-        setState((prev) => {
-          const map = new Map<string, Notification>();
-          prev.notifications.forEach((n) => map.set(n.id, n));
-          fresh.forEach((f) => {
-            map.set(f.id, {
-              id: f.id,
-              role: f.role,
-              recipientEmail: f.recipientEmail,
-              recipientUserId: f.recipientUserId,
-              senderEmail: f.senderEmail,
-              senderUserId: f.senderUserId,
-              title: f.title,
-              body: f.body,
-              at: f.createdAt,
-              read: f.read,
-            });
-          });
-          return {
-            ...prev,
-            notifications: Array.from(map.values()).sort(
-              (a, b) => new Date(b.at).getTime() - new Date(a.at).getTime()
-            ),
-          };
-        });
-      }
-    });
-
-    const unsubNotifsInvestor = notificationService.subscribeToNotifications("investor", undefined, (fresh) => {
-      if (Array.isArray(fresh) && fresh.length > 0) {
-        setState((prev) => {
-          const map = new Map<string, Notification>();
-          prev.notifications.forEach((n) => map.set(n.id, n));
-          fresh.forEach((f) => {
-            map.set(f.id, {
-              id: f.id,
-              role: f.role,
-              recipientEmail: f.recipientEmail,
-              recipientUserId: f.recipientUserId,
-              senderEmail: f.senderEmail,
-              senderUserId: f.senderUserId,
-              title: f.title,
-              body: f.body,
-              at: f.createdAt,
-              read: f.read,
-            });
-          });
-          return {
-            ...prev,
-            notifications: Array.from(map.values()).sort(
-              (a, b) => new Date(b.at).getTime() - new Date(a.at).getTime()
-            ),
-          };
-        });
-      }
-    });
-
-    const unsubNotifsUni = notificationService.subscribeToNotifications("university", undefined, (fresh) => {
-      if (Array.isArray(fresh) && fresh.length > 0) {
-        setState((prev) => {
-          const map = new Map<string, Notification>();
-          prev.notifications.forEach((n) => map.set(n.id, n));
-          fresh.forEach((f) => {
-            map.set(f.id, {
-              id: f.id,
-              role: f.role,
-              recipientEmail: f.recipientEmail,
-              recipientUserId: f.recipientUserId,
-              senderEmail: f.senderEmail,
-              senderUserId: f.senderUserId,
-              title: f.title,
-              body: f.body,
-              at: f.createdAt,
-              read: f.read,
-            });
-          });
-          return {
-            ...prev,
-            notifications: Array.from(map.values()).sort(
-              (a, b) => new Date(b.at).getTime() - new Date(a.at).getTime()
-            ),
-          };
-        });
-      }
-    });
-
     return () => {
+      window.removeEventListener("cv:session-cleared", handleSessionCleared);
       unsub();
-      unsubNotifsStudent();
-      unsubNotifsInvestor();
-      unsubNotifsUni();
     };
   }, []);
+
+  // Real-time synchronization of notifications strictly scoped to the authenticated user
+  useEffect(() => {
+    if (!user?.email && !user?.id) {
+      setState((prev) => ({ ...prev, notifications: [] }));
+      return;
+    }
+
+    const unsub = notificationService.subscribeToNotifications(
+      user.role,
+      user.email,
+      (fresh) => {
+        if (Array.isArray(fresh)) {
+          setState((prev) => {
+            const map = new Map<string, Notification>();
+            fresh.forEach((f) => {
+              map.set(f.id, {
+                id: f.id,
+                role: f.role,
+                recipientEmail: f.recipientEmail,
+                recipientUserId: f.recipientUserId,
+                senderEmail: f.senderEmail,
+                senderUserId: f.senderUserId,
+                title: f.title,
+                body: f.body,
+                at: f.createdAt,
+                read: f.read,
+              });
+            });
+            return {
+              ...prev,
+              notifications: Array.from(map.values()).sort(
+                (a, b) => new Date(b.at).getTime() - new Date(a.at).getTime()
+              ),
+            };
+          });
+        }
+      },
+      user.id
+    );
+
+    return () => unsub();
+  }, [user?.id, user?.email, user?.role]);
 
   // Cross-tab and multi-window live sync: updates in one role/tab immediately reflect across all roles
   useEffect(() => {
@@ -383,7 +387,13 @@ export function VentureProvider({ children }: { children: ReactNode }) {
     const timer = window.setTimeout(() => {
       const id = idle(() => {
         try {
-          window.localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
+          // STRICT USER ISOLATION: Only cache public catalog items (startups, programs) in global storage.
+          // Private user collections (saved, requests, notifications, messages, meetings) are NEVER persisted to global storage!
+          const publicCatalog = {
+            startups: state.startups,
+            programs: state.programs,
+          };
+          window.localStorage.setItem(STORAGE_KEY, JSON.stringify(publicCatalog));
         } catch {
           /* quota: ignore */
         }
@@ -480,9 +490,17 @@ export function VentureProvider({ children }: { children: ReactNode }) {
         let added = false;
         setState((prev) => {
           added = !prev.saved.includes(id);
+          const nextSaved = added ? [...prev.saved, id] : prev.saved.filter((x) => x !== id);
+          if (user?.id && typeof window !== "undefined") {
+            try {
+              window.localStorage.setItem(`campusventure.saved.${user.id}`, JSON.stringify(nextSaved));
+            } catch {
+              /* ignore */
+            }
+          }
           return {
             ...prev,
-            saved: added ? [...prev.saved, id] : prev.saved.filter((x) => x !== id),
+            saved: nextSaved,
           };
         });
         return added;

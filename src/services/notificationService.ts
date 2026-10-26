@@ -15,22 +15,25 @@ export interface NotificationRecord {
   createdAt: string;
 }
 
-const LOCAL_NOTIFICATIONS_KEY = "campusventure.notifications.live.v2";
+function getLocalNotificationsKey(userEmail?: string, userId?: string): string {
+  const identifier = (userEmail || userId || "guest").toLowerCase().trim().replace(/[^a-z0-9_-]/g, "_");
+  return `campusventure.notifications.live.${identifier}`;
+}
 
-function getLocalNotifications(): NotificationRecord[] {
+function getLocalNotifications(userEmail?: string, userId?: string): NotificationRecord[] {
   if (typeof window === "undefined") return [];
   try {
-    const raw = localStorage.getItem(LOCAL_NOTIFICATIONS_KEY);
+    const raw = localStorage.getItem(getLocalNotificationsKey(userEmail, userId));
     return raw ? JSON.parse(raw) : [];
   } catch {
     return [];
   }
 }
 
-function saveLocalNotifications(items: NotificationRecord[]): void {
+function saveLocalNotifications(items: NotificationRecord[], userEmail?: string, userId?: string): void {
   if (typeof window === "undefined") return;
   try {
-    localStorage.setItem(LOCAL_NOTIFICATIONS_KEY, JSON.stringify(items.slice(0, 60)));
+    localStorage.setItem(getLocalNotificationsKey(userEmail, userId), JSON.stringify(items.slice(0, 60)));
   } catch {
     /* ignore */
   }
@@ -86,9 +89,9 @@ export const notificationService = {
       createdAt: now,
     };
 
-    // Update local notifications cache
-    const local = getLocalNotifications();
-    saveLocalNotifications([record, ...local]);
+    // Update local notifications cache for recipient
+    const local = getLocalNotifications(cleanRecipientEmail, safeRecipientUserId);
+    saveLocalNotifications([record, ...local], cleanRecipientEmail, safeRecipientUserId);
 
     // Persist to Supabase
     try {
@@ -106,12 +109,6 @@ export const notificationService = {
       }
       if (safeRecipientUserId) {
         payload["user_id"] = safeRecipientUserId;
-      }
-      if (cleanSenderEmail) {
-        payload["sender_email"] = cleanSenderEmail;
-      }
-      if (safeSenderUserId) {
-        payload["sender_id"] = safeSenderUserId;
       }
 
       const { error } = await (supabase as any).from("notifications").insert(payload);
@@ -142,7 +139,7 @@ export const notificationService = {
       return [];
     }
 
-    const local = getLocalNotifications().filter((n) => {
+    const local = getLocalNotifications(cleanEmail, userId).filter((n) => {
       // Exclude self-notifications
       if (cleanEmail && n.senderEmail && n.senderEmail.toLowerCase() === cleanEmail) {
         return false;
@@ -217,7 +214,7 @@ export const notificationService = {
         const merged = Array.from(map.values()).sort(
           (a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime()
         );
-        saveLocalNotifications(merged);
+        saveLocalNotifications(merged, cleanEmail, userId);
         return merged;
       }
     } catch (err) {
@@ -230,9 +227,9 @@ export const notificationService = {
   /**
    * Mark all notifications as read for a given role/user
    */
-  async markAllRead(role: Role, userEmail?: string | undefined): Promise<void> {
+  async markAllRead(role: Role, userEmail?: string | undefined, userId?: string | undefined): Promise<void> {
     const cleanEmail = userEmail?.toLowerCase().trim();
-    const local = getLocalNotifications().map((n) => {
+    const local = getLocalNotifications(cleanEmail, userId).map((n) => {
       if (
         n.role === role &&
         (!n.recipientEmail || (cleanEmail && n.recipientEmail.toLowerCase() === cleanEmail))
@@ -241,7 +238,7 @@ export const notificationService = {
       }
       return n;
     });
-    saveLocalNotifications(local);
+    saveLocalNotifications(local, cleanEmail, userId);
 
     try {
       const query = (supabase as any).from("notifications").update({ read: true });
@@ -259,9 +256,9 @@ export const notificationService = {
   /**
    * Clear all notifications so they disappear from the panel
    */
-  async clearAllNotifications(role: Role, userEmail?: string | undefined): Promise<void> {
+  async clearAllNotifications(role: Role, userEmail?: string | undefined, userId?: string | undefined): Promise<void> {
     const cleanEmail = userEmail?.toLowerCase().trim();
-    const local = getLocalNotifications().filter((n) => {
+    const local = getLocalNotifications(cleanEmail, userId).filter((n) => {
       if (n.role !== role) return true;
       if (cleanEmail && n.recipientEmail && n.recipientEmail.toLowerCase() === cleanEmail) {
         return false;
@@ -269,7 +266,7 @@ export const notificationService = {
       if (!n.recipientEmail) return false;
       return true;
     });
-    saveLocalNotifications(local);
+    saveLocalNotifications(local, cleanEmail, userId);
 
     try {
       const query = (supabase as any).from("notifications").update({ read: true });
@@ -290,21 +287,22 @@ export const notificationService = {
   subscribeToNotifications(
     role: Role,
     userEmail: string | undefined,
-    onUpdate: (notifications: NotificationRecord[]) => void
+    onUpdate: (notifications: NotificationRecord[]) => void,
+    userId?: string | undefined
   ) {
     let pollingTimer: any = null;
 
     // 1. Initial fetch
-    notificationService.getNotificationsForUser(role, userEmail).then(onUpdate);
+    notificationService.getNotificationsForUser(role, userEmail, userId).then(onUpdate);
 
     // 2. Real-time postgres channel listener
     const channel = supabase
-      .channel(`public-notifications-${role}-${userEmail || "all"}`)
+      .channel(`public-notifications-${role}-${userEmail || userId || "all"}`)
       .on(
         "postgres_changes",
         { event: "*", schema: "public", table: "notifications" },
         async () => {
-          const fresh = await notificationService.getNotificationsForUser(role, userEmail);
+          const fresh = await notificationService.getNotificationsForUser(role, userEmail, userId);
           onUpdate(fresh);
         }
       )
@@ -312,7 +310,7 @@ export const notificationService = {
 
     // 3. Periodic fallback poll every 5 seconds to ensure cross-device consistency
     pollingTimer = setInterval(async () => {
-      const fresh = await notificationService.getNotificationsForUser(role, userEmail);
+      const fresh = await notificationService.getNotificationsForUser(role, userEmail, userId);
       onUpdate(fresh);
     }, 5000);
 

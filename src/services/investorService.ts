@@ -14,18 +14,19 @@ export const investorService = {
 
       if (error) {
         console.warn("[InvestorService] Notice querying profiles for investors:", error.message);
-        return DEMO_INVESTORS;
+        return [];
       }
 
       if (Array.isArray(data) && data.length > 0) {
-        const dbInvestors: Investor[] = data.map((p: any, idx: number) => {
-          const org = p.org || "Venture Capital Partner";
+        const dbInvestors: Investor[] = data.map((p: any) => {
+          const org = p.org || "Accredited Investor";
           const defaultSectors = ["AI", "SaaS", "FinTech", "HealthTech", "EdTech"];
           const defaultStages: Stage[] = ["Idea", "Prototype", "MVP", "Early Traction"];
 
           return {
             id: p.id,
             name: p.name || p.email?.split("@")[0] || "Accredited Investor",
+            email: p.email,
             organization: org,
             type: "Seed / Pre-Seed Venture Fund",
             sectors: defaultSectors,
@@ -38,20 +39,13 @@ export const investorService = {
           };
         });
 
-        // Merge with DEMO_INVESTORS without duplicates by ID or name
-        const combined = [...dbInvestors];
-        for (const demo of DEMO_INVESTORS) {
-          if (!combined.some((c) => c.id === demo.id || c.name.toLowerCase() === demo.name.toLowerCase())) {
-            combined.push(demo);
-          }
-        }
-        return combined;
+        return dbInvestors;
       }
 
-      return DEMO_INVESTORS;
+      return [];
     } catch (err) {
       console.warn("[InvestorService] Network error fetching investors:", err);
-      return DEMO_INVESTORS;
+      return [];
     }
   },
 

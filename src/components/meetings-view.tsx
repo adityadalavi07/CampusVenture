@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { CalendarClock, Check, X } from "lucide-react";
 import { toast } from "sonner";
 import { Badge } from "@/components/ui/badge";
@@ -13,29 +13,49 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
-import { DEMO_INVESTORS } from "@/lib/demo-data";
-import { MY_INVESTOR_ID, MY_STARTUP_ID, formatWhen, useVenture } from "@/lib/store";
+import { formatWhen, useVenture } from "@/lib/store";
 import { useAuth } from "@/lib/auth-context";
+import { investorService } from "@/services/investorService";
+import type { Investor } from "@/lib/demo-data";
 
 export function MeetingsView({ as }: { as: "student" | "investor" }) {
   const { meetings, startups, requestMeeting, setMeetingStatus, notify } = useVenture();
   const { user } = useAuth();
+  const [investors, setInvestors] = useState<Investor[]>([]);
+
+  useEffect(() => {
+    let active = true;
+    investorService.getAllInvestors().then((data) => {
+      if (active) setInvestors(data);
+    });
+    return () => {
+      active = false;
+    };
+  }, []);
+
   const currentStartupId =
     startups.find(
       (s) =>
         (user?.email && s.founderEmail?.toLowerCase() === user.email.toLowerCase()) ||
         (user?.name && s.founder === user.name)
-    )?.id || MY_STARTUP_ID;
+    )?.id || "";
 
   const mine = meetings.filter((m) =>
     as === "student"
-      ? m.startupId === currentStartupId || m.startupId === MY_STARTUP_ID
-      : m.investorId === MY_INVESTOR_ID,
+      ? (currentStartupId && m.startupId === currentStartupId)
+      : (user?.id && m.investorId === user.id)
   );
 
-  const [target, setTarget] = useState(
-    as === "student" ? DEMO_INVESTORS[0]!.id : startups[0]?.id ?? MY_STARTUP_ID,
-  );
+  const [target, setTarget] = useState("");
+
+  useEffect(() => {
+    if (as === "student" && investors.length > 0 && !target) {
+      setTarget(investors[0].id);
+    } else if (as === "investor" && startups.length > 0 && !target) {
+      setTarget(startups[0].id);
+    }
+  }, [as, investors, startups, target]);
+
   const [title, setTitle] = useState("Intro call");
   const [when, setWhen] = useState("");
   const [minutes, setMinutes] = useState("30");
@@ -45,9 +65,10 @@ export function MeetingsView({ as }: { as: "student" | "investor" }) {
       toast.error("Pick a date and time.");
       return;
     }
+    const myInvId = user?.id || "";
     requestMeeting({
       startupId: as === "student" ? currentStartupId : target,
-      investorId: as === "student" ? target : MY_INVESTOR_ID,
+      investorId: as === "student" ? target : myInvId,
       title: title.trim() || "Meeting",
       at: new Date(when).toISOString(),
       minutes: Number(minutes),
@@ -60,7 +81,7 @@ export function MeetingsView({ as }: { as: "student" | "investor" }) {
 
   const label = (sId: string, iId: string) =>
     as === "student"
-      ? DEMO_INVESTORS.find((i) => i.id === iId)?.name ?? "Investor"
+      ? investors.find((i) => i.id === iId)?.name ?? "Investor Partner"
       : startups.find((s) => s.id === sId)?.name ?? "Startup";
 
   return (
@@ -139,7 +160,7 @@ export function MeetingsView({ as }: { as: "student" | "investor" }) {
               </SelectTrigger>
               <SelectContent>
                 {as === "student"
-                  ? DEMO_INVESTORS.map((i) => (
+                  ? investors.map((i) => (
                       <SelectItem key={i.id} value={i.id}>
                         {i.name} — {i.organization}
                       </SelectItem>

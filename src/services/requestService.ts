@@ -335,10 +335,17 @@ export const requestService = {
    * Fetch all data room requests made by an investor
    */
   async getDataRoomRequestsForInvestor(investorId: string, investorEmail?: string): Promise<DataRoomRequestRecord[]> {
+    const cleanId = investorId?.trim();
+    const cleanEmail = investorEmail?.toLowerCase().trim();
+
+    if (!cleanId && !cleanEmail) {
+      return [];
+    }
+
     const local = getLocalDrRequests().filter(
       (r) =>
-        r.investorId === investorId ||
-        (investorEmail && r.investorEmail?.toLowerCase() === investorEmail.toLowerCase())
+        (cleanId && r.investorId === cleanId) ||
+        (cleanEmail && r.investorEmail?.toLowerCase() === cleanEmail)
     );
 
     try {
@@ -347,10 +354,12 @@ export const requestService = {
         .select("*")
         .order("created_at", { ascending: false });
 
-      if (investorEmail) {
-        query = query.or(`investor_id.eq.${investorId},investor_email.ilike.${investorEmail.trim()}`);
-      } else {
-        query = query.eq("investor_id", investorId);
+      if (cleanId && cleanEmail) {
+        query = query.or(`investor_id.eq.${cleanId},investor_email.ilike.${cleanEmail}`);
+      } else if (cleanEmail) {
+        query = query.ilike("investor_email", cleanEmail);
+      } else if (cleanId) {
+        query = query.eq("investor_id", cleanId);
       }
 
       const { data, error } = await query;
@@ -804,15 +813,19 @@ export const requestService = {
     founderEmail?: string | undefined;
   }): Promise<DataRoomRequestRecord[]> {
     const { startupIds, founderId, founderEmail } = params;
-    const cleanIds = startupIds.filter(Boolean);
+    const cleanIds = (startupIds || []).filter(Boolean);
     const cleanEmail = founderEmail?.toLowerCase().trim();
+
+    // If no startup, email, or founder identity provided, return empty list (no leakage)
+    if (cleanIds.length === 0 && !cleanEmail && !founderId) {
+      return [];
+    }
 
     const local = getLocalDrRequests().filter(
       (r) =>
-        cleanIds.includes(r.startupId) ||
+        (cleanIds.length > 0 && cleanIds.includes(r.startupId)) ||
         (cleanEmail && r.founderEmail?.toLowerCase() === cleanEmail) ||
-        (founderId && r.founderId === founderId) ||
-        (cleanIds.length === 0 && r.startupId === "s1")
+        (founderId && r.founderId === founderId)
     );
 
     try {
@@ -831,6 +844,8 @@ export const requestService = {
 
       if (orClauses.length > 0) {
         query = query.or(orClauses.join(","));
+      } else {
+        return local;
       }
 
       const { data, error } = await query;
@@ -1081,12 +1096,17 @@ export const requestService = {
     userEmail?: string,
     startupIds: string[] = []
   ): Promise<ConnectionRequestRecord[]> {
+    const cleanUserId = userId?.trim();
     const cleanEmail = userEmail?.toLowerCase().trim();
-    const cleanIds = startupIds.filter(Boolean);
+    const cleanIds = (startupIds || []).filter(Boolean);
+
+    if (!cleanUserId && !cleanEmail && cleanIds.length === 0) {
+      return [];
+    }
 
     const local = getLocalConnRequests().filter(
       (c) =>
-        c.receiverId === userId ||
+        (cleanUserId && c.receiverId === cleanUserId) ||
         (cleanEmail && c.receiverEmail?.toLowerCase() === cleanEmail) ||
         (c.startupId && cleanIds.includes(c.startupId))
     );
@@ -1097,9 +1117,14 @@ export const requestService = {
         .select("*")
         .order("created_at", { ascending: false });
 
-      const orClauses: string[] = [`receiver_id.eq.${userId}`];
+      const orClauses: string[] = [];
+      if (cleanUserId) orClauses.push(`receiver_id.eq.${cleanUserId}`);
       if (cleanEmail) orClauses.push(`receiver_email.ilike.${cleanEmail}`);
       if (cleanIds.length > 0) orClauses.push(`startup_id.in.(${cleanIds.join(",")})`);
+
+      if (orClauses.length === 0) {
+        return local;
+      }
 
       query = query.or(orClauses.join(","));
 
@@ -1143,9 +1168,15 @@ export const requestService = {
   },
 
   async getSentConnectionRequests(userId: string, userEmail?: string): Promise<ConnectionRequestRecord[]> {
+    const cleanUserId = userId?.trim();
     const cleanEmail = userEmail?.toLowerCase().trim();
+
+    if (!cleanUserId && !cleanEmail) {
+      return [];
+    }
+
     const local = getLocalConnRequests().filter(
-      (c) => c.senderId === userId || (cleanEmail && c.senderEmail?.toLowerCase() === cleanEmail)
+      (c) => (cleanUserId && c.senderId === cleanUserId) || (cleanEmail && c.senderEmail?.toLowerCase() === cleanEmail)
     );
 
     try {
@@ -1154,10 +1185,12 @@ export const requestService = {
         .select("*")
         .order("created_at", { ascending: false });
 
-      if (cleanEmail) {
-        query = query.or(`sender_id.eq.${userId},sender_email.ilike.${cleanEmail}`);
-      } else {
-        query = query.eq("sender_id", userId);
+      if (cleanUserId && cleanEmail) {
+        query = query.or(`sender_id.eq.${cleanUserId},sender_email.ilike.${cleanEmail}`);
+      } else if (cleanEmail) {
+        query = query.ilike("sender_email", cleanEmail);
+      } else if (cleanUserId) {
+        query = query.eq("sender_id", cleanUserId);
       }
 
       const { data, error } = await query;
@@ -1199,15 +1232,22 @@ export const requestService = {
     return local;
   },
 
-  async getAllAcceptedConnectionsForUser(userId: string, userEmail?: string): Promise<ConnectionRequestRecord[]> {
+  async getAllAcceptedConnectionsForUser(userId?: string, userEmail?: string, startupIds: string[] = []): Promise<ConnectionRequestRecord[]> {
+    const cleanUserId = userId?.trim();
     const cleanEmail = userEmail?.toLowerCase().trim();
+    const cleanIds = (startupIds || []).filter(Boolean);
+
+    if (!cleanUserId && !cleanEmail && cleanIds.length === 0) {
+      return [];
+    }
+
     const local = getLocalConnRequests().filter(
       (c) =>
         c.status === "accepted" &&
-        (c.senderId === userId ||
-          c.receiverId === userId ||
+        ((cleanUserId && (c.senderId === cleanUserId || c.receiverId === cleanUserId)) ||
           (cleanEmail &&
-            (c.senderEmail?.toLowerCase() === cleanEmail || c.receiverEmail?.toLowerCase() === cleanEmail)))
+            (c.senderEmail?.toLowerCase() === cleanEmail || c.receiverEmail?.toLowerCase() === cleanEmail)) ||
+          (c.startupId && cleanIds.includes(c.startupId)))
     );
 
     try {
@@ -1217,11 +1257,21 @@ export const requestService = {
         .eq("status", "accepted")
         .order("created_at", { ascending: false });
 
-      const orClauses: string[] = [`sender_id.eq.${userId}`, `receiver_id.eq.${userId}`];
-      if (cleanEmail) {
-        orClauses.push(`sender_email.ilike.${cleanEmail}`);
-        orClauses.push(`receiver_email.ilike.${cleanEmail}`);
+      const orClauses: string[] = [];
+      if (cleanUserId) {
+        orClauses.push(`sender_id.eq.${cleanUserId}`, `receiver_id.eq.${cleanUserId}`);
       }
+      if (cleanEmail) {
+        orClauses.push(`sender_email.ilike.${cleanEmail}`, `receiver_email.ilike.${cleanEmail}`);
+      }
+      if (cleanIds.length > 0) {
+        orClauses.push(`startup_id.in.(${cleanIds.join(",")})`);
+      }
+
+      if (orClauses.length === 0) {
+        return local;
+      }
+
       query = query.or(orClauses.join(","));
 
       const { data, error } = await query;

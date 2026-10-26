@@ -46,8 +46,7 @@ import {
 } from "@/components/ui/select";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Checkbox } from "@/components/ui/checkbox";
-import { MY_STARTUP_ID, timeAgo, useVenture } from "@/lib/store";
-import { DEMO_STUDENTS } from "@/lib/demo-data";
+import { timeAgo, useVenture } from "@/lib/store";
 import { useAuth } from "@/lib/auth-context";
 import {
   requestService,
@@ -136,27 +135,14 @@ function StudentDataRoom() {
     }
   }, []);
 
-  const matchedDemoStudent = DEMO_STUDENTS.find(
-    (st) => user?.email && st.email.toLowerCase() === user.email.toLowerCase()
-  );
-
   const userStartups = (startups || []).filter(
     (s) =>
       (user?.email && s?.founderEmail?.toLowerCase() === user.email?.toLowerCase()) ||
-      (user?.name && s?.founder === user.name) ||
-      (matchedDemoStudent?.startupId && s.id === matchedDemoStudent.startupId)
+      (user?.name && s?.founder === user.name)
   );
   const currentStartup = userStartups[0];
-  const startupIds = Array.from(
-    new Set([
-      ...userStartups.map((s) => s.id),
-      ...(currentStartup?.id ? [currentStartup.id] : []),
-      ...(matchedDemoStudent?.startupId ? [matchedDemoStudent.startupId] : []),
-      ...(user?.id ? [user.id] : []),
-      MY_STARTUP_ID,
-    ])
-  );
-  const currentStartupId = currentStartup?.id || matchedDemoStudent?.startupId || user?.id || MY_STARTUP_ID;
+  const startupIds = userStartups.map((s) => s.id);
+  const currentStartupId = currentStartup?.id || "";
 
   // Real-time synchronization of confidential documents from Supabase
   useEffect(() => {
@@ -638,6 +624,27 @@ function StudentDataRoom() {
 
   const pendingDrCount = liveRequests.filter((r) => r.status === "pending").length;
   const pendingConnCount = connRequests.filter((c) => c.status === "pending").length;
+
+  if (!currentStartup) {
+    return (
+      <AppShell role="student">
+        <div className="mx-auto max-w-lg space-y-6 py-16 text-center animate-in fade-in-50">
+          <div className="mx-auto grid size-16 place-items-center rounded-2xl bg-primary/10 text-primary">
+            <FileLock2 className="size-8" />
+          </div>
+          <div className="space-y-2">
+            <h1 className="text-2xl font-bold tracking-tight">Create your startup profile first</h1>
+            <p className="text-sm text-muted-foreground">
+              To upload confidential diligence documents under NDA and manage investor data room access, build and publish your startup profile.
+            </p>
+          </div>
+          <Button asChild size="lg">
+            <Link to="/app/student/startup">Build My Startup Profile</Link>
+          </Button>
+        </div>
+      </AppShell>
+    );
+  }
 
   return (
     <AppShell role="student">

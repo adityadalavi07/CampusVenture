@@ -26,8 +26,7 @@ import {
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { cn } from "@/lib/utils";
-import { DEMO_INVESTORS } from "@/lib/demo-data";
-import { MY_INVESTOR_ID, MY_STARTUP_ID, timeAgo, useVenture, type Message } from "@/lib/store";
+import { timeAgo, useVenture, type Message } from "@/lib/store";
 import { useAuth } from "@/lib/auth-context";
 import { requestService, type ConnectionRequestRecord } from "@/services/requestService";
 import { messageService, type ChatMessageRecord } from "@/services/messageService";
@@ -42,13 +41,8 @@ export function MessagesView({ as }: { as: "student" | "investor" }) {
       (user?.email && s.founderEmail?.toLowerCase() === user.email.toLowerCase()) ||
       (user?.name && s.founder === user.name)
   );
-  const currentStartupId = userStartups[0]?.id || (as === "student" ? "s1" : "");
-  const startupIds = Array.from(
-    new Set([
-      ...userStartups.map((s) => s.id),
-      ...(currentStartupId ? [currentStartupId] : []),
-    ])
-  );
+  const currentStartupId = userStartups[0]?.id || "";
+  const startupIds = userStartups.map((s) => s.id);
 
   const [active, setActive] = useState<string | null>(null);
   const [draft, setDraft] = useState("");
@@ -68,7 +62,7 @@ export function MessagesView({ as }: { as: "student" | "investor" }) {
     "Thank you for reaching out. We are focusing on other priorities right now."
   );
 
-  const myUserId = user?.id || (as === "student" ? (currentStartupId || "usr-student") : "usr-investor");
+  const myUserId = user?.id || "";
 
   // Synchronize incoming and accepted connection requests
   useEffect(() => {
@@ -334,8 +328,7 @@ export function MessagesView({ as }: { as: "student" | "investor" }) {
           user?.email &&
           (m.senderEmail?.toLowerCase() === user.email.toLowerCase() ||
             m.recipientEmail?.toLowerCase() === user.email.toLowerCase());
-        const isDemo = m.investorId === MY_INVESTOR_ID;
-        if (!isMyId && !isMyEmail && !isDemo) continue;
+        if (!isMyId && !isMyEmail) continue;
       }
 
       const key = `${m.startupId}:${m.investorId}`;
@@ -388,8 +381,6 @@ export function MessagesView({ as }: { as: "student" | "investor" }) {
     if (threadItem?.partnerName) return threadItem.partnerName;
 
     if (as === "student") {
-      const demo = DEMO_INVESTORS.find((i) => i.id === iId);
-      if (demo) return demo.name;
       const conn = connRequests.find((c) => c.senderId === iId || c.receiverId === iId);
       if (conn?.senderName) return conn.senderName;
       return "Investor Partner";
@@ -406,8 +397,6 @@ export function MessagesView({ as }: { as: "student" | "investor" }) {
     if (threadItem?.partnerOrg) return threadItem.partnerOrg;
 
     if (as === "student") {
-      const demo = DEMO_INVESTORS.find((i) => i.id === iId);
-      if (demo) return demo.organization;
       const conn = connRequests.find((c) => c.senderId === iId || c.receiverId === iId);
       if (conn?.senderOrg) return conn.senderOrg;
       return "Venture Fund";

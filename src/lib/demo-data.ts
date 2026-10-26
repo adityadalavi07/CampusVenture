@@ -52,6 +52,7 @@ export interface Startup {
 export interface Investor {
   id: string;
   name: string;
+  email?: string;
   organization: string;
   type: string;
   sectors: string[];
@@ -190,6 +191,7 @@ export const DEMO_INVESTORS: Investor[] = [
   {
     id: "i1",
     name: "Anaya Krishnan",
+    email: "anaya@northbridge.vc",
     organization: "Northbridge Seed",
     type: "Micro VC",
     sectors: ["EdTech", "SaaS", "AI"],
@@ -203,6 +205,7 @@ export const DEMO_INVESTORS: Investor[] = [
   {
     id: "i2",
     name: "Rohan Mehta",
+    email: "rohan@mehtafamilyoffice.in",
     organization: "Mehta Family Office",
     type: "Angel",
     sectors: ["HealthTech", "DeepTech"],
@@ -216,6 +219,7 @@ export const DEMO_INVESTORS: Investor[] = [
   {
     id: "i3",
     name: "Sara Lindqvist",
+    email: "sara@terraclimate.fund",
     organization: "Terra Climate Fund",
     type: "VC",
     sectors: ["ClimateTech", "AgriTech", "Mobility"],
@@ -229,6 +233,7 @@ export const DEMO_INVESTORS: Investor[] = [
   {
     id: "i4",
     name: "Dev Arora",
+    email: "dev@campusangels.in",
     organization: "Campus Angels Collective",
     type: "Syndicate",
     sectors: ["FinTech", "Cybersecurity", "SaaS"],
