@@ -328,19 +328,30 @@ function InvestorDataRooms() {
     setIsSavingRules(true);
     const { req, action, doc } = rulesModalRequest;
     const startup = startups.find((s) => s.id === req.startupId);
+    const effectiveStartupName = req.startupName || startup?.name || "Student Startup Venture";
+    const effectiveUniversity = startup?.university || req.universityName || "Campus Partner University";
+    const nowIso = new Date().toISOString();
+    const legalStatement = `I confirm that I am investor ${investorName} (${user?.email || "Investor"}), in my full presence and legal authority. I am okay with all rules and regulations and the consequences of rule breaks. I agree and submit this form as permanent proof of verification and security for ${effectiveStartupName} and founder (${req.founderEmail || "Student Founder"}).`;
 
     try {
       const res = await requestService.recordRulesAcceptance({
         requestId: req.id,
+        startupId: req.startupId,
+        investorUserId: user?.id || myInvestorId,
         investorId: user?.id || myInvestorId,
         investorName,
         investorEmail: user?.email || "",
+        investorOrg: user?.org || "Venture Capital Partner",
+        founderUserId: req.founderId,
         founderId: req.founderId,
+        founderName: req.founderEmail || "Student Founder",
         founderEmail: req.founderEmail,
-        startupId: req.startupId,
-        rulesVersion: "v1.0-cv-reg",
+        startupName: effectiveStartupName,
         universityId: startup?.universityId,
-        universityName: startup?.university || req.universityName,
+        universityName: effectiveUniversity,
+        rulesVersion: "v1.0-cv-reg",
+        accessScope: req.permittedDocIds || [],
+        legalStatement,
       });
 
       if (!res.success) {
@@ -349,6 +360,20 @@ function InvestorDataRooms() {
         return;
       }
 
+      const newProof = {
+        investorName,
+        investorEmail: user?.email || "",
+        investorOrg: user?.org || "Venture Capital Partner",
+        founderName: req.founderEmail || "Student Founder",
+        founderEmail: req.founderEmail || "",
+        startupName: effectiveStartupName,
+        universityName: effectiveUniversity,
+        rulesVersion: "v1.0-cv-reg",
+        declaration: legalStatement,
+        timestamp: nowIso,
+        accessScope: req.permittedDocIds || [],
+      };
+
       setLiveRequests((prev) =>
         prev.map((r) =>
           r.id === req.id
@@ -356,7 +381,8 @@ function InvestorDataRooms() {
                 ...r,
                 rulesAccepted: true,
                 rulesVersion: "v1.0-cv-reg",
-                rulesAcceptedAt: new Date().toISOString(),
+                rulesAcceptedAt: nowIso,
+                rulesProof: newProof,
               }
             : r
         )
@@ -644,9 +670,9 @@ function InvestorDataRooms() {
                           )}
                           <div className="flex flex-wrap items-center gap-2 pt-2 border-t border-emerald-500/10">
                             <Button size="sm" variant="ghost" asChild className="h-7 text-xs">
-                              <Link to="/app/investor/meetings">
-                                <Calendar className="size-3 mr-1" />
-                                Schedule Diligence Sync
+                              <Link to="/app/investor/messages">
+                                <MessageSquare className="size-3 mr-1" />
+                                Message Founder
                               </Link>
                             </Button>
                           </div>

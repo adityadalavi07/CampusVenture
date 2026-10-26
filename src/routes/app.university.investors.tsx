@@ -1,9 +1,33 @@
 import { createFileRoute } from "@tanstack/react-router";
 import { useEffect, useState } from "react";
-import { Building2, Eye, HandCoins, ShieldCheck, FileCheck2, ShieldAlert, CheckCircle2, Clock } from "lucide-react";
+import {
+  Building2,
+  Eye,
+  HandCoins,
+  ShieldCheck,
+  FileCheck2,
+  ShieldAlert,
+  CheckCircle2,
+  Clock,
+  MessageSquare,
+  Copy,
+  Check,
+  FileText,
+  Lock,
+} from "lucide-react";
+import { toast } from "sonner";
 import { AppShell } from "@/components/app-shell";
 import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
 import {
   Table,
   TableBody,
@@ -17,16 +41,18 @@ import { timeAgo, useVenture } from "@/lib/store";
 import { useAuth } from "@/lib/auth-context";
 import { isSameUniversity } from "@/lib/university-matcher";
 import { investorService } from "@/services/investorService";
+import { messageService, type ChatMessageRecord } from "@/services/messageService";
 import {
   requestService,
   type DataRoomRequestRecord,
   type ConnectionRequestRecord,
-  type DataRoomAuditLogRecord,
+  type DataRoomAuditRecord,
+  type DataRoomDocRecord,
 } from "@/services/requestService";
 
 const TITLE = "Investor Interest — CampusVenture University";
 const DESCRIPTION =
-  "See which investors are engaging with your campus startups: requests, data rooms and meetings.";
+  "See which investors are engaging with your campus startups: requests, data rooms, verified conversations and signed proof of trust.";
 
 export const Route = createFileRoute("/app/university/investors")({
   head: () => ({
@@ -41,7 +67,7 @@ export const Route = createFileRoute("/app/university/investors")({
 });
 
 function InvestorInterest() {
-  const { requests, access, meetings, messages, startups } = useVenture();
+  const { requests, access, startups } = useVenture();
   const { user } = useAuth();
   const myUniversity = user?.org || "";
 
@@ -52,20 +78,28 @@ function InvestorInterest() {
   const [investors, setInvestors] = useState<Investor[]>([]);
   const [liveDrRequests, setLiveDrRequests] = useState<DataRoomRequestRecord[]>([]);
   const [liveConnRequests, setLiveConnRequests] = useState<ConnectionRequestRecord[]>([]);
-  const [auditLogs, setAuditLogs] = useState<DataRoomAuditLogRecord[]>([]);
+  const [auditLogs, setAuditLogs] = useState<DataRoomAuditRecord[]>([]);
+  const [campusMessages, setCampusMessages] = useState<ChatMessageRecord[]>([]);
+  const [campusDocs, setCampusDocs] = useState<DataRoomDocRecord[]>([]);
   const [loading, setLoading] = useState(true);
+  const [selectedProofReq, setSelectedProofReq] = useState<DataRoomRequestRecord | null>(null);
+  const [copiedProof, setCopiedProof] = useState(false);
 
   useEffect(() => {
     let active = true;
     Promise.all([
       investorService.getAllInvestors(),
       requestService.getUniversityInvestorActivity(campusStartupIds),
-    ]).then(([invList, activity]) => {
+      messageService.getAllMessagesForUser({ startupIds: campusStartupIds }),
+      Promise.all(campusStartupIds.map((id) => requestService.getDataRoomDocsForStartup(id))),
+    ]).then(([invList, activity, msgs, docsArrays]) => {
       if (active) {
         setInvestors(invList);
         setLiveDrRequests(activity.dataRoomRequests);
         setLiveConnRequests(activity.connectionRequests);
         setAuditLogs(activity.auditLogs);
+        setCampusMessages(msgs);
+        setCampusDocs(docsArrays.flat());
         setLoading(false);
       }
     });
@@ -86,28 +120,36 @@ function InvestorInterest() {
     ...access.filter((a) => campusStartupIds.includes(a.startupId) && a.status === "granted"),
   ];
 
-  const campusMeetings = meetings.filter((m) => campusStartupIds.includes(m.startupId));
+  const verifiedProofsCount = liveDrRequests.filter((d) => d.rulesAccepted || d.ndaSigned).length;
 
   const stats = [
     { label: "Connection requests", value: campusRequests.length, icon: HandCoins },
     { label: "Data-room grants", value: campusDataRoomGrants.length, icon: Eye },
-    { label: "Meetings booked", value: campusMeetings.length, icon: Building2 },
+    { label: "Signed Proofs of Trust", value: verifiedProofsCount, icon: ShieldCheck },
   ];
 
   const rows = investors
     .map((i) => {
       const invRequests = campusRequests.filter((r: any) => (r.senderId === i.id || r.investorId === i.id)).length;
       const invRooms = campusDataRoomGrants.filter((a: any) => a.investorId === i.id).length;
-      const invMeetings = campusMeetings.filter((m) => m.investorId === i.id).length;
-      const invMessages = messages.filter((m) => m.investorId === i.id && campusStartupIds.includes(m.startupId)).length;
+      const invMessages = campusMessages.filter(
+        (m) =>
+          (m.senderId === i.id || m.recipientId === i.id || (i.email && (m.senderEmail?.toLowerCase() === i.email.toLowerCase() || m.recipientEmail?.toLowerCase() === i.email.toLowerCase()))) &&
+          campusStartupIds.includes(m.startupId)
+      ).length;
+      const invProofs = liveDrRequests.filter(
+        (r) =>
+          (r.investorId === i.id || (i.email && r.investorEmail?.toLowerCase() === i.email.toLowerCase())) &&
+          (r.rulesAccepted || r.ndaSigned)
+      ).length;
 
       return {
         investor: i,
         requests: invRequests,
         rooms: invRooms,
-        meetings: invMeetings,
         messages: invMessages,
-        totalActivity: invRequests + invRooms + invMeetings + invMessages,
+        proofs: invProofs,
+        totalActivity: invRequests + invRooms + invMessages + invProofs,
       };
     })
     .sort((a, b) => b.totalActivity - a.totalActivity);
@@ -120,9 +162,9 @@ function InvestorInterest() {
       id: d.id,
       investorName: d.investorName || "Investor",
       startupName: d.startupName || "Campus Venture",
-      kind: "Data-room request",
+      kind: d.rulesAccepted || d.ndaSigned ? "Data-room access granted (Rules Signed)" : "Data-room request",
       status: d.status,
-      at: d.createdAt,
+      at: d.updatedAt || d.createdAt,
     });
   });
 
@@ -138,6 +180,27 @@ function InvestorInterest() {
   });
 
   const recent = recentActivities.sort((a, b) => b.at.localeCompare(a.at)).slice(0, 8);
+
+  const handleCopyProofSummary = () => {
+    if (!selectedProofReq) return;
+    const proof = selectedProofReq.rulesProof;
+    const summary = `CAMPUSVENTURE PROOF OF TRUST CERTIFICATE (v1.0-cv-reg)
+Reference ID: ${selectedProofReq.id}
+Investor: ${proof?.investorName || selectedProofReq.investorName} (${proof?.investorEmail || selectedProofReq.investorEmail})
+Organization: ${proof?.investorOrg || selectedProofReq.investorOrg || "Accredited Investment Partner"}
+Startup Venture: ${selectedProofReq.startupName}
+Founder: ${selectedProofReq.founderEmail}
+University: ${myUniversity || "Campus Partner University"}
+Execution Timestamp: ${proof?.timestamp || selectedProofReq.rulesAcceptedAt || selectedProofReq.updatedAt}
+Rules Version: ${proof?.rulesVersion || selectedProofReq.rulesVersion || "v1.0-cv-reg"}
+Status: Legally Acknowledged & Stored in University Database
+Declaration: ${proof?.declaration || "Rules and Regulations acknowledged in full presence and accountability."}`;
+
+    navigator.clipboard.writeText(summary);
+    setCopiedProof(true);
+    toast.success("Signed Proof of Trust copied to clipboard.");
+    setTimeout(() => setCopiedProof(false), 2000);
+  };
 
   return (
     <AppShell role="university">
@@ -176,8 +239,8 @@ function InvestorInterest() {
                   <TableHead>Cheque</TableHead>
                   <TableHead className="text-right">Requests</TableHead>
                   <TableHead className="text-right">Data rooms</TableHead>
-                  <TableHead className="text-right">Meetings</TableHead>
                   <TableHead className="text-right">Messages</TableHead>
+                  <TableHead className="text-right">Proof of Trust</TableHead>
                 </TableRow>
               </TableHeader>
               <TableBody>
@@ -192,8 +255,16 @@ function InvestorInterest() {
                     </TableCell>
                     <TableCell className="text-right tabular-nums">{r.requests}</TableCell>
                     <TableCell className="text-right tabular-nums">{r.rooms}</TableCell>
-                    <TableCell className="text-right tabular-nums">{r.meetings}</TableCell>
                     <TableCell className="text-right tabular-nums">{r.messages}</TableCell>
+                    <TableCell className="text-right">
+                      {r.proofs > 0 ? (
+                        <Badge variant="outline" className="bg-emerald-500/10 text-emerald-700 dark:text-emerald-300 border-emerald-500/20 text-xs font-medium">
+                          {r.proofs} Verified
+                        </Badge>
+                      ) : (
+                        <span className="text-xs text-muted-foreground">—</span>
+                      )}
+                    </TableCell>
                   </TableRow>
                 ))}
               </TableBody>
@@ -230,7 +301,7 @@ function InvestorInterest() {
           </CardContent>
         </Card>
 
-        {/* INSTITUTIONAL DILIGENCE & RULES ACCEPTANCE AUDIT VIEW */}
+        {/* INSTITUTIONAL DILIGENCE & SIGNED PROOF OF TRUST AUDIT VIEW */}
         <Card>
           <CardHeader>
             <div className="flex flex-wrap items-center justify-between gap-3">
@@ -240,11 +311,11 @@ function InvestorInterest() {
                   <CardTitle className="text-base">Diligence &amp; Rules Acceptance Audit Log</CardTitle>
                 </div>
                 <CardDescription>
-                  Verified records of investor diligence requests, founder decisions, and acknowledged platform compliance rules (v1.0-cv-reg) for {myUniversity || "your campus"}.
+                  Verified records of student founders granting access, conversations, confidential documents shared, and signed investor compliance forms (v1.0-cv-reg) stored for {myUniversity || "your campus"}.
                 </CardDescription>
               </div>
               <Badge variant="outline" className="text-xs border-emerald-500/30 text-emerald-700 dark:text-emerald-300">
-                Oversight Only · Confidential Files Restricted
+                Official Compliance Archive · Privacy Preserved
               </Badge>
             </div>
           </CardHeader>
@@ -252,7 +323,7 @@ function InvestorInterest() {
             {liveDrRequests.length === 0 ? (
               <div className="rounded-lg border border-dashed p-8 text-center text-xs text-muted-foreground space-y-1">
                 <p className="font-medium text-foreground">No Data Room Diligence Requests Recorded Yet</p>
-                <p>When accredited investors request Data Room access for startups from your institution, diligence status and compliance acknowledgments will be tracked here.</p>
+                <p>When accredited investors request Data Room access for startups from your institution, diligence status, confidential document scopes, and signed compliance proofs will be tracked here.</p>
               </div>
             ) : (
               <div className="rounded-md border overflow-x-auto">
@@ -261,15 +332,32 @@ function InvestorInterest() {
                     <TableRow>
                       <TableHead>Startup &amp; Founder</TableHead>
                       <TableHead>Investor</TableHead>
-                      <TableHead>Decision / Status</TableHead>
-                      <TableHead>Rules Version</TableHead>
-                      <TableHead>Rules Accepted</TableHead>
-                      <TableHead className="text-right">Decision Timestamp</TableHead>
+                      <TableHead>Diligence Status</TableHead>
+                      <TableHead>Conversation</TableHead>
+                      <TableHead>Confidential Docs</TableHead>
+                      <TableHead className="text-right">Signed Proof of Trust</TableHead>
                     </TableRow>
                   </TableHeader>
                   <TableBody>
                     {liveDrRequests.map((req) => {
                       const st = campusStartups.find((s) => s.id === req.startupId);
+                      const isSigned = Boolean(req.rulesAccepted || req.ndaSigned);
+                      const msgsWithInvestor = campusMessages.filter(
+                        (m) =>
+                          m.startupId === req.startupId &&
+                          (m.senderId === req.investorId ||
+                            m.recipientId === req.investorId ||
+                            (req.investorEmail &&
+                              (m.senderEmail?.toLowerCase() === req.investorEmail.toLowerCase() ||
+                                m.recipientEmail?.toLowerCase() === req.investorEmail.toLowerCase())))
+                      );
+
+                      const permittedDocs = campusDocs.filter(
+                        (d) =>
+                          d.startupId === req.startupId &&
+                          (!req.permittedDocIds || req.permittedDocIds.length === 0 || req.permittedDocIds.includes(d.id))
+                      );
+
                       return (
                         <TableRow key={req.id}>
                           <TableCell>
@@ -293,34 +381,55 @@ function InvestorInterest() {
                             >
                               {req.status}
                             </Badge>
-                            {req.status === "granted" && (
-                              <p className="text-[11px] text-muted-foreground mt-0.5">
-                                {Array.isArray(req.permittedDocIds) && req.permittedDocIds.length > 0
-                                  ? `${req.permittedDocIds.length} docs permitted`
-                                  : "All docs permitted"}
-                              </p>
-                            )}
+                            <p className="text-[11px] text-muted-foreground mt-0.5">
+                              {timeAgo(req.updatedAt || req.createdAt)}
+                            </p>
                           </TableCell>
                           <TableCell>
-                            {req.rulesAccepted ? (
-                              <Badge variant="outline" className="bg-emerald-500/10 text-emerald-700 dark:text-emerald-300 border-emerald-500/20 text-xs">
-                                {req.rulesVersion || "v1.0-cv-reg"}
+                            {msgsWithInvestor.length > 0 ? (
+                              <Badge variant="outline" className="gap-1 text-xs border-blue-500/30 text-blue-700 dark:text-blue-300 bg-blue-500/10">
+                                <MessageSquare className="size-3" />
+                                {msgsWithInvestor.length} message{msgsWithInvestor.length === 1 ? "" : "s"}
                               </Badge>
                             ) : (
-                              <span className="text-xs text-muted-foreground">Pending Opening</span>
+                              <span className="text-xs text-muted-foreground">No messages yet</span>
                             )}
                           </TableCell>
                           <TableCell>
-                            {req.rulesAccepted && req.rulesAcceptedAt ? (
-                              <span className="text-xs text-muted-foreground">
-                                {new Date(req.rulesAcceptedAt).toLocaleString()}
-                              </span>
+                            {req.status === "granted" ? (
+                              <div>
+                                <span className="font-medium text-xs text-foreground flex items-center gap-1">
+                                  <FileCheck2 className="size-3.5 text-emerald-600" />
+                                  {permittedDocs.length > 0
+                                    ? `${permittedDocs.length} file${permittedDocs.length === 1 ? "" : "s"} granted`
+                                    : Array.isArray(req.permittedDocIds) && req.permittedDocIds.length > 0
+                                    ? `${req.permittedDocIds.length} file(s) authorized`
+                                    : "All files authorized"}
+                                </span>
+                                <span className="text-[10px] text-muted-foreground block">
+                                  Confidential diligence scope
+                                </span>
+                              </div>
                             ) : (
                               <span className="text-xs text-muted-foreground">—</span>
                             )}
                           </TableCell>
-                          <TableCell className="text-right text-xs text-muted-foreground">
-                            {req.updatedAt ? new Date(req.updatedAt).toLocaleString() : timeAgo(req.createdAt)}
+                          <TableCell className="text-right">
+                            {isSigned ? (
+                              <Button
+                                size="sm"
+                                variant="outline"
+                                className="h-7 text-xs gap-1 border-emerald-500/30 text-emerald-700 dark:text-emerald-300 hover:bg-emerald-500/10"
+                                onClick={() => setSelectedProofReq(req)}
+                              >
+                                <ShieldCheck className="size-3.5 text-emerald-600" />
+                                View Signed Proof
+                              </Button>
+                            ) : (
+                              <Badge variant="outline" className="text-[11px] text-muted-foreground">
+                                Pending Opening
+                              </Badge>
+                            )}
                           </TableCell>
                         </TableRow>
                       );
@@ -335,6 +444,174 @@ function InvestorInterest() {
           </CardContent>
         </Card>
       </div>
+
+      {/* ==================================================================== */}
+      {/* SIGNED PROOF OF TRUST & REGULATORY COMPLIANCE MODAL                  */}
+      {/* ==================================================================== */}
+      <Dialog
+        open={selectedProofReq !== null}
+        onOpenChange={(open) => {
+          if (!open) {
+            setSelectedProofReq(null);
+            setCopiedProof(false);
+          }
+        }}
+      >
+        <DialogContent className="max-w-2xl max-h-[90vh] flex flex-col">
+          <DialogHeader className="space-y-1">
+            <div className="flex items-center gap-2">
+              <ShieldCheck className="size-5 text-emerald-600" />
+              <DialogTitle className="text-lg">
+                Signed Proof of Trust &amp; Diligence Compliance
+              </DialogTitle>
+            </div>
+            <DialogDescription className="text-xs">
+              Official institutional certificate stored in university database verifying legal adherence to Platform Rules &amp; Regulations (v1.0-cv-reg).
+            </DialogDescription>
+          </DialogHeader>
+
+          {selectedProofReq && (
+            <div className="flex-1 overflow-y-auto space-y-4 pr-1 text-xs">
+              {/* Verified Certificate Banner */}
+              <div className="flex items-start gap-2.5 rounded-lg border border-emerald-500/20 bg-emerald-500/10 p-3 text-emerald-800 dark:text-emerald-200">
+                <CheckCircle2 className="size-4 shrink-0 text-emerald-600 mt-0.5" />
+                <div className="space-y-0.5">
+                  <p className="font-semibold text-xs">Legally Executed &amp; Stored as Permanent Trust Proof</p>
+                  <p className="text-[11px] text-emerald-700/90 dark:text-emerald-300/90 leading-relaxed">
+                    The investor confirmed in full capacity and presence their acceptance of all confidentiality rules, founder protections, and consequences before gaining access to confidential documents.
+                  </p>
+                </div>
+              </div>
+
+              {/* Two-Column Parties Metadata Grid */}
+              <div className="grid gap-3 sm:grid-cols-2">
+                <div className="rounded-lg border bg-muted/30 p-3 space-y-1.5">
+                  <span className="font-semibold text-foreground text-xs block border-b pb-1">
+                    Accredited Investor
+                  </span>
+                  <div>
+                    <span className="text-muted-foreground block text-[11px]">Full Legal Name:</span>
+                    <span className="font-medium text-foreground">
+                      {selectedProofReq.rulesProof?.investorName || selectedProofReq.investorName || "Accredited Investor"}
+                    </span>
+                  </div>
+                  <div>
+                    <span className="text-muted-foreground block text-[11px]">Email Address:</span>
+                    <span className="font-medium text-foreground font-mono text-[11px]">
+                      {selectedProofReq.rulesProof?.investorEmail || selectedProofReq.investorEmail || "investor@venture.com"}
+                    </span>
+                  </div>
+                  <div>
+                    <span className="text-muted-foreground block text-[11px]">Organization / Entity:</span>
+                    <span className="text-foreground">
+                      {selectedProofReq.rulesProof?.investorOrg || selectedProofReq.investorOrg || "Venture Capital Partner"}
+                    </span>
+                  </div>
+                </div>
+
+                <div className="rounded-lg border bg-muted/30 p-3 space-y-1.5">
+                  <span className="font-semibold text-foreground text-xs block border-b pb-1">
+                    Campus Venture &amp; Founder
+                  </span>
+                  <div>
+                    <span className="text-muted-foreground block text-[11px]">Startup Venture:</span>
+                    <span className="font-medium text-foreground">
+                      {selectedProofReq.startupName || "Campus Venture"}
+                    </span>
+                  </div>
+                  <div>
+                    <span className="text-muted-foreground block text-[11px]">Student Founder:</span>
+                    <span className="font-medium text-foreground font-mono text-[11px]">
+                      {selectedProofReq.rulesProof?.founderEmail || selectedProofReq.founderEmail || "student@university.edu"}
+                    </span>
+                  </div>
+                  <div>
+                    <span className="text-muted-foreground block text-[11px]">University Institution:</span>
+                    <span className="text-foreground">
+                      {myUniversity || selectedProofReq.universityName || "Campus Partner University"}
+                    </span>
+                  </div>
+                </div>
+              </div>
+
+              {/* Scope of Permitted Confidential Documents */}
+              <div className="rounded-lg border bg-muted/20 p-3 space-y-2">
+                <div className="flex items-center justify-between">
+                  <span className="font-semibold text-foreground flex items-center gap-1.5">
+                    <FileCheck2 className="size-3.5 text-emerald-600" />
+                    Authorized Confidential Materials
+                  </span>
+                  <Badge variant="outline" className="text-[10px]">
+                    Founder Approved
+                  </Badge>
+                </div>
+                {selectedProofReq.permittedDocIds && selectedProofReq.permittedDocIds.length > 0 ? (
+                  <div className="space-y-1">
+                    {campusDocs
+                      .filter((d) => selectedProofReq.permittedDocIds?.includes(d.id))
+                      .map((doc) => (
+                        <div key={doc.id} className="flex items-center justify-between py-1 border-b border-border/40 last:border-none">
+                          <span className="font-medium text-foreground">{doc.name}</span>
+                          <span className="text-muted-foreground text-[10px]">({doc.category}) · {doc.size}</span>
+                        </div>
+                      ))}
+                    {campusDocs.filter((d) => selectedProofReq.permittedDocIds?.includes(d.id)).length === 0 && (
+                      <p className="text-muted-foreground text-xs">
+                        {selectedProofReq.permittedDocIds.length} confidential document(s) authorized under selective disclosure scope.
+                      </p>
+                    )}
+                  </div>
+                ) : (
+                  <p className="text-muted-foreground text-xs">
+                    All Data Room confidential materials (pitch decks, cap tables, financial models) granted by student founder under executed mutual agreement.
+                  </p>
+                )}
+              </div>
+
+              {/* The Submitted Investor Form & Declaration */}
+              <div className="rounded-lg border bg-muted/40 p-3.5 space-y-2">
+                <div className="flex items-center justify-between border-b pb-1.5">
+                  <span className="font-semibold text-foreground text-xs">
+                    Submitted Compliance Declaration &amp; Covenant
+                  </span>
+                  <Badge variant="outline" className="text-[10px] bg-emerald-500/10 text-emerald-700 dark:text-emerald-300 border-emerald-500/20">
+                    {selectedProofReq.rulesProof?.rulesVersion || selectedProofReq.rulesVersion || "v1.0-cv-reg"}
+                  </Badge>
+                </div>
+
+                <blockquote className="border-l-2 border-emerald-600 pl-3 italic text-muted-foreground text-xs leading-relaxed py-0.5">
+                  "{selectedProofReq.rulesProof?.declaration ||
+                    `I confirm that I am investor ${selectedProofReq.investorName} (${selectedProofReq.investorEmail}), in my full presence and legal authority. I am okay with all platform rules and regulations (v1.0-cv-reg) and the consequences of rule breaks. I agree and submit this form as permanent proof of verification and security for ${selectedProofReq.startupName} and founder.`}"
+                </blockquote>
+
+                <div className="pt-2 flex flex-wrap items-center justify-between gap-2 text-[11px] text-muted-foreground border-t border-border/60">
+                  <span>
+                    Timestamp: {new Date(selectedProofReq.rulesProof?.timestamp || selectedProofReq.rulesAcceptedAt || selectedProofReq.updatedAt).toLocaleString()}
+                  </span>
+                  <span className="font-mono text-[10px]">
+                    Storage Hash: {selectedProofReq.id}
+                  </span>
+                </div>
+              </div>
+            </div>
+          )}
+
+          <DialogFooter className="gap-2 pt-2 border-t flex items-center justify-between">
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={handleCopyProofSummary}
+              className="gap-1.5 text-xs"
+            >
+              {copiedProof ? <Check className="size-3.5 text-emerald-600" /> : <Copy className="size-3.5" />}
+              {copiedProof ? "Copied" : "Copy Verification Proof"}
+            </Button>
+            <Button size="sm" onClick={() => setSelectedProofReq(null)}>
+              Close
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </AppShell>
   );
 }

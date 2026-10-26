@@ -245,7 +245,7 @@ function StudentDataRoom() {
     "30-Day Confidential Diligence under Mutual NDA. Includes cap table, pitch deck, and financial model."
   );
   const [nextSteps, setNextSteps] = useState(
-    "1. Investor completes initial review of confidential documents and metrics.\n2. Schedule a 30-minute founder diligence call via CampusVenture Meetings.\n3. Discuss valuation terms, syndicate check size, and closing schedule."
+    "1. Investor completes initial review of confidential documents and metrics.\n2. Connect and discuss diligence questions via CampusVenture Messages.\n3. Discuss valuation terms, syndicate check size, and closing schedule."
   );
   const [declineReason, setDeclineReason] = useState(
     "Our current financing round is fully subscribed at this stage. We would love to stay in touch for future milestones."

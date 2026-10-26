@@ -23,6 +23,20 @@ export interface DataRoomRequestRecord {
   rulesAccepted?: boolean | undefined;
   rulesVersion?: string | undefined;
   rulesAcceptedAt?: string | undefined;
+  rulesProof?: {
+    investorName?: string;
+    investorEmail?: string;
+    investorOrg?: string;
+    founderName?: string;
+    founderEmail?: string;
+    startupName?: string;
+    universityName?: string;
+    rulesVersion?: string;
+    declaration?: string;
+    timestamp?: string;
+    accessScope?: string[];
+    [key: string]: any;
+  } | undefined;
   universityName?: string | undefined;
   permittedDocIds?: string[] | undefined;
   discussionTerms?: string | undefined;
@@ -632,49 +646,67 @@ export const requestService = {
 
   /**
    * Record legal acceptance of the platform's Rules and Regulations by an authenticated investor.
-   * Persistently records investor details, timestamp, version, and university context.
+   * Persistently records investor details, timestamp, version, university context, and signed proof of trust.
    */
   async recordRulesAcceptance(params: {
     requestId: string;
     startupId: string;
-    investorUserId: string;
+    investorUserId?: string | undefined;
+    investorId?: string | undefined;
     investorName: string;
     investorEmail: string;
+    investorOrg?: string | undefined;
     founderUserId?: string | undefined;
+    founderId?: string | undefined;
     founderName?: string | undefined;
     founderEmail?: string | undefined;
-    startupName: string;
+    startupName?: string | undefined;
+    universityId?: string | undefined;
     universityName?: string | undefined;
     rulesVersion?: string | undefined;
     accessScope?: string[] | undefined;
+    legalStatement?: string | undefined;
   }): Promise<{ success: boolean; error?: string }> {
     const now = new Date().toISOString();
-    const {
-      requestId,
-      startupId,
-      investorUserId,
-      investorName,
-      investorEmail,
-      startupName,
-      universityName,
-      rulesVersion = "v1.0-cv-reg",
-      accessScope = [],
-    } = params;
+    const effectiveInvestorId = params.investorUserId || params.investorId || "";
+    const effectiveStartupName = params.startupName || "Student Startup Venture";
+    const effectiveInvestorOrg = params.investorOrg || "Accredited Investment Partner";
+    const rulesVersion = params.rulesVersion || "v1.0-cv-reg";
+    const declaration =
+      params.legalStatement ||
+      `I confirm that I am investor ${params.investorName} (${params.investorEmail}), in my full presence and legal authority. I am okay with all platform rules and regulations (${rulesVersion}) and the consequences of rule breaks. I agree and submit this form as permanent proof of verification and security for ${effectiveStartupName} and founder (${params.founderEmail || "Student Founder"}).`;
+
+    const rulesProof = {
+      investorName: params.investorName,
+      investorEmail: params.investorEmail,
+      investorOrg: effectiveInvestorOrg,
+      founderName: params.founderName || "Student Founder",
+      founderEmail: params.founderEmail || "",
+      startupName: effectiveStartupName,
+      universityName: params.universityName || "Campus Partner University",
+      rulesVersion,
+      declaration,
+      timestamp: now,
+      accessScope: params.accessScope || [],
+    };
 
     const local = getLocalDrRequests();
     const updated = local.map((r) =>
-      r.id === requestId || (r.startupId === startupId && (r.investorId === investorUserId || r.investorEmail === investorEmail))
+      r.id === params.requestId ||
+      (r.startupId === params.startupId &&
+        (r.investorId === effectiveInvestorId || (r.investorEmail && r.investorEmail.toLowerCase() === params.investorEmail.toLowerCase())))
         ? {
             ...r,
             ndaStatus: "signed" as const,
             ndaSigned: true,
-            ndaSignedName: investorName,
+            ndaSignedName: params.investorName,
             ndaSignedAt: now,
             ndaVersion: rulesVersion,
             rulesAccepted: true,
             rulesVersion,
             rulesAcceptedAt: now,
-            universityName: universityName || r.universityName,
+            rulesProof,
+            universityName: params.universityName || r.universityName,
             updatedAt: now,
           }
         : r
@@ -682,7 +714,7 @@ export const requestService = {
     saveLocalDrRequests(updated);
 
     try {
-      const current = local.find((r) => r.id === requestId);
+      const current = local.find((r) => r.id === params.requestId);
       let existingMeta: Record<string, any> = {};
       if (current?.nextSteps && current.nextSteps.startsWith("{")) {
         try {
@@ -697,15 +729,16 @@ export const requestService = {
         rulesAccepted: true,
         rulesVersion,
         rulesAcceptedAt: now,
-        ndaSignedName: investorName,
+        ndaSignedName: params.investorName,
         ndaSignedAt: now,
-        universityName: universityName || current?.universityName,
-        accessScope,
+        universityName: params.universityName || current?.universityName,
+        accessScope: params.accessScope || [],
+        rulesProof,
       };
 
       const payload: Record<string, any> = {
         nda_signed: true,
-        nda_signed_name: investorName,
+        nda_signed_name: params.investorName,
         next_steps: JSON.stringify(metaPayload),
         updated_at: now,
       };
@@ -713,19 +746,19 @@ export const requestService = {
       await (supabase as any)
         .from("data_room_requests")
         .update(payload)
-        .eq("id", requestId);
+        .eq("id", params.requestId);
     } catch (err) {
       console.warn("[RequestService] DB recordRulesAcceptance notice:", err);
     }
 
     // Persistently log in verifiable audit trail
     await this.logDataRoomAudit({
-      requestId,
-      startupId,
-      userId: investorUserId,
-      userEmail: investorEmail,
+      requestId: params.requestId,
+      startupId: params.startupId,
+      userId: effectiveInvestorId,
+      userEmail: params.investorEmail,
       action: "nda_signed",
-      details: `Rules & Regulations (${rulesVersion}) accepted by investor ${investorName} (${investorEmail}) for ${startupName} (${universityName || "University Partner"}). Scope: ${accessScope.length > 0 ? accessScope.join(", ") : "All founder-approved materials"}.`,
+      details: `Platform Rules & Regulations (${rulesVersion}) signed as Proof of Trust by ${params.investorName} (${params.investorEmail}) for ${effectiveStartupName} (${params.universityName || "University Partner"}). Scope: ${(params.accessScope || []).length > 0 ? (params.accessScope || []).join(", ") : "All founder-approved materials"}. Stored in university database.`,
     });
 
     return { success: true };
@@ -914,6 +947,28 @@ export const requestService = {
     const ndaSigned = Boolean(d.nda_signed || meta.rulesAccepted);
     const ndaStatus = ndaSigned ? "signed" : (d.status === "granted" ? "required" : "required");
 
+    const rulesAccepted = Boolean(meta.rulesAccepted || d.rules_accepted || ndaSigned);
+    const rulesVersion = meta.rulesVersion || d.rules_version || "v1.0-cv-reg";
+    const rulesAcceptedAt = meta.rulesAcceptedAt || d.rules_accepted_at || (rulesAccepted ? d.updated_at || d.created_at : undefined);
+
+    const rulesProof =
+      meta.rulesProof ||
+      (rulesAccepted
+        ? {
+            investorName: d.investor_name || meta.ndaSignedName || "Verified Investor",
+            investorEmail: d.investor_email || "",
+            investorOrg: d.investor_org || "Accredited Investment Partner",
+            founderName: meta.founderName || "Student Founder",
+            founderEmail: d.founder_email || "",
+            startupName: d.startup_name || "Campus Venture",
+            universityName: meta.universityName || d.university_name || "Campus Partner University",
+            rulesVersion,
+            declaration: `I, ${d.investor_name || "the Investor"} (${d.investor_email || ""}), in my full presence and legal authority, confirm that I am okay with all platform rules and regulations (${rulesVersion}) and the consequences of rule breaks. I agree and submit this form as permanent proof of verification and security for ${d.startup_name || "the venture"} and founder.`,
+            timestamp: rulesAcceptedAt || d.created_at,
+            accessScope: permitted || [],
+          }
+        : undefined);
+
     return {
       id: d.id,
       startupId: d.startup_id,
@@ -931,9 +986,10 @@ export const requestService = {
       ndaSignedName: d.nda_signed_name || meta.ndaSignedName || "",
       ndaSignedAt: meta.ndaSignedAt || d.nda_signed_at || undefined,
       ndaVersion: meta.rulesVersion || d.nda_version || "v1.0",
-      rulesAccepted: Boolean(meta.rulesAccepted || d.rules_accepted || ndaSigned),
-      rulesVersion: meta.rulesVersion || d.rules_version || "v1.0-cv-reg",
-      rulesAcceptedAt: meta.rulesAcceptedAt || d.rules_accepted_at || undefined,
+      rulesAccepted,
+      rulesVersion,
+      rulesAcceptedAt,
+      rulesProof,
       universityName: meta.universityName || d.university_name || undefined,
       permittedDocIds: permitted,
       discussionTerms: d.discussion_terms || undefined,

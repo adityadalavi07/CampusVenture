@@ -47,7 +47,6 @@ const NAV: Record<Role, NavItem[]> = {
     { label: "Discover Investors", icon: Search, to: "/app/student/discover" },
     { label: "Data Room", icon: FolderLock, to: "/app/student/dataroom" },
     { label: "Messages", icon: MessagesSquare, to: "/app/student/messages" },
-    { label: "Meetings", icon: CalendarClock, to: "/app/student/meetings" },
     { label: "Settings", icon: Settings, to: "/app/student/settings" },
   ],
   investor: [
@@ -55,7 +54,6 @@ const NAV: Record<Role, NavItem[]> = {
     { label: "Saved Startups", icon: Rocket, to: "/app/investor/saved" },
     { label: "Data Rooms", icon: FolderLock, to: "/app/investor/dataroom" },
     { label: "Messages", icon: MessagesSquare, to: "/app/investor/messages" },
-    { label: "Meetings", icon: CalendarClock, to: "/app/investor/meetings" },
     { label: "Settings", icon: Settings, to: "/app/investor/settings" },
   ],
   university: [

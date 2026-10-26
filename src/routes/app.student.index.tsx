@@ -1395,13 +1395,30 @@ function StudentDashboard() {
 
           <Card>
             <CardHeader>
-              <CardTitle className="text-base">Upcoming meetings</CardTitle>
+              <CardTitle className="text-base flex items-center gap-2">
+                <ShieldCheck className="size-4 text-emerald-600" />
+                Data Room &amp; Trust Diligence
+              </CardTitle>
+              <CardDescription>
+                Confidential documents protected under Mutual NDA &amp; compliance rules.
+              </CardDescription>
             </CardHeader>
-            <CardContent>
-              <div className="rounded-lg border border-dashed p-6 text-center">
-                <p className="text-sm text-muted-foreground">No upcoming meetings.</p>
-                <Button variant="link" size="sm" className="mt-1">
-                  Propose a meeting
+            <CardContent className="space-y-3 text-sm">
+              <div className="flex items-center justify-between">
+                <span className="text-muted-foreground">Access grants</span>
+                <span className="font-semibold text-emerald-600">
+                  {liveDrRequests.filter((r) => r.status === "granted").length} active
+                </span>
+              </div>
+              <div className="flex items-center justify-between">
+                <span className="text-muted-foreground">Pending requests</span>
+                <span className="font-semibold">
+                  {liveDrRequests.filter((r) => r.status === "pending").length}
+                </span>
+              </div>
+              <div className="pt-2 border-t">
+                <Button variant="outline" size="sm" asChild className="w-full text-xs">
+                  <Link to="/app/student/dataroom">Open Data Room Hub</Link>
                 </Button>
               </div>
             </CardContent>
