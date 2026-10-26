@@ -121,7 +121,7 @@ export function MessagesView({ as }: { as: "student" | "investor" }) {
   useEffect(() => {
     if (typeof window !== "undefined") {
       const sp = new URLSearchParams(window.location.search);
-      const invId = sp.get("investorId");
+      const invId = sp.get("investorId") || sp.get("partner") || sp.get("partnerId");
       const stId = sp.get("startupId") || currentStartupId;
       if (invId) {
         setActive(`${stId}:${invId}`);

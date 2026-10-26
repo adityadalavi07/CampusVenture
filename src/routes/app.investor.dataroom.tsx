@@ -363,6 +363,39 @@ function InvestorDataRooms() {
         )
       );
 
+      // Notify Student C's university as proof of verification and security
+      const targetUnivName = startup?.university || req.universityName;
+      if (targetUnivName || req.founderEmail) {
+        try {
+          const { data: univProfiles } = await (supabase as any)
+            .from("profiles")
+            .select("id, email, org")
+            .eq("role", "university");
+
+          const targetUniv = (univProfiles || []).find((u: any) =>
+            (targetUnivName && u.org?.toLowerCase().includes(targetUnivName.toLowerCase())) ||
+            (targetUnivName && targetUnivName.toLowerCase().includes(u.org?.toLowerCase() || "")) ||
+            (req.founderEmail && u.email && req.founderEmail.split("@")[1] === u.email.split("@")[1])
+          );
+
+          if (targetUniv?.email) {
+            notify(
+              "university",
+              `Diligence Rules & NDA Executed: ${req.startupName || "Startup"}`,
+              `Investor ${investorName} (${user?.email || "Investor"}) in full presence executed the Platform Rules & Regulations under v1.0-cv-reg for ${req.startupName || "the venture"} (Founder: ${req.founderEmail || "Student"}). Verification stored in database.`,
+              {
+                recipientEmail: targetUniv.email,
+                recipientUserId: targetUniv.id,
+                senderEmail: user?.email,
+                senderUserId: user?.id,
+              }
+            );
+          }
+        } catch {
+          /* ignore */
+        }
+      }
+
       toast.success("Platform Rules & Regulations (v1.0-cv-reg) acknowledged.");
       setRulesModalRequest(null);
       setIsSavingRules(false);
@@ -1142,13 +1175,13 @@ function InvestorDataRooms() {
               <span className="text-[10px] font-mono opacity-80">VERIFIED ACCREDITED INVESTOR</span>
             </div>
 
-            {previewUrl && (previewDoc?.mimeType?.startsWith("image/") || previewDoc?.name.match(/\.(png|jpe?g|gif|webp)$/i)) ? (
+            {previewUrl && (previewUrl.startsWith("data:image/") || previewUrl.startsWith("http://") || previewUrl.startsWith("https://")) && (previewDoc?.mimeType?.startsWith("image/") || previewDoc?.name.match(/\.(png|jpe?g|gif|webp)$/i)) ? (
               <div className="grid place-items-center bg-background rounded-lg border p-2">
                 <img src={previewUrl} alt={previewDoc.name} className="max-h-[300px] object-contain rounded" />
               </div>
-            ) : previewUrl && (previewDoc?.mimeType === "application/pdf" || previewDoc?.name.endsWith(".pdf")) ? (
+            ) : previewUrl && (previewUrl.startsWith("data:application/pdf") || previewUrl.startsWith("http://") || previewUrl.startsWith("https://")) && (previewDoc?.mimeType === "application/pdf" || previewDoc?.name.endsWith(".pdf")) ? (
               <div className="h-[320px] rounded border bg-background overflow-hidden">
-                <iframe src={previewUrl} title={previewDoc.name} className="size-full" />
+                <iframe src={previewUrl} title={previewDoc.name} className="size-full border-0" />
               </div>
             ) : (
               <div className="space-y-3 bg-card rounded-lg border p-4 text-xs">
@@ -1294,7 +1327,7 @@ function InvestorDataRooms() {
                 htmlFor="rules-agree"
                 className="text-xs font-normal leading-relaxed text-foreground cursor-pointer"
               >
-                I confirm that I am the named investor (<strong>{investorName}</strong>), that I am accessing this Data Room solely for evaluation of a bona fide investment or partnership with this venture, and that I accept the responsibilities, confidentiality covenants, and consequences of violations under <strong>v1.0-cv-reg</strong>.
+                I confirm that I am investor <strong>{investorName}</strong> ({user?.email || "Investor"}), in my full presence and legal authority. I am okay with all rules and regulations and the consequences of rule breaks. I agree and submit this form as permanent proof of verification and security for <strong>{rulesModalRequest?.req.startupName || "the venture"}</strong> and founder ({rulesModalRequest?.req.founderEmail || "Student Founder"}).
               </Label>
             </div>
           </div>

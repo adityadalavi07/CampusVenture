@@ -247,15 +247,21 @@ export const requestService = {
 
     // Persist to Supabase
     try {
+      const metaPayload: Record<string, any> = {
+        message: message?.trim() || undefined,
+        founderId: founderId || undefined,
+        durationDays: 30,
+      };
+
       const payload: Record<string, any> = {
         id: safeId,
         startup_id: startupId,
         investor_id: investorId,
         status: "pending",
-        nda_status: "required",
         nda_signed: false,
-        nda_version: "v1.0",
-        access_duration_days: 30,
+        nda_signed_name: "",
+        discussion_terms: "30-Day Confidential Diligence under Mutual NDA",
+        next_steps: JSON.stringify(metaPayload),
         created_at: now,
         updated_at: now,
       };
@@ -264,13 +270,11 @@ export const requestService = {
       if (investorEmail) payload["investor_email"] = investorEmail;
       if (investorOrg) payload["investor_org"] = investorOrg;
       if (startupName) payload["startup_name"] = startupName;
-      if (founderId) payload["founder_id"] = founderId;
       if (founderEmail) payload["founder_email"] = founderEmail.toLowerCase().trim();
-      if (message) payload["message"] = message.trim();
 
       const { data, error } = await (supabase as any)
         .from("data_room_requests")
-        .upsert(payload, { onConflict: "startup_id,investor_id" })
+        .upsert(payload)
         .select()
         .single();
 
@@ -422,21 +426,35 @@ export const requestService = {
     saveLocalDrRequests(updated);
 
     try {
+      const current = local.find((r) => r.id === requestId);
+      let existingMeta: Record<string, any> = {};
+      if (current?.nextSteps && current.nextSteps.startsWith("{")) {
+        try {
+          existingMeta = JSON.parse(current.nextSteps);
+        } catch {
+          /* ignore */
+        }
+      }
+
+      const metaPayload = {
+        ...existingMeta,
+        founderId: current?.founderId,
+        message: current?.message,
+        durationDays,
+        ...(options?.permittedDocIds ? { permittedDocIds: options.permittedDocIds } : {}),
+        ...(expiresAt ? { expiresAt } : {}),
+        ...(options?.declineReason ? { declineReason: options.declineReason } : {}),
+      };
+
       const payload: Record<string, any> = {
         status,
+        discussion_terms: options?.discussionTerms || current?.discussionTerms || "Standard Diligence Terms",
+        next_steps: JSON.stringify(metaPayload),
         updated_at: now,
       };
 
-      if (options?.discussionTerms !== undefined) payload["discussion_terms"] = options.discussionTerms;
-      if (options?.nextSteps !== undefined) payload["next_steps"] = options.nextSteps;
-      if (options?.declineReason !== undefined) payload["decline_reason"] = options.declineReason;
-      if (options?.durationDays !== undefined) payload["access_duration_days"] = options.durationDays;
-      if (options?.permittedDocIds !== undefined) payload["permitted_doc_ids"] = options.permittedDocIds;
-      if (expiresAt) payload["expires_at"] = expiresAt;
-      if (status === "revoked") {
-        payload["revoked_at"] = now;
-        if (options?.revokedBy) payload["revoked_by"] = options.revokedBy;
-        if (options?.revokedReason) payload["revoked_reason"] = options.revokedReason;
+      if (options?.declineReason !== undefined) {
+        payload["decline_reason"] = options.declineReason;
       }
 
       await (supabase as any).from("data_room_requests").update(payload).eq("id", requestId);
@@ -495,14 +513,31 @@ export const requestService = {
     saveLocalDrRequests(updated);
 
     try {
+      const current = local.find((r) => r.id === requestId);
+      let existingMeta: Record<string, any> = {};
+      if (current?.nextSteps && current.nextSteps.startsWith("{")) {
+        try {
+          existingMeta = JSON.parse(current.nextSteps);
+        } catch {
+          /* ignore */
+        }
+      }
+
+      const metaPayload = {
+        ...existingMeta,
+        ndaSigned: true,
+        ndaSignedName: signedName,
+        ndaSignedAt: now,
+        ndaVersion,
+        rulesAccepted: true,
+      };
+
       await (supabase as any)
         .from("data_room_requests")
         .update({
-          nda_status: "signed",
           nda_signed: true,
           nda_signed_name: signedName,
-          nda_signed_at: now,
-          nda_version: ndaVersion,
+          next_steps: JSON.stringify(metaPayload),
           updated_at: now,
         })
         .eq("id", requestId);
@@ -546,10 +581,25 @@ export const requestService = {
     saveLocalDrRequests(updated);
 
     try {
+      const current = local.find((r) => r.id === requestId);
+      let existingMeta: Record<string, any> = {};
+      if (current?.nextSteps && current.nextSteps.startsWith("{")) {
+        try {
+          existingMeta = JSON.parse(current.nextSteps);
+        } catch {
+          /* ignore */
+        }
+      }
+
+      const metaPayload = {
+        ...existingMeta,
+        permittedDocIds: docIds,
+      };
+
       await (supabase as any)
         .from("data_room_requests")
         .update({
-          permitted_doc_ids: docIds,
+          next_steps: JSON.stringify(metaPayload),
           updated_at: now,
         })
         .eq("id", requestId);
@@ -623,20 +673,33 @@ export const requestService = {
     saveLocalDrRequests(updated);
 
     try {
+      const current = local.find((r) => r.id === requestId);
+      let existingMeta: Record<string, any> = {};
+      if (current?.nextSteps && current.nextSteps.startsWith("{")) {
+        try {
+          existingMeta = JSON.parse(current.nextSteps);
+        } catch {
+          /* ignore */
+        }
+      }
+
+      const metaPayload = {
+        ...existingMeta,
+        rulesAccepted: true,
+        rulesVersion,
+        rulesAcceptedAt: now,
+        ndaSignedName: investorName,
+        ndaSignedAt: now,
+        universityName: universityName || current?.universityName,
+        accessScope,
+      };
+
       const payload: Record<string, any> = {
-        nda_status: "signed",
         nda_signed: true,
         nda_signed_name: investorName,
-        nda_signed_at: now,
-        nda_version: rulesVersion,
-        rules_accepted: true,
-        rules_version: rulesVersion,
-        rules_accepted_at: now,
+        next_steps: JSON.stringify(metaPayload),
         updated_at: now,
       };
-      if (universityName) {
-        payload["university_name"] = universityName;
-      }
 
       await (supabase as any)
         .from("data_room_requests")
@@ -765,9 +828,6 @@ export const requestService = {
       if (cleanEmail) {
         orClauses.push(`founder_email.ilike.${cleanEmail}`);
       }
-      if (founderId) {
-        orClauses.push(`founder_id.eq.${founderId}`);
-      }
 
       if (orClauses.length > 0) {
         query = query.or(orClauses.join(","));
@@ -819,37 +879,53 @@ export const requestService = {
   },
 
   mapDbRequestToRecord(d: any): DataRoomRequestRecord {
+    let meta: Record<string, any> = {};
+    if (d.next_steps && typeof d.next_steps === "string" && d.next_steps.startsWith("{")) {
+      try {
+        meta = JSON.parse(d.next_steps);
+      } catch {
+        /* ignore */
+      }
+    }
+
+    const permitted =
+      meta.permittedDocIds ||
+      (Array.isArray(d.permitted_doc_ids)
+        ? d.permitted_doc_ids
+        : typeof d.permitted_doc_ids === "string" && d.permitted_doc_ids.trim().length > 0
+          ? (d.permitted_doc_ids.startsWith("[") ? JSON.parse(d.permitted_doc_ids) : d.permitted_doc_ids.split(",").filter(Boolean))
+          : undefined);
+
+    const ndaSigned = Boolean(d.nda_signed || meta.rulesAccepted);
+    const ndaStatus = ndaSigned ? "signed" : (d.status === "granted" ? "required" : "required");
+
     return {
       id: d.id,
       startupId: d.startup_id,
       investorId: d.investor_id,
-      founderId: d.founder_id || undefined,
+      founderId: meta.founderId || d.founder_id || undefined,
       founderEmail: d.founder_email || undefined,
       investorName: d.investor_name || "Accredited Investor",
       investorEmail: d.investor_email || "",
       investorOrg: d.investor_org || "Venture Fund",
       startupName: d.startup_name || "Venture",
-      message: d.message || undefined,
+      message: meta.message || d.message || undefined,
       status: d.status || "pending",
-      ndaStatus: d.nda_status || (d.nda_signed ? "signed" : "required"),
-      ndaSigned: Boolean(d.nda_signed),
-      ndaSignedName: d.nda_signed_name || "",
-      ndaSignedAt: d.nda_signed_at || undefined,
-      ndaVersion: d.nda_version || "v1.0",
-      rulesAccepted: Boolean(d.rules_accepted || d.nda_signed),
-      rulesVersion: d.rules_version || d.nda_version || "v1.0-cv-reg",
-      rulesAcceptedAt: d.rules_accepted_at || d.nda_signed_at || undefined,
-      universityName: d.university_name || undefined,
-      permittedDocIds: Array.isArray(d.permitted_doc_ids)
-        ? d.permitted_doc_ids
-        : typeof d.permitted_doc_ids === "string" && d.permitted_doc_ids.trim().length > 0
-          ? (d.permitted_doc_ids.startsWith("[") ? JSON.parse(d.permitted_doc_ids) : d.permitted_doc_ids.split(",").filter(Boolean))
-          : undefined,
+      ndaStatus: ndaStatus as any,
+      ndaSigned,
+      ndaSignedName: d.nda_signed_name || meta.ndaSignedName || "",
+      ndaSignedAt: meta.ndaSignedAt || d.nda_signed_at || undefined,
+      ndaVersion: meta.rulesVersion || d.nda_version || "v1.0",
+      rulesAccepted: Boolean(meta.rulesAccepted || d.rules_accepted || ndaSigned),
+      rulesVersion: meta.rulesVersion || d.rules_version || "v1.0-cv-reg",
+      rulesAcceptedAt: meta.rulesAcceptedAt || d.rules_accepted_at || undefined,
+      universityName: meta.universityName || d.university_name || undefined,
+      permittedDocIds: permitted,
       discussionTerms: d.discussion_terms || undefined,
-      nextSteps: d.next_steps || undefined,
-      declineReason: d.decline_reason || undefined,
-      accessDurationDays: d.access_duration_days || 30,
-      expiresAt: d.expires_at || undefined,
+      nextSteps: typeof d.next_steps === "string" && !d.next_steps.startsWith("{") ? d.next_steps : undefined,
+      declineReason: d.decline_reason || meta.declineReason || undefined,
+      accessDurationDays: meta.durationDays || d.access_duration_days || 30,
+      expiresAt: meta.expiresAt || d.expires_at || undefined,
       revokedAt: d.revoked_at || undefined,
       revokedBy: d.revoked_by || undefined,
       revokedReason: d.revoked_reason || undefined,
@@ -1231,7 +1307,26 @@ export const requestService = {
 
     let storageUploaded = false;
 
-    // 1. Attempt upload to Supabase Storage private bucket
+    // 1. Convert file to dataURL for persistent in-app viewing & preview
+    let fileDataUrl: string | undefined = undefined;
+    if (typeof FileReader !== "undefined") {
+      try {
+        fileDataUrl = await new Promise<string>((resolve) => {
+          const reader = new FileReader();
+          reader.onloadend = () => resolve(reader.result as string);
+          reader.onerror = () => resolve("");
+          if (file.size < 12 * 1024 * 1024) {
+            reader.readAsDataURL(file);
+          } else {
+            resolve("");
+          }
+        });
+      } catch {
+        /* ignore */
+      }
+    }
+
+    // 2. Attempt upload to Supabase Storage private bucket
     try {
       const { data: uploadData, error: uploadError } = await supabase.storage
         .from("dataroom-documents")
@@ -1258,6 +1353,7 @@ export const requestService = {
       size: fileSizeFormatted,
       mimeType: file.type || "application/pdf",
       storagePath: storageUploaded ? storagePath : undefined,
+      fileUrl: fileDataUrl || undefined,
       confidential,
       createdAt: now,
       updatedAt: now,
@@ -1267,7 +1363,7 @@ export const requestService = {
     const local = getLocalDocs();
     saveLocalDocs([record, ...local]);
 
-    // 2. Persist metadata to database
+    // 3. Persist metadata to database (only existing columns)
     try {
       const payload: Record<string, any> = {
         id: safeId,
@@ -1275,14 +1371,13 @@ export const requestService = {
         name: record.name,
         category: record.category,
         size: record.size,
-        mime_type: record.mimeType,
         confidential: record.confidential,
         created_at: now,
-        updated_at: now,
       };
 
-      if (ownerId) payload["owner_id"] = ownerId;
-      if (storageUploaded) payload["storage_path"] = storagePath;
+      if (fileDataUrl && fileDataUrl.length < 1500000) {
+        payload["file_url"] = fileDataUrl;
+      }
 
       const { data, error } = await (supabase as any)
         .from("data_room_docs")
@@ -1369,16 +1464,17 @@ export const requestService = {
     saveLocalDocs(local.map((d) => (d.id === docId ? updatedRecord : d)));
 
     try {
+      const payload: Record<string, any> = {
+        name: updatedRecord.name,
+        category: updatedRecord.category,
+        size: updatedRecord.size,
+        confidential: updatedRecord.confidential,
+      };
+      if (updatedRecord.fileUrl) payload["file_url"] = updatedRecord.fileUrl;
+
       await (supabase as any)
         .from("data_room_docs")
-        .update({
-          name: updatedRecord.name,
-          category: updatedRecord.category,
-          size: updatedRecord.size,
-          mime_type: updatedRecord.mimeType,
-          storage_path: newStoragePath,
-          updated_at: now,
-        })
+        .update(payload)
         .eq("id", docId);
     } catch (err) {
       console.warn("[RequestService] DB exception on replaceDataRoomDoc:", err);
@@ -1566,6 +1662,20 @@ export const requestService = {
     const localDoc = getLocalDocs().find((d) => d.id === docId);
     if (localDoc?.fileUrl) {
       return { success: true, signedUrl: localDoc.fileUrl, inAppPreview: true };
+    }
+
+    try {
+      const { data: dbDoc } = await (supabase as any)
+        .from("data_room_docs")
+        .select("file_url")
+        .eq("id", docId)
+        .maybeSingle();
+
+      if (dbDoc?.file_url) {
+        return { success: true, signedUrl: dbDoc.file_url, inAppPreview: true };
+      }
+    } catch {
+      /* ignore */
     }
 
     // Log the view or download action in audit trail

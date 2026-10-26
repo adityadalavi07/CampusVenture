@@ -214,13 +214,32 @@ function StartupDetail() {
     requestAccess(startup.id, investor.id);
     setDrStatus("pending");
 
-    const resolvedFounderEmail =
+    let resolvedFounderEmail =
       startup.founderEmail ||
+      (startup as any).founder_email ||
       DEMO_STUDENTS.find((s) => s.startupId === startup.id)?.email ||
       (startup.id === "s1" ? "aarav@coep.ac.in" : undefined);
 
-    let resolvedFounderId = startup.founder;
-    if (resolvedFounderEmail) {
+    let resolvedFounderId = (startup as any).founderId || (startup as any).founder_id;
+
+    if (!resolvedFounderEmail) {
+      try {
+        const { data: dbStartup } = await (supabase as any)
+          .from("startups")
+          .select("founder_email, founder_id")
+          .eq("id", startup.id)
+          .maybeSingle();
+
+        if (dbStartup?.founder_email) {
+          resolvedFounderEmail = dbStartup.founder_email;
+          if (dbStartup.founder_id) resolvedFounderId = dbStartup.founder_id;
+        }
+      } catch {
+        /* ignore */
+      }
+    }
+
+    if (resolvedFounderEmail && !resolvedFounderId) {
       try {
         const { data: prof } = await (supabase as any)
           .from("profiles")
@@ -256,18 +275,19 @@ function StartupDetail() {
       return;
     }
 
-    notify(
-      "student",
-      "Data-room access requested",
-      `${investor.name} (${investor.organization || "Accredited Investor"}) requested access to ${startup.name} Data Room under mutual NDA.`,
-      resolvedFounderEmail
-        ? {
-            recipientEmail: resolvedFounderEmail,
-            senderEmail: user?.email,
-            senderUserId: investor.id,
-          }
-        : undefined
-    );
+    if (resolvedFounderEmail || resolvedFounderId) {
+      notify(
+        "student",
+        "Data-room access requested",
+        `${investor.name} (${investor.organization || "Accredited Investor"}) requested access to ${startup.name} Data Room under mutual NDA.`,
+        {
+          recipientEmail: resolvedFounderEmail,
+          recipientUserId: resolvedFounderId,
+          senderEmail: user?.email,
+          senderUserId: investor.id,
+        }
+      );
+    }
     toast.success(`Data-room access request sent to ${startup.name}`);
   };
 
@@ -275,13 +295,32 @@ function StartupDetail() {
     addRequest(startup.id, investor.id, "connection");
     setConnStatus("pending");
 
-    const resolvedFounderEmail =
+    let resolvedFounderEmail =
       startup.founderEmail ||
+      (startup as any).founder_email ||
       DEMO_STUDENTS.find((s) => s.startupId === startup.id)?.email ||
       (startup.id === "s1" ? "aarav@coep.ac.in" : undefined);
 
-    let resolvedReceiverId = startup.founder;
-    if (resolvedFounderEmail) {
+    let resolvedReceiverId = (startup as any).founderId || (startup as any).founder_id;
+
+    if (!resolvedFounderEmail) {
+      try {
+        const { data: dbStartup } = await (supabase as any)
+          .from("startups")
+          .select("founder_email, founder_id")
+          .eq("id", startup.id)
+          .maybeSingle();
+
+        if (dbStartup?.founder_email) {
+          resolvedFounderEmail = dbStartup.founder_email;
+          if (dbStartup.founder_id) resolvedReceiverId = dbStartup.founder_id;
+        }
+      } catch {
+        /* ignore */
+      }
+    }
+
+    if (resolvedFounderEmail && !resolvedReceiverId) {
       try {
         const { data: prof } = await (supabase as any)
           .from("profiles")
@@ -316,18 +355,19 @@ function StartupDetail() {
       return;
     }
 
-    notify(
-      "student",
-      "New connection request",
-      `${investor.name} (${investor.organization || "Accredited Investor"}) wants to connect regarding ${startup.name}.`,
-      resolvedFounderEmail
-        ? {
-            recipientEmail: resolvedFounderEmail,
-            senderEmail: user?.email,
-            senderUserId: investor.id,
-          }
-        : undefined
-    );
+    if (resolvedFounderEmail || resolvedReceiverId) {
+      notify(
+        "student",
+        "New connection request",
+        `${investor.name} (${investor.organization || "Accredited Investor"}) wants to connect regarding ${startup.name}.`,
+        {
+          recipientEmail: resolvedFounderEmail,
+          recipientUserId: resolvedReceiverId,
+          senderEmail: user?.email,
+          senderUserId: investor.id,
+        }
+      );
+    }
     toast.success(`Connection requested with ${startup.name}`);
   };
 

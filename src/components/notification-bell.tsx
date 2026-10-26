@@ -42,7 +42,24 @@ export function NotificationBell({ role }: { role: Role }) {
       return cleanUserId ? n.recipientUserId === cleanUserId : false;
     }
 
-    // 4. If notification had no specific recipient (system broadcast), exclude if initiated by this user
+    // 4. For private workflows (data room requests, connection requests, direct messages, terms),
+    // strictly require an explicit recipient match. Never broadcast private founder/investor alerts!
+    const titleLower = (n.title || "").toLowerCase();
+    const bodyLower = (n.body || "").toLowerCase();
+    const isPrivateWorkflow =
+      titleLower.includes("request") ||
+      titleLower.includes("data-room") ||
+      titleLower.includes("data room") ||
+      titleLower.includes("connection") ||
+      titleLower.includes("message") ||
+      titleLower.includes("terms") ||
+      bodyLower.includes("requested access") ||
+      bodyLower.includes("wants to connect");
+
+    if (isPrivateWorkflow) {
+      return false;
+    }
+
     return true;
   });
 

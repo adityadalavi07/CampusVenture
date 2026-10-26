@@ -370,6 +370,40 @@ function StudentDataRoom() {
         recipientUserId: selectedReq.investorId,
       }
     );
+
+    // Notify exclusively Student C's university (University X) about diligence approval
+    const studentUniv = currentStartup?.university || user?.org;
+    if (studentUniv || user?.email) {
+      try {
+        const { data: univProfiles } = await (supabase as any)
+          .from("profiles")
+          .select("id, email, org")
+          .eq("role", "university");
+
+        const targetUniv = (univProfiles || []).find((u: any) =>
+          (studentUniv && u.org?.toLowerCase().includes(studentUniv.toLowerCase())) ||
+          (studentUniv && studentUniv.toLowerCase().includes(u.org?.toLowerCase() || "")) ||
+          (user?.email && u.email && user.email.split("@")[1] === u.email.split("@")[1])
+        );
+
+        if (targetUniv?.email) {
+          notify(
+            "university",
+            `Data-room diligence approved: ${selectedReq.startupName || currentStartup?.name || "Startup"}`,
+            `Founder ${user?.name || "Student"} has granted Data Room access to ${invName} (${selectedReq.investorOrg || "Investor"}) with ${selectedDocIdsForGrant.length} authorized document(s).`,
+            {
+              recipientEmail: targetUniv.email,
+              recipientUserId: targetUniv.id,
+              senderEmail: user?.email,
+              senderUserId: user?.id,
+            }
+          );
+        }
+      } catch {
+        /* ignore */
+      }
+    }
+
     toast.success(`Access granted to ${invName}! ${selectedDocIdsForGrant.length} documents permitted.`);
     setGrantModalOpen(false);
   };
@@ -730,9 +764,9 @@ function StudentDataRoom() {
                     </div>
 
                     <div className="flex items-center gap-1.5 shrink-0">
-                      <Badge variant="default" className="text-[10px] bg-primary/10 text-primary border-primary/20">
+                      <Badge variant="outline" className="text-[10px] bg-emerald-500/10 text-emerald-700 dark:text-emerald-400 border-emerald-500/20">
                         <ShieldCheck className="size-3 mr-1" />
-                        Confidential · NDA Required
+                        Founder Asset · Full Access
                       </Badge>
                       <Button
                         size="sm"
@@ -1601,13 +1635,13 @@ function StudentDataRoom() {
               <span className="text-[10px] font-mono opacity-80">PROTECTED UNDER NDA v1.0</span>
             </div>
 
-            {previewUrl && (previewDoc?.mimeType?.startsWith("image/") || previewDoc?.name.match(/\.(png|jpe?g|gif|webp)$/i)) ? (
+            {previewUrl && (previewUrl.startsWith("data:image/") || previewUrl.startsWith("http://") || previewUrl.startsWith("https://")) && (previewDoc?.mimeType?.startsWith("image/") || previewDoc?.name.match(/\.(png|jpe?g|gif|webp)$/i)) ? (
               <div className="grid place-items-center bg-background rounded-lg border p-2">
                 <img src={previewUrl} alt={previewDoc.name} className="max-h-[300px] object-contain rounded" />
               </div>
-            ) : previewUrl && (previewDoc?.mimeType === "application/pdf" || previewDoc?.name.endsWith(".pdf")) ? (
+            ) : previewUrl && (previewUrl.startsWith("data:application/pdf") || previewUrl.startsWith("http://") || previewUrl.startsWith("https://")) && (previewDoc?.mimeType === "application/pdf" || previewDoc?.name.endsWith(".pdf")) ? (
               <div className="h-[320px] rounded border bg-background overflow-hidden">
-                <iframe src={previewUrl} title={previewDoc.name} className="size-full" />
+                <iframe src={previewUrl} title={previewDoc.name} className="size-full border-0" />
               </div>
             ) : (
               <div className="space-y-3 bg-card rounded-lg border p-4 text-xs">
