@@ -994,9 +994,36 @@ export const requestService = {
     let cleanIds: string[] = Array.isArray(arg) ? arg.filter(Boolean) : (arg.campusStartupIds || []).filter(Boolean);
     const univName = (!Array.isArray(arg) ? (arg.universityName || arg.universityOrg || "") : "").trim();
     const univEmail = (!Array.isArray(arg) ? (arg.universityEmail || "") : "").trim();
-    const domain = univEmail.includes("@") ? univEmail.split("@")[1].toLowerCase().trim() : "";
+    const domain = univEmail.includes("@") && !univEmail.endsWith("@gmail.com") && !univEmail.endsWith("@yahoo.com")
+      ? univEmail.split("@")[1].toLowerCase().trim()
+      : "";
 
-    // Always dynamically query all campus startups from Supabase matching university name or domain
+    // 1. Discover all campus student profiles by university affiliation or email domain
+    let campusStudentEmails: string[] = [];
+    if (univName || domain) {
+      try {
+        const { data: dbProfiles } = await (supabase as any)
+          .from("profiles")
+          .select("id, email, org")
+          .eq("role", "student");
+        if (Array.isArray(dbProfiles)) {
+          campusStudentEmails = dbProfiles
+            .filter((p: any) => {
+              const pOrg = (p.org || "").toLowerCase();
+              const pEmail = (p.email || "").toLowerCase();
+              if (domain && pEmail.endsWith(domain)) return true;
+              if (univName && (pOrg.includes(univName.toLowerCase()) || univName.toLowerCase().includes(pOrg))) return true;
+              return false;
+            })
+            .map((p: any) => p.email.toLowerCase().trim())
+            .filter(Boolean);
+        }
+      } catch (err) {
+        console.warn("[RequestService] Error discovering campus student profiles:", err);
+      }
+    }
+
+    // 2. Always dynamically query all campus startups from Supabase matching university name or domain
     if (univName || domain) {
       try {
         const { data: dbStartups } = await (supabase as any)
@@ -1008,6 +1035,7 @@ export const requestService = {
             const sEmail = (s.founder_email || "").toLowerCase();
             if (domain && sEmail.endsWith(domain)) return true;
             if (univName && (sUniv.includes(univName.toLowerCase()) || univName.toLowerCase().includes(sUniv))) return true;
+            if (campusStudentEmails.includes(sEmail)) return true;
             return false;
           });
           const dynamicIds = matched.map((s: any) => String(s.id));
@@ -1018,24 +1046,28 @@ export const requestService = {
       }
     }
 
-    if (cleanIds.length === 0 && !domain) {
+    if (cleanIds.length === 0 && !domain && campusStudentEmails.length === 0) {
       return { dataRoomRequests: [], connectionRequests: [], auditLogs: [], discoveredStartupIds: [] };
     }
 
     const localDr = getLocalDrRequests().filter(
       (r) =>
         (cleanIds.length > 0 && cleanIds.includes(r.startupId)) ||
-        (domain && r.founderEmail?.toLowerCase().endsWith(domain))
+        (domain && r.founderEmail?.toLowerCase().endsWith(domain)) ||
+        (r.founderEmail && campusStudentEmails.includes(r.founderEmail.toLowerCase().trim()))
     );
     const localConn = getLocalConnRequests().filter(
       (c) =>
         (cleanIds.length > 0 && c.startupId && cleanIds.includes(c.startupId)) ||
-        (domain && (c.receiverEmail?.toLowerCase().endsWith(domain) || c.senderEmail?.toLowerCase().endsWith(domain)))
+        (domain && (c.receiverEmail?.toLowerCase().endsWith(domain) || c.senderEmail?.toLowerCase().endsWith(domain))) ||
+        (c.receiverEmail && campusStudentEmails.includes(c.receiverEmail.toLowerCase().trim())) ||
+        (c.senderEmail && campusStudentEmails.includes(c.senderEmail.toLowerCase().trim()))
     );
     const localAudit = getLocalAuditLogs().filter(
       (a) =>
         (cleanIds.length > 0 && cleanIds.includes(a.startupId)) ||
-        (domain && a.userEmail?.toLowerCase().endsWith(domain))
+        (domain && a.userEmail?.toLowerCase().endsWith(domain)) ||
+        (a.userEmail && campusStudentEmails.includes(a.userEmail.toLowerCase().trim()))
     );
 
     try {
@@ -1047,6 +1079,9 @@ export const requestService = {
       const drOrClauses: string[] = [];
       if (cleanIds.length > 0) {
         drOrClauses.push(`startup_id.in.(${cleanIds.join(",")})`);
+      }
+      if (campusStudentEmails.length > 0) {
+        drOrClauses.push(`founder_email.in.(${campusStudentEmails.join(",")})`);
       }
       if (domain) {
         drOrClauses.push(`founder_email.ilike.%${domain}`);
@@ -1064,6 +1099,12 @@ export const requestService = {
       if (cleanIds.length > 0) {
         connOrClauses.push(`startup_id.in.(${cleanIds.join(",")})`);
       }
+      if (campusStudentEmails.length > 0) {
+        connOrClauses.push(
+          `receiver_email.in.(${campusStudentEmails.join(",")})`,
+          `sender_email.in.(${campusStudentEmails.join(",")})`
+        );
+      }
       if (domain) {
         connOrClauses.push(`receiver_email.ilike.%${domain}`, `sender_email.ilike.%${domain}`);
       }
@@ -1078,6 +1119,8 @@ export const requestService = {
 
       if (cleanIds.length > 0) {
         auditQuery = auditQuery.in("startup_id", cleanIds);
+      } else if (campusStudentEmails.length > 0) {
+        auditQuery = auditQuery.in("user_email", campusStudentEmails);
       } else if (domain) {
         auditQuery = auditQuery.ilike("user_email", `%${domain}`);
       }

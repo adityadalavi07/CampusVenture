@@ -460,14 +460,32 @@ function InvestorDataRooms() {
     const cleanSig = signerName.trim();
     const reqId = ndaRequest.id;
     const startupId = ndaRequest.startupId;
-    const stName = ndaRequest.startupName || "Startup";
+    const startup = startups.find((s) => s.id === startupId);
+    const stName = ndaRequest.startupName || startup?.name || "Startup";
+    const effectiveUniversity = ndaRequest.universityName || startup?.university || "Campus Partner University";
+    const nowIso = new Date().toISOString();
+    const legalStatement = `I confirm that I am investor ${cleanSig} (${user?.email || "Investor"}), in my full presence and legal authority. I am okay with all platform rules and regulations (v1.0-cv-reg) and the consequences of rule breaks. I agree and submit this form as permanent proof of verification and security for ${stName} and founder (${ndaRequest.founderEmail || "Student Founder"}).`;
 
     try {
-      const res = await requestService.signDataRoomNda(reqId, {
-        signedName: cleanSig,
-        signerUserId: user?.id || myInvestorId,
-        signerEmail: user?.email,
-        ndaVersion: "v1.0",
+      // 1. Record legal acceptance of Platform Rules & Regulations (v1.0-cv-reg) and permanent Proof of Trust
+      const res = await requestService.recordRulesAcceptance({
+        requestId: reqId,
+        startupId,
+        investorUserId: user?.id || myInvestorId,
+        investorId: user?.id || myInvestorId,
+        investorName: cleanSig,
+        investorEmail: user?.email || "",
+        investorOrg: signerOrg || user?.org || "Accredited Investment Partner",
+        founderUserId: ndaRequest.founderId,
+        founderId: ndaRequest.founderId,
+        founderName: ndaRequest.founderEmail || "Student Founder",
+        founderEmail: ndaRequest.founderEmail,
+        startupName: stName,
+        universityId: startup?.universityId,
+        universityName: effectiveUniversity,
+        rulesVersion: "v1.0-cv-reg",
+        accessScope: ndaRequest.permittedDocIds || [],
+        legalStatement,
       });
 
       if (!res.success) {
@@ -476,7 +494,21 @@ function InvestorDataRooms() {
         return;
       }
 
-      // Update store state and local state
+      const newProof = {
+        investorName: cleanSig,
+        investorEmail: user?.email || "",
+        investorOrg: signerOrg || user?.org || "Accredited Investment Partner",
+        founderName: ndaRequest.founderEmail || "Student Founder",
+        founderEmail: ndaRequest.founderEmail || "",
+        startupName: stName,
+        universityName: effectiveUniversity,
+        rulesVersion: "v1.0-cv-reg",
+        declaration: legalStatement,
+        timestamp: nowIso,
+        accessScope: ndaRequest.permittedDocIds || [],
+      };
+
+      // 2. Update store state and local state
       signNda(startupId, myInvestorId, cleanSig);
       setLiveRequests((prev) =>
         prev.map((r) =>
@@ -486,22 +518,60 @@ function InvestorDataRooms() {
                 ndaStatus: "signed",
                 ndaSigned: true,
                 ndaSignedName: cleanSig,
-                ndaSignedAt: new Date().toISOString(),
-                ndaVersion: "v1.0",
+                ndaSignedAt: nowIso,
+                ndaVersion: "v1.0-cv-reg",
+                rulesAccepted: true,
+                rulesVersion: "v1.0-cv-reg",
+                rulesAcceptedAt: nowIso,
+                rulesProof: newProof,
+                universityName: effectiveUniversity,
               }
             : r
         )
       );
 
-      // Notify student founder
+      // 3. Notify student founder
       notify(
         "student",
-        "Mutual NDA Executed & Data Room Unlocked",
-        `${cleanSig} (${signerOrg || "Accredited Investor"}) signed the Mutual NDA (v1.0) for ${stName}. Confidential diligence files are now unlocked.`,
+        "Mutual NDA & Diligence Rules Executed",
+        `${cleanSig} (${signerOrg || "Accredited Investor"}) signed the Mutual NDA & Platform Rules (v1.0-cv-reg) for ${stName}. Confidential diligence files are now unlocked.`,
         ndaRequest.founderEmail ? { recipientEmail: ndaRequest.founderEmail } : undefined
       );
 
-      toast.success("Mutual NDA executed! Data Room unlocked.");
+      // 4. Notify University Incubation Cell with Proof of Trust verification
+      const targetUnivName = effectiveUniversity;
+      if (targetUnivName || ndaRequest.founderEmail) {
+        try {
+          const { data: univProfiles } = await (supabase as any)
+            .from("profiles")
+            .select("id, email, org")
+            .eq("role", "university");
+
+          const targetUniv = (univProfiles || []).find((u: any) =>
+            (targetUnivName && u.org?.toLowerCase().includes(targetUnivName.toLowerCase())) ||
+            (targetUnivName && targetUnivName.toLowerCase().includes(u.org?.toLowerCase() || "")) ||
+            (ndaRequest.founderEmail && u.email && ndaRequest.founderEmail.split("@")[1] === u.email.split("@")[1])
+          );
+
+          if (targetUniv?.email) {
+            notify(
+              "university",
+              `Diligence Rules & Proof of Trust Executed: ${stName}`,
+              `Investor ${cleanSig} (${user?.email || "Investor"}) executed the Platform Rules & Regulations under v1.0-cv-reg for ${stName} (Founder: ${ndaRequest.founderEmail || "Student"}). Verification stored in database.`,
+              {
+                recipientEmail: targetUniv.email,
+                recipientUserId: targetUniv.id,
+                senderEmail: user?.email,
+                senderUserId: user?.id,
+              }
+            );
+          }
+        } catch {
+          /* ignore */
+        }
+      }
+
+      toast.success("Mutual NDA & Diligence Rules executed! Signed Proof of Trust stored in university database.");
       setNdaRequest(null);
       setActiveTab("accessible");
     } catch (err: any) {
