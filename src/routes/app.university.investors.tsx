@@ -135,19 +135,19 @@ function InvestorInterest() {
 
     fetchAll();
 
-    // Subscribe to real-time updates and poll every 4s to ensure cross-browser synchronization
+    // Subscribe to real-time multi-channel updates (WebSockets, BroadcastChannel, focus, and fast polling)
     const unsubDr = requestService.subscribeToDataRoomRequests(() => {
       fetchAll();
     });
 
-    const interval = setInterval(() => {
+    const unsubConn = requestService.subscribeToConnectionRequests(() => {
       fetchAll();
-    }, 4000);
+    });
 
     return () => {
       active = false;
       unsubDr();
-      clearInterval(interval);
+      unsubConn();
     };
   }, [user?.email, user?.org, campusStartupIds.join(",")]);
 

@@ -149,14 +149,14 @@ function UniversityDashboard() {
       fetchActivity();
     });
 
-    const interval = setInterval(() => {
+    const unsubConn = requestService.subscribeToConnectionRequests(() => {
       fetchActivity();
-    }, 4000);
+    });
 
     return () => {
       active = false;
       unsubDr();
-      clearInterval(interval);
+      unsubConn();
     };
   }, [user?.email, user?.org, uniStartupIds.join(",")]);
 

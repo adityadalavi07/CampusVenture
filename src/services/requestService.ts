@@ -105,6 +105,77 @@ const LOCAL_CONN_KEY = "campusventure.connections.requests.v2";
 const LOCAL_DOCS_KEY = "campusventure.dataroom.docs.v3";
 const LOCAL_AUDIT_KEY = "campusventure.dataroom.audit.v1";
 
+// Global multiplexed Realtime channel and listeners for immediate sync across all clients
+const drUpdateListeners = new Set<(detail?: any) => void>();
+let globalDrChannel: any = null;
+
+function ensureGlobalDrSubscription() {
+  if (typeof window === "undefined") return;
+  if (!globalDrChannel) {
+    globalDrChannel = supabase
+      .channel("cv-dataroom-realtime-broadcast")
+      .on("broadcast", { event: "dataroom_state_changed" }, (payload: any) => {
+        const detail = payload?.payload;
+        drUpdateListeners.forEach((cb) => {
+          try {
+            cb(detail);
+          } catch (e) {
+            console.warn(e);
+          }
+        });
+      })
+      .on(
+        "postgres_changes",
+        { event: "*", schema: "public", table: "data_room_requests" },
+        (payload: any) => {
+          drUpdateListeners.forEach((cb) => {
+            try {
+              cb(payload);
+            } catch (e) {
+              console.warn(e);
+            }
+          });
+        }
+      )
+      .subscribe();
+  }
+}
+
+const connUpdateListeners = new Set<(detail?: any) => void>();
+let globalConnChannel: any = null;
+
+function ensureGlobalConnSubscription() {
+  if (typeof window === "undefined") return;
+  if (!globalConnChannel) {
+    globalConnChannel = supabase
+      .channel("cv-conn-realtime-broadcast")
+      .on("broadcast", { event: "conn_state_changed" }, (payload: any) => {
+        const detail = payload?.payload;
+        connUpdateListeners.forEach((cb) => {
+          try {
+            cb(detail);
+          } catch (e) {
+            console.warn(e);
+          }
+        });
+      })
+      .on(
+        "postgres_changes",
+        { event: "*", schema: "public", table: "connection_requests" },
+        (payload: any) => {
+          connUpdateListeners.forEach((cb) => {
+            try {
+              cb(payload);
+            } catch (e) {
+              console.warn(e);
+            }
+          });
+        }
+      )
+      .subscribe();
+  }
+}
+
 function formatFileSize(bytes: number): string {
   if (bytes < 1024) return `${bytes} B`;
   if (bytes < 1024 * 1024) return `${Math.round(bytes / 1024)} KB`;
@@ -188,6 +259,100 @@ function saveLocalAuditLogs(items: DataRoomAuditRecord[]): void {
 }
 
 export const requestService = {
+  // ============================================================================
+  // REAL-TIME BROADCAST DISPATCHERS
+  // ============================================================================
+
+  /**
+   * Instant multi-channel broadcast to all clients, browser tabs, and devices.
+   * Dispatches via 4 parallel channels:
+   * 1. In-process direct callbacks
+   * 2. Window CustomEvent (DOM sync for active page)
+   * 3. Browser BroadcastChannel API (0ms instant cross-tab sync)
+   * 4. Supabase Realtime WebSocket broadcast (cross-browser / cross-device global sync)
+   */
+  async broadcastDataRoomChange(detail?: any): Promise<void> {
+    drUpdateListeners.forEach((cb) => {
+      try {
+        cb(detail);
+      } catch (e) {
+        console.warn(e);
+      }
+    });
+
+    if (typeof window !== "undefined") {
+      try {
+        window.dispatchEvent(new CustomEvent("cv:dataroom-state-changed", { detail }));
+      } catch {
+        /* ignore */
+      }
+    }
+
+    if (typeof window !== "undefined" && "BroadcastChannel" in window) {
+      try {
+        const bc = new BroadcastChannel("cv-realtime-sync");
+        bc.postMessage({ type: "dataroom_changed", detail, timestamp: Date.now() });
+        bc.close();
+      } catch {
+        /* ignore */
+      }
+    }
+
+    try {
+      ensureGlobalDrSubscription();
+      if (globalDrChannel) {
+        await globalDrChannel.send({
+          type: "broadcast",
+          event: "dataroom_state_changed",
+          payload: detail || { timestamp: Date.now() },
+        });
+      }
+    } catch (e) {
+      console.warn("[RequestService] Realtime broadcast send notice:", e);
+    }
+  },
+
+  async broadcastConnectionChange(detail?: any): Promise<void> {
+    connUpdateListeners.forEach((cb) => {
+      try {
+        cb(detail);
+      } catch (e) {
+        console.warn(e);
+      }
+    });
+
+    if (typeof window !== "undefined") {
+      try {
+        window.dispatchEvent(new CustomEvent("cv:conn-state-changed", { detail }));
+      } catch {
+        /* ignore */
+      }
+    }
+
+    if (typeof window !== "undefined" && "BroadcastChannel" in window) {
+      try {
+        const bc = new BroadcastChannel("cv-realtime-sync");
+        bc.postMessage({ type: "conn_changed", detail, timestamp: Date.now() });
+        bc.close();
+      } catch {
+        /* ignore */
+      }
+    }
+
+    try {
+      ensureGlobalConnSubscription();
+      if (globalConnChannel) {
+        await globalConnChannel.send({
+          type: "broadcast",
+          event: "conn_state_changed",
+          payload: detail || { timestamp: Date.now() },
+        });
+      }
+    } catch (e) {
+      console.warn("[RequestService] Realtime conn broadcast send notice:", e);
+    }
+  },
+
   // ============================================================================
   // DATA ROOM REQUESTS
   // ============================================================================
@@ -309,6 +474,15 @@ export const requestService = {
       userEmail: investorEmail,
       action: "requested",
       details: message ? `Investor message: ${message.slice(0, 100)}` : "Access requested",
+    });
+
+    this.broadcastDataRoomChange({
+      action: "requested",
+      requestId: safeId,
+      startupId,
+      investorId,
+      investorEmail,
+      startupName,
     });
 
     return { success: true, request: record };
@@ -501,6 +675,15 @@ export const requestService = {
       });
     }
 
+    this.broadcastDataRoomChange({
+      action: status,
+      requestId,
+      startupId: currentReq?.startupId,
+      investorId: currentReq?.investorId,
+      status,
+      durationDays,
+    });
+
     return { success: true };
   },
 
@@ -580,6 +763,14 @@ export const requestService = {
       });
     }
 
+    this.broadcastDataRoomChange({
+      action: "nda_signed",
+      requestId,
+      startupId: currentReq?.startupId,
+      signedName,
+      ndaVersion,
+    });
+
     return { success: true };
   },
 
@@ -640,6 +831,13 @@ export const requestService = {
         details: `Permitted document scope updated: ${docIds.length} document(s) authorized for investor ${currentReq.investorName || currentReq.investorEmail}.`,
       });
     }
+
+    this.broadcastDataRoomChange({
+      action: "permitted_docs_updated",
+      requestId,
+      startupId: currentReq?.startupId,
+      docIds,
+    });
 
     return { success: true };
   },
@@ -761,6 +959,16 @@ export const requestService = {
       details: `Platform Rules & Regulations (${rulesVersion}) signed as Proof of Trust by ${params.investorName} (${params.investorEmail}) for ${effectiveStartupName} (${params.universityName || "University Partner"}). Scope: ${(params.accessScope || []).length > 0 ? (params.accessScope || []).join(", ") : "All founder-approved materials"}. Stored in university database.`,
     });
 
+    await this.broadcastDataRoomChange({
+      action: "rules_accepted",
+      requestId: params.requestId,
+      startupId: params.startupId,
+      investorName: params.investorName,
+      investorEmail: params.investorEmail,
+      universityName: params.universityName,
+      rulesVersion,
+    });
+
     return { success: true };
   },
 
@@ -788,8 +996,8 @@ export const requestService = {
     const univEmail = (!Array.isArray(arg) ? (arg.universityEmail || "") : "").trim();
     const domain = univEmail.includes("@") ? univEmail.split("@")[1].toLowerCase().trim() : "";
 
-    // If cleanIds is empty, dynamically query all campus startups from Supabase
-    if (cleanIds.length === 0 && (univName || domain)) {
+    // Always dynamically query all campus startups from Supabase matching university name or domain
+    if (univName || domain) {
       try {
         const { data: dbStartups } = await (supabase as any)
           .from("startups")
@@ -802,7 +1010,8 @@ export const requestService = {
             if (univName && (sUniv.includes(univName.toLowerCase()) || univName.toLowerCase().includes(sUniv))) return true;
             return false;
           });
-          cleanIds = matched.map((s: any) => String(s.id));
+          const dynamicIds = matched.map((s: any) => String(s.id));
+          cleanIds = Array.from(new Set([...cleanIds, ...dynamicIds]));
         }
       } catch (err) {
         console.warn("[RequestService] Error discovering campus startups:", err);
@@ -893,10 +1102,10 @@ export const requestService = {
 
       return {
         dataRoomRequests: Array.from(mergedDrMap.values()).sort(
-          (a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime()
+          (a, b) => new Date(b.updatedAt || b.createdAt).getTime() - new Date(a.updatedAt || a.createdAt).getTime()
         ),
         connectionRequests: Array.from(mergedConnMap.values()).sort(
-          (a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime()
+          (a, b) => new Date(b.updatedAt || b.createdAt).getTime() - new Date(a.updatedAt || a.createdAt).getTime()
         ),
         auditLogs: Array.from(mergedAuditMap.values()).sort(
           (a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime()
@@ -906,8 +1115,12 @@ export const requestService = {
     } catch (err) {
       console.warn("[RequestService] DB getUniversityInvestorActivity exception:", err);
       return {
-        dataRoomRequests: localDr,
-        connectionRequests: localConn,
+        dataRoomRequests: localDr.sort(
+          (a, b) => new Date(b.updatedAt || b.createdAt).getTime() - new Date(a.updatedAt || a.createdAt).getTime()
+        ),
+        connectionRequests: localConn.sort(
+          (a, b) => new Date(b.updatedAt || b.createdAt).getTime() - new Date(a.updatedAt || a.createdAt).getTime()
+        ),
         auditLogs: localAudit,
         discoveredStartupIds: cleanIds,
       };
@@ -979,27 +1192,71 @@ export const requestService = {
     return local;
   },
 
-  subscribeToDataRoomRequests(onUpdate: () => void): () => void {
-    let pollingTimer: any = null;
+  /**
+   * Subscribe to Data Room requests with 6 synchronized triggers:
+   * 1. Supabase Realtime WebSocket broadcast
+   * 2. Postgres changes event listener
+   * 3. Browser BroadcastChannel API (cross-tab 0ms instant sync)
+   * 4. Window CustomEvent listener (same-page instant sync)
+   * 5. Tab focus / visibilitychange listener (instant refresh on return)
+   * 6. High-speed 1200ms background polling fallback
+   */
+  subscribeToDataRoomRequests(onUpdate: (payload?: any) => void): () => void {
+    ensureGlobalDrSubscription();
+    drUpdateListeners.add(onUpdate);
 
-    const channel = supabase
-      .channel("public-dr-requests-realtime")
-      .on(
-        "postgres_changes",
-        { event: "*", schema: "public", table: "data_room_requests" },
-        () => {
-          onUpdate();
-        }
-      )
-      .subscribe();
+    let bc: BroadcastChannel | null = null;
+    if (typeof window !== "undefined" && "BroadcastChannel" in window) {
+      try {
+        bc = new BroadcastChannel("cv-realtime-sync");
+        bc.onmessage = (ev) => {
+          if (ev.data?.type === "dataroom_changed") {
+            onUpdate(ev.data.detail);
+          }
+        };
+      } catch {
+        /* ignore */
+      }
+    }
 
-    pollingTimer = setInterval(() => {
-      onUpdate();
-    }, 4000);
+    const customEventListener = (e: any) => {
+      onUpdate(e.detail);
+    };
+    if (typeof window !== "undefined") {
+      window.addEventListener("cv:dataroom-state-changed", customEventListener);
+    }
+
+    const onVisibilityOrFocus = () => {
+      if (typeof document !== "undefined" && document.visibilityState === "visible") {
+        onUpdate({ source: "focus_visibility" });
+      }
+    };
+    if (typeof window !== "undefined") {
+      window.addEventListener("focus", onVisibilityOrFocus);
+      document.addEventListener("visibilitychange", onVisibilityOrFocus);
+    }
+
+    const pollingTimer = setInterval(() => {
+      onUpdate({ source: "polling" });
+    }, 1200);
 
     return () => {
-      if (pollingTimer) clearInterval(pollingTimer);
-      supabase.removeChannel(channel);
+      drUpdateListeners.delete(onUpdate);
+      if (bc) {
+        try {
+          bc.close();
+        } catch {
+          /* ignore */
+        }
+      }
+      if (typeof window !== "undefined") {
+        window.removeEventListener("cv:dataroom-state-changed", customEventListener);
+        window.removeEventListener("focus", onVisibilityOrFocus);
+        document.removeEventListener("visibilitychange", onVisibilityOrFocus);
+      }
+      if (pollingTimer) {
+        clearInterval(pollingTimer);
+      }
     };
   },
 
@@ -1181,6 +1438,14 @@ export const requestService = {
       console.warn("[RequestService] DB sendConnectionRequest exception:", err);
     }
 
+    this.broadcastConnectionChange({
+      action: "requested",
+      requestId: safeId,
+      senderId,
+      receiverId,
+      startupId,
+    });
+
     return { success: true, request: record };
   },
 
@@ -1220,6 +1485,12 @@ export const requestService = {
     } catch (err) {
       console.warn("[RequestService] DB exception on respondToConnectionRequest:", err);
     }
+
+    this.broadcastConnectionChange({
+      action: status,
+      requestId,
+      status,
+    });
 
     return { success: true };
   },
@@ -1442,27 +1713,62 @@ export const requestService = {
     return local;
   },
 
-  subscribeToConnectionRequests(onUpdate: () => void): () => void {
-    let pollingTimer: any = null;
+  subscribeToConnectionRequests(onUpdate: (payload?: any) => void): () => void {
+    ensureGlobalConnSubscription();
+    connUpdateListeners.add(onUpdate);
 
-    const channel = supabase
-      .channel("public-conn-requests-realtime")
-      .on(
-        "postgres_changes",
-        { event: "*", schema: "public", table: "connection_requests" },
-        () => {
-          onUpdate();
-        }
-      )
-      .subscribe();
+    let bc: BroadcastChannel | null = null;
+    if (typeof window !== "undefined" && "BroadcastChannel" in window) {
+      try {
+        bc = new BroadcastChannel("cv-realtime-sync");
+        bc.onmessage = (ev) => {
+          if (ev.data?.type === "conn_changed") {
+            onUpdate(ev.data.detail);
+          }
+        };
+      } catch {
+        /* ignore */
+      }
+    }
 
-    pollingTimer = setInterval(() => {
-      onUpdate();
-    }, 4000);
+    const customEventListener = (e: any) => {
+      onUpdate(e.detail);
+    };
+    if (typeof window !== "undefined") {
+      window.addEventListener("cv:conn-state-changed", customEventListener);
+    }
+
+    const onVisibilityOrFocus = () => {
+      if (typeof document !== "undefined" && document.visibilityState === "visible") {
+        onUpdate({ source: "focus_visibility" });
+      }
+    };
+    if (typeof window !== "undefined") {
+      window.addEventListener("focus", onVisibilityOrFocus);
+      document.addEventListener("visibilitychange", onVisibilityOrFocus);
+    }
+
+    const pollingTimer = setInterval(() => {
+      onUpdate({ source: "polling" });
+    }, 1200);
 
     return () => {
-      if (pollingTimer) clearInterval(pollingTimer);
-      supabase.removeChannel(channel);
+      connUpdateListeners.delete(onUpdate);
+      if (bc) {
+        try {
+          bc.close();
+        } catch {
+          /* ignore */
+        }
+      }
+      if (typeof window !== "undefined") {
+        window.removeEventListener("cv:conn-state-changed", customEventListener);
+        window.removeEventListener("focus", onVisibilityOrFocus);
+        document.removeEventListener("visibilitychange", onVisibilityOrFocus);
+      }
+      if (pollingTimer) {
+        clearInterval(pollingTimer);
+      }
     };
   },
 
