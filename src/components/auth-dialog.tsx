@@ -1357,24 +1357,7 @@ export function AuthDialog() {
 
                     {/* 6-Digit Reset Code Input */}
                     <div className="field">
-                      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline" }}>
-                        <label htmlFor="auth-forgot-code" style={{ margin: 0 }}>6-Digit Security Code</label>
-                        <button
-                          type="button"
-                          onClick={handleAutoFillForgotCode}
-                          style={{
-                            background: "none",
-                            border: "none",
-                            color: "#6366f1",
-                            fontSize: "11.5px",
-                            fontWeight: 600,
-                            cursor: "pointer",
-                            textDecoration: "underline",
-                          }}
-                        >
-                          ⚡ 1-Click Auto-Fill Code
-                        </button>
-                      </div>
+                      <label htmlFor="auth-forgot-code">6-Digit Security Code</label>
                       <input
                         id="auth-forgot-code"
                         type="text"
@@ -1634,22 +1617,6 @@ export function AuthDialog() {
                     >
                       {busy ? "Verifying..." : "Verify Code & Proceed"}
                     </button>
-                    {verCode && (
-                      <button
-                        type="button"
-                        className="btn secondary"
-                        style={{
-                          background: "rgba(99, 102, 241, 0.12)",
-                          borderColor: "rgba(99, 102, 241, 0.3)",
-                          color: "var(--accent, #6366f1)",
-                          fontWeight: 600,
-                          fontSize: "13px",
-                        }}
-                        onClick={handleAutoFillOtp}
-                      >
-                        ⚡ 1-Click Auto-Fill Code &amp; Continue
-                      </button>
-                    )}
                   </div>
 
                   <div style={{ marginTop: 14 }}>

@@ -729,13 +729,36 @@ export const requestService = {
         }
       }
 
+      const effectiveRulesVersion = "v1.0-cv-reg";
+      const stName = current?.startupName || "Campus Venture";
+      const founderEmail = current?.founderEmail || "Student Founder";
+      const investorEmail = signerEmail || current?.investorEmail || "";
+      const legalDeclaration = `I confirm that I am investor ${signedName} (${investorEmail}), in my full presence and legal authority. I am okay with all platform rules and regulations (${effectiveRulesVersion}) and the consequences of rule breaks. I agree and submit this form as permanent proof of verification and security for ${stName} and founder (${founderEmail}).`;
+
+      const rulesProof = existingMeta.rulesProof || {
+        investorName: signedName,
+        investorEmail,
+        investorOrg: current?.investorOrg || "Accredited Investment Partner",
+        founderName: founderEmail,
+        founderEmail,
+        startupName: stName,
+        universityName: current?.universityName || existingMeta.universityName || "Campus Partner University",
+        rulesVersion: effectiveRulesVersion,
+        declaration: legalDeclaration,
+        timestamp: now,
+        accessScope: current?.permittedDocIds || existingMeta.permittedDocIds || [],
+      };
+
       const metaPayload = {
         ...existingMeta,
         ndaSigned: true,
         ndaSignedName: signedName,
         ndaSignedAt: now,
-        ndaVersion,
+        ndaVersion: effectiveRulesVersion,
         rulesAccepted: true,
+        rulesVersion: effectiveRulesVersion,
+        rulesAcceptedAt: now,
+        rulesProof,
       };
 
       await (supabase as any)
