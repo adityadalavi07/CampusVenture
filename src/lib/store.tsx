@@ -279,6 +279,20 @@ export function VentureProvider({ children }: { children: ReactNode }) {
       }
     });
 
+    ventureService.getAllStartups().then((remoteStartups) => {
+      if (Array.isArray(remoteStartups) && remoteStartups.length > 0) {
+        setState((prev) => {
+          const map = new Map();
+          prev.startups.forEach((s) => map.set(s.id, s));
+          remoteStartups.forEach((s) => map.set(s.id, s));
+          return {
+            ...prev,
+            startups: Array.from(map.values()),
+          };
+        });
+      }
+    });
+
     ventureService.getAllStudentProfiles().then((remoteStudents) => {
       if (Array.isArray(remoteStudents) && remoteStudents.length > 0) {
         setState((prev) => {

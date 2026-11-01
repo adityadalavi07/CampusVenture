@@ -1148,7 +1148,11 @@ export const requestService = {
         auditQuery = auditQuery.ilike("user_email", `%${domain}`);
       }
 
-      const [drRes, connRes, auditRes] = await Promise.all([drQuery, connQuery, auditQuery]);
+      const [drRes, connRes, auditRes] = await Promise.all([
+        drQuery.catch((err: any) => ({ data: [], error: err })),
+        connQuery.catch((err: any) => ({ data: [], error: err })),
+        auditQuery.catch((err: any) => ({ data: [], error: err })),
+      ]);
 
       const dbDr = Array.isArray(drRes?.data) ? drRes.data.map((d: any) => this.mapDbRequestToRecord(d)) : [];
       const dbConn = Array.isArray(connRes?.data) ? connRes.data.map((c: any) => this.mapDbConnToRecord(c)) : [];

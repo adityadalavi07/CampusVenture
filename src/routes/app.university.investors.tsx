@@ -172,12 +172,27 @@ function InvestorInterest() {
 
   const rows = investors
     .map((i) => {
-      const invRequests = campusRequests.filter((r: any) => (r.senderId === i.id || r.investorId === i.id)).length;
-      const invRooms = campusDataRoomGrants.filter((a: any) => a.investorId === i.id).length;
+      const invRequests = campusRequests.filter(
+        (r: any) =>
+          r.senderId === i.id ||
+          r.investorId === i.id ||
+          (i.email &&
+            (r.senderEmail?.toLowerCase() === i.email.toLowerCase() ||
+              r.investorEmail?.toLowerCase() === i.email.toLowerCase()))
+      ).length;
+      const invRooms = campusDataRoomGrants.filter(
+        (a: any) =>
+          a.investorId === i.id ||
+          (i.email && a.investorEmail?.toLowerCase() === i.email.toLowerCase())
+      ).length;
       const invMessages = campusMessages.filter(
         (m) =>
-          (m.senderId === i.id || m.recipientId === i.id || (i.email && (m.senderEmail?.toLowerCase() === i.email.toLowerCase() || m.recipientEmail?.toLowerCase() === i.email.toLowerCase()))) &&
-          campusStartupIds.includes(m.startupId)
+          (m.senderId === i.id ||
+            m.recipientId === i.id ||
+            (i.email &&
+              (m.senderEmail?.toLowerCase() === i.email.toLowerCase() ||
+                m.recipientEmail?.toLowerCase() === i.email.toLowerCase()))) &&
+          (campusStartupIds.length === 0 || campusStartupIds.includes(m.startupId))
       ).length;
       const invProofs = liveDrRequests.filter(
         (r) =>

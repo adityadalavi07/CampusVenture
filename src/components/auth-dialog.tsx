@@ -461,16 +461,26 @@ export function AuthDialog() {
     if (busy) return;
     setBusy(true);
     try {
+      const flow = mode === "register" ? "register" : "signin";
       if (typeof window !== "undefined") {
         window.localStorage.setItem("cv_oauth_pending_role", targetRole);
         window.sessionStorage.setItem("cv_oauth_pending_role", targetRole);
+        window.localStorage.setItem("cv_oauth_flow", flow);
+        window.sessionStorage.setItem("cv_oauth_flow", flow);
       }
-      const res = await signInWithGoogle(targetRole);
+      const res = await signInWithGoogle(targetRole, undefined, undefined, flow);
       if (res.success) {
         // Live Google OAuth redirect initiated or user session active
         if (res.user) {
           closeAuthModal();
           router.navigate({ to: `/app/${res.user.role || targetRole}` });
+        }
+        return;
+      }
+      if (res.error) {
+        toast.error(res.error);
+        if (res.error.includes("register")) {
+          setMode("register");
         }
         return;
       }
@@ -598,6 +608,15 @@ export function AuthDialog() {
     setBusy(false);
 
     if (!res.success) {
+      if (
+        res.error?.includes("No account found") ||
+        res.error?.includes("not been registered") ||
+        res.error?.includes("Institutional Access Denied")
+      ) {
+        setFieldError("email", res.error);
+      } else {
+        setFieldError("pw", res.error || "Incorrect password.");
+      }
       toast.error(res.error || "Incorrect email or password.");
       return;
     }
@@ -678,6 +697,29 @@ export function AuthDialog() {
       setFieldError("email", "Enter a valid email address.");
       return;
     }
+
+    // Verify account exists before generating or dispatching reset code
+    const existsLocally = isEmailRegistered(clean);
+    let accountExists = existsLocally;
+    if (!accountExists) {
+      try {
+        const { data } = await (supabase as any)
+          .from("profiles")
+          .select("id")
+          .ilike("email", clean)
+          .maybeSingle();
+        if (data) accountExists = true;
+      } catch {
+        /* ignore */
+      }
+    }
+
+    if (!accountExists) {
+      setFieldError("email", "No account found with this email. Please register first.");
+      toast.error("No account found with this email. Please register first.");
+      return;
+    }
+
     setIsSendingReset(true);
     clearFieldError("email");
 
@@ -1661,11 +1703,13 @@ export function AuthDialog() {
                   <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 8 }}>
                     <GoogleIcon size={24} />
                     <h2 style={{ fontSize: 18, fontWeight: 700, margin: 0, color: "var(--text)" }}>
-                      Sign in with Google
+                      {mode === "register" ? "Register with Google" : "Sign in with Google"}
                     </h2>
                   </div>
                   <p style={{ fontSize: 13, color: "var(--mute)", margin: "0 0 16px" }}>
-                    Choose an account to continue to <b>CampusVenture</b> as <b>{ROLES[role]}</b>
+                    {mode === "register"
+                      ? `Create an account to join CampusVenture as ${ROLES[role]}`
+                      : `Choose a registered account to continue to CampusVenture as ${ROLES[role]}`}
                   </p>
 
                   <div style={{ display: "flex", flexDirection: "column", gap: 8, marginBottom: 16 }}>
@@ -1676,10 +1720,16 @@ export function AuthDialog() {
                         className="google-account-item"
                         onClick={async () => {
                           setShowGooglePicker(false);
-                          const res = await signInWithGoogle(role, "dalaviaditya07@gmail.com", "Aditya Dalvi");
+                          const flow = mode === "register" ? "register" : "signin";
+                          const res = await signInWithGoogle(role, "dalaviaditya07@gmail.com", "Aditya Dalvi", flow);
                           if (res.success && res.user) {
                             closeAuthModal();
                             router.navigate({ to: `/app/${res.user.role || role}` });
+                          } else if (res.error) {
+                            toast.error(res.error);
+                            if (res.error.includes("register")) {
+                              setMode("register");
+                            }
                           }
                         }}
                       >
@@ -1703,10 +1753,16 @@ export function AuthDialog() {
                         className="google-account-item"
                         onClick={async () => {
                           setShowGooglePicker(false);
-                          const res = await signInWithGoogle(role, "252921378@sguk.ac.in", "Student (SGU)");
+                          const flow = mode === "register" ? "register" : "signin";
+                          const res = await signInWithGoogle(role, "252921378@sguk.ac.in", "Student (SGU)", flow);
                           if (res.success && res.user) {
                             closeAuthModal();
                             router.navigate({ to: `/app/${res.user.role || role}` });
+                          } else if (res.error) {
+                            toast.error(res.error);
+                            if (res.error.includes("register")) {
+                              setMode("register");
+                            }
                           }
                         }}
                       >
@@ -1773,14 +1829,20 @@ export function AuthDialog() {
                         }
                         onClick={async () => {
                           setShowGooglePicker(false);
-                          const res = await signInWithGoogle(role, customGoogleEmail, customGoogleName);
+                          const flow = mode === "register" ? "register" : "signin";
+                          const res = await signInWithGoogle(role, customGoogleEmail, customGoogleName, flow);
                           if (res.success && res.user) {
                             closeAuthModal();
                             router.navigate({ to: `/app/${res.user.role || role}` });
+                          } else if (res.error) {
+                            toast.error(res.error);
+                            if (res.error.includes("register")) {
+                              setMode("register");
+                            }
                           }
                         }}
                       >
-                        Continue with this account
+                        {mode === "register" ? "Register with this account" : "Sign in with this account"}
                       </button>
                     </div>
                   </div>

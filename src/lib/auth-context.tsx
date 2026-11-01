@@ -106,7 +106,8 @@ interface AuthContextType {
   signInWithGoogle: (
     role: Role,
     customGoogleEmail?: string,
-    customGoogleName?: string
+    customGoogleName?: string,
+    authMode?: "signin" | "register"
   ) => Promise<{ success: boolean; error?: string; user?: AuthUser }>;
   signOut: () => Promise<void>;
   refreshDbStatus: () => Promise<ConnectionStatus>;
@@ -252,21 +253,32 @@ async function validateAndEnforceInstitutionalRole(
   const currentAccounts = loadRegisteredUsers();
   const localAccount = currentAccounts.find((a) => a.email.toLowerCase() === userEmail);
 
+  // Check if this was a sign-in or register flow
+  const authFlow =
+    typeof window !== "undefined"
+      ? window.localStorage.getItem("cv_oauth_flow") ||
+        window.sessionStorage.getItem("cv_oauth_flow")
+      : null;
+
   // If user has not registered yet (neither in database nor in registered users)
-  if (!dbProfile && !localAccount && !pendingRole && !meta["role"]) {
-    clearOAuthPendingRole();
-    try {
-      await supabase.auth.signOut();
-    } catch {
-      /* ignore */
+  if (!dbProfile && !localAccount) {
+    // If the user was in sign-in mode or no explicit registration role is present, strictly reject
+    if (authFlow === "signin" || (!pendingRole && !meta["role"])) {
+      clearOAuthPendingRole();
+      if (typeof window !== "undefined") {
+        window.localStorage.removeItem("cv_oauth_flow");
+        window.sessionStorage.removeItem("cv_oauth_flow");
+        window.localStorage.removeItem(AUTH_STORAGE_KEY);
+      }
+      try {
+        await supabase.auth.signOut();
+      } catch {
+        /* ignore */
+      }
+      const errMsg = "No account found with this email. Please register an account first.";
+      toast.error(errMsg, { id: "auth-account-not-found", duration: 8000 });
+      return { allowed: false, error: errMsg };
     }
-    try {
-      window.localStorage.removeItem(AUTH_STORAGE_KEY);
-    } catch {
-      /* ignore */
-    }
-    const errMsg = "This account has not been registered yet. Please register first.";
-    return { allowed: false, error: errMsg };
   }
 
   // The backend role is authoritative. Never grant permissions based only on the role selected in the frontend.
@@ -633,15 +645,9 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
       // If user is completely unregistered in central DB, Supabase Auth, and local registry:
       if (!authenticated && !dbProfile && !localAccount && !authenticatedUser) {
-        if (authErrorMessage && authErrorMessage.toLowerCase().includes("invalid login credentials")) {
-          return {
-            success: false,
-            error: "Incorrect password or account not found. Please register first or reset your password.",
-          };
-        }
         return {
           success: false,
-          error: "This account has not been registered yet. Please register first.",
+          error: "No account found with this email. Please register an account first.",
         };
       }
 
@@ -942,7 +948,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     async (
       role: Role,
       customGoogleEmail?: string,
-      customGoogleName?: string
+      customGoogleName?: string,
+      authMode: "signin" | "register" = "signin"
     ): Promise<{ success: boolean; error?: string; user?: AuthUser }> => {
       const redirectUrl =
         typeof window !== "undefined"
@@ -969,7 +976,27 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         const currentAccounts = loadRegisteredUsers();
         let existing = currentAccounts.find((a) => a.email.toLowerCase() === cleanEmail);
 
-        if (!existing) {
+        // Also check if profile exists in Supabase public.profiles
+        let dbProfile: any = null;
+        try {
+          const { data } = await (supabase as any)
+            .from("profiles")
+            .select("id, email, name, role, org")
+            .ilike("email", cleanEmail)
+            .maybeSingle();
+          if (data) dbProfile = data;
+        } catch {
+          /* ignore */
+        }
+
+        // In sign-in mode, reject non-registered users immediately!
+        if (!existing && !dbProfile) {
+          if (authMode === "signin") {
+            const errMsg = "No account found with this email. Please register an account first.";
+            toast.error(errMsg);
+            return { success: false, error: errMsg };
+          }
+
           existing = {
             id: `usr-google-${Date.now().toString(36)}`,
             email: cleanEmail,
