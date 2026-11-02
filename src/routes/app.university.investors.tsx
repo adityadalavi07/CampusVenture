@@ -71,13 +71,14 @@ function InvestorInterest() {
   const { user } = useAuth();
   const myUniversity = user?.org || "";
 
-  // Strictly filter startups belonging to this authenticated university using email domain & name
-  const campusStartups = startups.filter((s) =>
-    isSameUniversity(
+  // Filter startups belonging to this authenticated university using email domain & name
+  const campusStartups = startups.filter((s) => {
+    if (!user || !user.org || user.org === "University Innovation & Incubation Cell") return true;
+    return isSameUniversity(
       { org: user?.org, email: user?.email },
       { university: s.university, email: s.founderEmail }
-    )
-  );
+    );
+  });
   const campusStartupIds = campusStartups.map((s) => s.id);
 
   const [investors, setInvestors] = useState<Investor[]>([]);
@@ -170,7 +171,38 @@ function InvestorInterest() {
     { label: "Signed Proofs of Trust", value: verifiedProofsCount, icon: ShieldCheck },
   ];
 
-  const rows = investors
+  const allTargetInvestors = [...investors];
+  const existingEmails = new Set(allTargetInvestors.map((i) => i.email?.toLowerCase()).filter(Boolean));
+  const existingIds = new Set(allTargetInvestors.map((i) => i.id));
+
+  // Synthesize missing investors from live requests so all active investors appear in the table
+  [...liveDrRequests, ...campusRequests].forEach((req: any) => {
+    const invEmail = (req.investorEmail || req.senderEmail || "").toLowerCase().trim();
+    const invId = req.investorId || req.senderId || "";
+    const invName = req.investorName || req.senderName || (invEmail ? invEmail.split("@")[0] : "Accredited Investor");
+    const invOrg = req.investorOrg || req.senderOrg || "Venture Capital Partner";
+
+    if ((invEmail && !existingEmails.has(invEmail)) || (invId && !existingIds.has(invId))) {
+      if (invEmail) existingEmails.add(invEmail);
+      if (invId) existingIds.add(invId);
+      allTargetInvestors.push({
+        id: invId || `inv-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
+        name: invName,
+        email: invEmail,
+        organization: invOrg,
+        type: "Angel / Seed Investor",
+        sectors: ["AI", "SaaS", "FinTech", "EdTech"],
+        stages: ["Idea", "Prototype", "MVP", "Early Traction"],
+        ticketMin: 25000,
+        ticketMax: 250000,
+        geography: "India & Global",
+        thesis: "Early-stage backing for high-conviction student founders.",
+        verified: true,
+      });
+    }
+  });
+
+  const rows = allTargetInvestors
     .map((i) => {
       const invRequests = campusRequests.filter(
         (r: any) =>

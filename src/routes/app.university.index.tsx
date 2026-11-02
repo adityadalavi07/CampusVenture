@@ -84,7 +84,7 @@ function UniversityDashboard() {
   const uniName = user?.org || "University Innovation & Incubation Cell";
 
   const uniStartups = startups.filter((s) => {
-    if (!user) return true;
+    if (!user || !user.org || user.org === "University Innovation & Incubation Cell") return true;
     return isSameUniversity(
       { org: user.org, email: user.email },
       { university: s.university, email: s.founderEmail }
@@ -93,7 +93,7 @@ function UniversityDashboard() {
   const uniStartupIds = uniStartups.map((s) => s.id);
 
   const uniStudents = students.filter((st) => {
-    if (!user) return true;
+    if (!user || !user.org || user.org === "University Innovation & Incubation Cell") return true;
     return isSameUniversity(
       { org: user.org, email: user.email },
       { org: st.org, email: st.email }

@@ -35,8 +35,8 @@ export interface RegisteredAccount {
 export const ROLE_PROFILES: Record<Role, { name: string; email: string; org: string }> = {
   student: {
     name: "Aayush Patil",
-    email: "aayush@coep.ac.in",
-    org: "COEP Technological University",
+    email: "252921389@sguk.ac.in",
+    org: "Sanjay Ghodawat University (SGU), Kolhapur",
   },
   investor: {
     name: "Anaya Krishnan",
@@ -44,13 +44,49 @@ export const ROLE_PROFILES: Record<Role, { name: string; email: string; org: str
     org: "Northbridge Seed",
   },
   university: {
-    name: "COEP Innovation Cell",
-    email: "innovation@coep.ac.in",
-    org: "COEP Technological University",
+    name: "SGU Innovation & Incubation Cell",
+    email: "252921043@sguk.ac.in",
+    org: "Sanjay Ghodawat University (SGU), Kolhapur",
   },
 };
 
 export const DEFAULT_ACCOUNTS: RegisteredAccount[] = [
+  {
+    id: "usr-university-sgu-seed",
+    name: "SGU Innovation & Incubation Cell",
+    email: "252921043@sguk.ac.in",
+    password: "Password123",
+    role: "university",
+    org: "Sanjay Ghodawat University (SGU), Kolhapur",
+    createdAt: "2026-01-01T00:00:00.000Z",
+  },
+  {
+    id: "usr-student-sgu-seed",
+    name: "SGU Student Founder",
+    email: "252921389@sguk.ac.in",
+    password: "Password123",
+    role: "student",
+    org: "Sanjay Ghodawat University (SGU), Kolhapur",
+    createdAt: "2026-01-01T00:00:00.000Z",
+  },
+  {
+    id: "usr-investor-jone-seed",
+    name: "Jone Cornar",
+    email: "jonecornar@gmail.com",
+    password: "Password123",
+    role: "investor",
+    org: "Northbridge Seed",
+    createdAt: "2026-01-01T00:00:00.000Z",
+  },
+  {
+    id: "usr-investor-dalavi-seed",
+    name: "Aditya Dalvi",
+    email: "dalaviaditya07@gmail.com",
+    password: "Password123",
+    role: "investor",
+    org: "Northbridge Seed",
+    createdAt: "2026-01-01T00:00:00.000Z",
+  },
   {
     id: "usr-student-seed",
     name: "Aayush Patil",
@@ -1011,13 +1047,18 @@ export function AuthProvider({ children }: { children: ReactNode }) {
           setRegisteredUsers(updated);
         }
 
+        const effectiveId = dbProfile?.id || existing?.id || generateUUID();
+        const effectiveName = dbProfile?.name || existing?.name || cleanName;
+        const effectiveRole = dbProfile?.role || existing?.role || role;
+        const effectiveOrg = dbProfile?.org || existing?.org || defaultOrg;
+
         const authUser: AuthUser = {
-          id: existing.id,
-          email: existing.email,
-          name: existing.name,
-          role: existing.role || role,
-          org: existing.org || defaultOrg,
-          avatarInitials: getInitials(existing.name),
+          id: effectiveId,
+          email: cleanEmail,
+          name: effectiveName,
+          role: effectiveRole,
+          org: effectiveOrg,
+          avatarInitials: getInitials(effectiveName),
           isDemo: false,
         };
 

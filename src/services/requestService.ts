@@ -1,5 +1,6 @@
 import { supabase } from "@/lib/supabase";
 import { generateUUID, isValidUUID } from "@/lib/uuid";
+import { isSameUniversity } from "@/lib/university-matcher";
 
 export type DataRoomDocCategory = "Financials" | "Legal" | "Product" | "Metrics" | "Cap Table" | "Other";
 
@@ -108,6 +109,19 @@ const LOCAL_AUDIT_KEY = "campusventure.dataroom.audit.v1";
 // Global multiplexed Realtime channel and listeners for immediate sync across all clients
 const drUpdateListeners = new Set<(detail?: any) => void>();
 let globalDrChannel: any = null;
+let realtimeBc: BroadcastChannel | null = null;
+
+function getRealtimeBc(): BroadcastChannel | null {
+  if (typeof window === "undefined" || !("BroadcastChannel" in window)) return null;
+  if (!realtimeBc) {
+    try {
+      realtimeBc = new BroadcastChannel("cv-realtime-sync");
+    } catch {
+      realtimeBc = null;
+    }
+  }
+  return realtimeBc;
+}
 
 function ensureGlobalDrSubscription() {
   if (typeof window === "undefined") return;
@@ -286,16 +300,20 @@ export const requestService = {
       } catch {
         /* ignore */
       }
-    }
-
-    if (typeof window !== "undefined" && "BroadcastChannel" in window) {
       try {
-        const bc = new BroadcastChannel("cv-realtime-sync");
-        bc.postMessage({ type: "dataroom_changed", detail, timestamp: Date.now() });
-        bc.close();
+        window.localStorage.setItem("cv_last_dr_update", String(Date.now()));
       } catch {
         /* ignore */
       }
+    }
+
+    try {
+      const bc = getRealtimeBc();
+      if (bc) {
+        bc.postMessage({ type: "dataroom_changed", detail, timestamp: Date.now() });
+      }
+    } catch {
+      /* ignore */
     }
 
     try {
@@ -327,16 +345,20 @@ export const requestService = {
       } catch {
         /* ignore */
       }
-    }
-
-    if (typeof window !== "undefined" && "BroadcastChannel" in window) {
       try {
-        const bc = new BroadcastChannel("cv-realtime-sync");
-        bc.postMessage({ type: "conn_changed", detail, timestamp: Date.now() });
-        bc.close();
+        window.localStorage.setItem("cv_last_conn_update", String(Date.now()));
       } catch {
         /* ignore */
       }
+    }
+
+    try {
+      const bc = getRealtimeBc();
+      if (bc) {
+        bc.postMessage({ type: "conn_changed", detail, timestamp: Date.now() });
+      }
+    } catch {
+      /* ignore */
     }
 
     try {
@@ -1032,10 +1054,8 @@ export const requestService = {
         if (Array.isArray(dbProfiles)) {
           campusStudentEmails = dbProfiles
             .filter((p: any) => {
-              const pOrg = (p.org || "").toLowerCase();
-              const pEmail = (p.email || "").toLowerCase();
-              if (domain && pEmail.endsWith(domain)) return true;
-              if (univName && (pOrg.includes(univName.toLowerCase()) || univName.toLowerCase().includes(pOrg))) return true;
+              if (domain && p.email?.toLowerCase().endsWith(domain)) return true;
+              if (univName && isSameUniversity({ org: univName, email: univEmail }, { org: p.org, email: p.email })) return true;
               return false;
             })
             .map((p: any) => p.email.toLowerCase().trim())
@@ -1054,11 +1074,9 @@ export const requestService = {
           .select("id, name, university, founder_email");
         if (Array.isArray(dbStartups)) {
           const matched = dbStartups.filter((s: any) => {
-            const sUniv = (s.university || "").toLowerCase();
-            const sEmail = (s.founder_email || "").toLowerCase();
-            if (domain && sEmail.endsWith(domain)) return true;
-            if (univName && (sUniv.includes(univName.toLowerCase()) || univName.toLowerCase().includes(sUniv))) return true;
-            if (campusStudentEmails.includes(sEmail)) return true;
+            if (domain && s.founder_email?.toLowerCase().endsWith(domain)) return true;
+            if (univName && isSameUniversity({ org: univName, email: univEmail }, { university: s.university, email: s.founder_email })) return true;
+            if (campusStudentEmails.includes(s.founder_email?.toLowerCase().trim())) return true;
             return false;
           });
           const dynamicIds = matched.map((s: any) => String(s.id));
@@ -1069,18 +1087,19 @@ export const requestService = {
       }
     }
 
-    if (cleanIds.length === 0 && !domain && campusStudentEmails.length === 0) {
-      return { dataRoomRequests: [], connectionRequests: [], auditLogs: [], discoveredStartupIds: [] };
-    }
+    const isGenericIncubator = (!univName || univName === "University Innovation & Incubation Cell") && !domain && cleanIds.length === 0;
 
     const localDr = getLocalDrRequests().filter(
       (r) =>
+        isGenericIncubator ||
         (cleanIds.length > 0 && cleanIds.includes(r.startupId)) ||
         (domain && r.founderEmail?.toLowerCase().endsWith(domain)) ||
-        (r.founderEmail && campusStudentEmails.includes(r.founderEmail.toLowerCase().trim()))
+        (r.founderEmail && campusStudentEmails.includes(r.founderEmail.toLowerCase().trim())) ||
+        (univName && r.universityName && isSameUniversity({ org: univName, email: univEmail }, { org: r.universityName }))
     );
     const localConn = getLocalConnRequests().filter(
       (c) =>
+        isGenericIncubator ||
         (cleanIds.length > 0 && c.startupId && cleanIds.includes(c.startupId)) ||
         (domain && (c.receiverEmail?.toLowerCase().endsWith(domain) || c.senderEmail?.toLowerCase().endsWith(domain))) ||
         (c.receiverEmail && campusStudentEmails.includes(c.receiverEmail.toLowerCase().trim())) ||
@@ -1088,6 +1107,7 @@ export const requestService = {
     );
     const localAudit = getLocalAuditLogs().filter(
       (a) =>
+        isGenericIncubator ||
         (cleanIds.length > 0 && cleanIds.includes(a.startupId)) ||
         (domain && a.userEmail?.toLowerCase().endsWith(domain)) ||
         (a.userEmail && campusStudentEmails.includes(a.userEmail.toLowerCase().trim()))
@@ -1099,18 +1119,28 @@ export const requestService = {
         .select("*")
         .order("created_at", { ascending: false });
 
-      const drOrClauses: string[] = [];
-      if (cleanIds.length > 0) {
-        drOrClauses.push(`startup_id.in.(${cleanIds.join(",")})`);
-      }
-      if (campusStudentEmails.length > 0) {
-        drOrClauses.push(`founder_email.in.(${campusStudentEmails.join(",")})`);
-      }
-      if (domain) {
-        drOrClauses.push(`founder_email.ilike.%${domain}`);
-      }
-      if (drOrClauses.length > 0) {
-        drQuery = drQuery.or(drOrClauses.join(","));
+      if (!isGenericIncubator) {
+        const drOrClauses: string[] = [];
+        if (cleanIds.length > 0) {
+          drOrClauses.push(`startup_id.in.(${cleanIds.join(",")})`);
+        }
+        if (campusStudentEmails.length > 0) {
+          drOrClauses.push(`founder_email.in.(${campusStudentEmails.join(",")})`);
+        }
+        if (domain) {
+          drOrClauses.push(`founder_email.ilike.%${domain}`);
+        }
+        if (univName) {
+          const mainWord = univName.replace(/[(),.\-–—/]/g, " ").trim().split(" ").filter((w: string) => w.length > 3)[0];
+          if (mainWord) {
+            drOrClauses.push(`next_steps.ilike.%${mainWord}%`);
+          }
+        }
+        if (drOrClauses.length > 0) {
+          drQuery = drQuery.or(drOrClauses.join(","));
+        }
+      } else {
+        drQuery = drQuery.limit(50);
       }
 
       let connQuery = (supabase as any)
@@ -1118,21 +1148,25 @@ export const requestService = {
         .select("*")
         .order("created_at", { ascending: false });
 
-      const connOrClauses: string[] = [];
-      if (cleanIds.length > 0) {
-        connOrClauses.push(`startup_id.in.(${cleanIds.join(",")})`);
-      }
-      if (campusStudentEmails.length > 0) {
-        connOrClauses.push(
-          `receiver_email.in.(${campusStudentEmails.join(",")})`,
-          `sender_email.in.(${campusStudentEmails.join(",")})`
-        );
-      }
-      if (domain) {
-        connOrClauses.push(`receiver_email.ilike.%${domain}`, `sender_email.ilike.%${domain}`);
-      }
-      if (connOrClauses.length > 0) {
-        connQuery = connQuery.or(connOrClauses.join(","));
+      if (!isGenericIncubator) {
+        const connOrClauses: string[] = [];
+        if (cleanIds.length > 0) {
+          connOrClauses.push(`startup_id.in.(${cleanIds.join(",")})`);
+        }
+        if (campusStudentEmails.length > 0) {
+          connOrClauses.push(
+            `receiver_email.in.(${campusStudentEmails.join(",")})`,
+            `sender_email.in.(${campusStudentEmails.join(",")})`
+          );
+        }
+        if (domain) {
+          connOrClauses.push(`receiver_email.ilike.%${domain}`, `sender_email.ilike.%${domain}`);
+        }
+        if (connOrClauses.length > 0) {
+          connQuery = connQuery.or(connOrClauses.join(","));
+        }
+      } else {
+        connQuery = connQuery.limit(50);
       }
 
       let auditQuery = (supabase as any)
@@ -1140,12 +1174,16 @@ export const requestService = {
         .select("*")
         .order("created_at", { ascending: false });
 
-      if (cleanIds.length > 0) {
-        auditQuery = auditQuery.in("startup_id", cleanIds);
-      } else if (campusStudentEmails.length > 0) {
-        auditQuery = auditQuery.in("user_email", campusStudentEmails);
-      } else if (domain) {
-        auditQuery = auditQuery.ilike("user_email", `%${domain}`);
+      if (!isGenericIncubator) {
+        if (cleanIds.length > 0) {
+          auditQuery = auditQuery.in("startup_id", cleanIds);
+        } else if (campusStudentEmails.length > 0) {
+          auditQuery = auditQuery.in("user_email", campusStudentEmails);
+        } else if (domain) {
+          auditQuery = auditQuery.ilike("user_email", `%${domain}`);
+        }
+      } else {
+        auditQuery = auditQuery.limit(50);
       }
 
       const [drRes, connRes, auditRes] = await Promise.all([
@@ -1306,6 +1344,15 @@ export const requestService = {
       document.addEventListener("visibilitychange", onVisibilityOrFocus);
     }
 
+    const onStorage = (e: StorageEvent) => {
+      if (e.key === "cv_last_dr_update" || e.key === LOCAL_DR_KEY) {
+        onUpdate({ source: "storage_event" });
+      }
+    };
+    if (typeof window !== "undefined") {
+      window.addEventListener("storage", onStorage);
+    }
+
     const pollingTimer = setInterval(() => {
       onUpdate({ source: "polling" });
     }, 1200);
@@ -1323,6 +1370,7 @@ export const requestService = {
         window.removeEventListener("cv:dataroom-state-changed", customEventListener);
         window.removeEventListener("focus", onVisibilityOrFocus);
         document.removeEventListener("visibilitychange", onVisibilityOrFocus);
+        window.removeEventListener("storage", onStorage);
       }
       if (pollingTimer) {
         clearInterval(pollingTimer);
@@ -1818,6 +1866,15 @@ export const requestService = {
       document.addEventListener("visibilitychange", onVisibilityOrFocus);
     }
 
+    const onStorage = (e: StorageEvent) => {
+      if (e.key === "cv_last_conn_update" || e.key === LOCAL_CONN_KEY) {
+        onUpdate({ source: "storage_event" });
+      }
+    };
+    if (typeof window !== "undefined") {
+      window.addEventListener("storage", onStorage);
+    }
+
     const pollingTimer = setInterval(() => {
       onUpdate({ source: "polling" });
     }, 1200);
@@ -1835,6 +1892,7 @@ export const requestService = {
         window.removeEventListener("cv:conn-state-changed", customEventListener);
         window.removeEventListener("focus", onVisibilityOrFocus);
         document.removeEventListener("visibilitychange", onVisibilityOrFocus);
+        window.removeEventListener("storage", onStorage);
       }
       if (pollingTimer) {
         clearInterval(pollingTimer);

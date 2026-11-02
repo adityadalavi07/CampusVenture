@@ -1713,48 +1713,145 @@ export function AuthDialog() {
                   </p>
 
                   <div style={{ display: "flex", flexDirection: "column", gap: 8, marginBottom: 16 }}>
-                    {/* Show Verified Investor only for Investor role */}
+                    {/* Investor Accounts */}
                     {role === "investor" && (
-                      <button
-                        type="button"
-                        className="google-account-item"
-                        onClick={async () => {
-                          setShowGooglePicker(false);
-                          const flow = mode === "register" ? "register" : "signin";
-                          const res = await signInWithGoogle(role, "dalaviaditya07@gmail.com", "Aditya Dalvi", flow);
-                          if (res.success && res.user) {
-                            closeAuthModal();
-                            router.navigate({ to: `/app/${res.user.role || role}` });
-                          } else if (res.error) {
-                            toast.error(res.error);
-                            if (res.error.includes("register")) {
-                              setMode("register");
+                      <>
+                        <button
+                          type="button"
+                          className="google-account-item"
+                          onClick={async () => {
+                            setShowGooglePicker(false);
+                            const flow = mode === "register" ? "register" : "signin";
+                            const res = await signInWithGoogle(role, "jonecornar@gmail.com", "Jone Cornar", flow);
+                            if (res.success && res.user) {
+                              closeAuthModal();
+                              router.navigate({ to: `/app/${res.user.role || role}` });
+                            } else if (res.error) {
+                              toast.error(res.error);
+                              if (res.error.includes("register")) {
+                                setMode("register");
+                              }
                             }
-                          }
-                        }}
-                      >
-                        <div className="google-avatar">A</div>
-                        <div style={{ flex: 1, minWidth: 0 }}>
-                          <div style={{ fontWeight: 600, fontSize: 13.5, color: "var(--text)" }}>
-                            Aditya Dalvi
+                          }}
+                        >
+                          <div className="google-avatar" style={{ background: "linear-gradient(135deg, #3b82f6, #1d4ed8)" }}>J</div>
+                          <div style={{ flex: 1, minWidth: 0 }}>
+                            <div style={{ fontWeight: 600, fontSize: 13.5, color: "var(--text)" }}>
+                              Jone Cornar
+                            </div>
+                            <div style={{ fontSize: 12, color: "var(--mute)", overflow: "hidden", textOverflow: "ellipsis" }}>
+                              jonecornar@gmail.com
+                            </div>
                           </div>
-                          <div style={{ fontSize: 12, color: "var(--mute)", overflow: "hidden", textOverflow: "ellipsis" }}>
-                            dalaviaditya07@gmail.com
+                          <span className="google-verified-badge">Verified Investor</span>
+                        </button>
+
+                        <button
+                          type="button"
+                          className="google-account-item"
+                          onClick={async () => {
+                            setShowGooglePicker(false);
+                            const flow = mode === "register" ? "register" : "signin";
+                            const res = await signInWithGoogle(role, "dalaviaditya07@gmail.com", "Aditya Dalvi", flow);
+                            if (res.success && res.user) {
+                              closeAuthModal();
+                              router.navigate({ to: `/app/${res.user.role || role}` });
+                            } else if (res.error) {
+                              toast.error(res.error);
+                              if (res.error.includes("register")) {
+                                setMode("register");
+                              }
+                            }
+                          }}
+                        >
+                          <div className="google-avatar">A</div>
+                          <div style={{ flex: 1, minWidth: 0 }}>
+                            <div style={{ fontWeight: 600, fontSize: 13.5, color: "var(--text)" }}>
+                              Aditya Dalvi
+                            </div>
+                            <div style={{ fontSize: 12, color: "var(--mute)", overflow: "hidden", textOverflow: "ellipsis" }}>
+                              dalaviaditya07@gmail.com
+                            </div>
                           </div>
-                        </div>
-                        <span className="google-verified-badge">Verified Investor</span>
-                      </button>
+                          <span className="google-verified-badge">Verified Investor</span>
+                        </button>
+                      </>
                     )}
 
-                    {/* Show Verified Student only for Student / University roles */}
-                    {(role === "student" || role === "university") && (
+                    {/* Student Accounts */}
+                    {role === "student" && (
+                      <>
+                        <button
+                          type="button"
+                          className="google-account-item"
+                          onClick={async () => {
+                            setShowGooglePicker(false);
+                            const flow = mode === "register" ? "register" : "signin";
+                            const res = await signInWithGoogle(role, "252921389@sguk.ac.in", "SGU Student Founder", flow);
+                            if (res.success && res.user) {
+                              closeAuthModal();
+                              router.navigate({ to: `/app/${res.user.role || role}` });
+                            } else if (res.error) {
+                              toast.error(res.error);
+                              if (res.error.includes("register")) {
+                                setMode("register");
+                              }
+                            }
+                          }}
+                        >
+                          <div className="google-avatar" style={{ background: "linear-gradient(135deg, #10b981, #059669)" }}>S</div>
+                          <div style={{ flex: 1, minWidth: 0 }}>
+                            <div style={{ fontWeight: 600, fontSize: 13.5, color: "var(--text)" }}>
+                              SGU Student Founder
+                            </div>
+                            <div style={{ fontSize: 12, color: "var(--mute)", overflow: "hidden", textOverflow: "ellipsis" }}>
+                              252921389@sguk.ac.in
+                            </div>
+                          </div>
+                          <span className="google-verified-badge" style={{ background: "rgba(16, 185, 129, 0.15)", color: "#10b981" }}>Safe Upsert Founder</span>
+                        </button>
+
+                        <button
+                          type="button"
+                          className="google-account-item"
+                          onClick={async () => {
+                            setShowGooglePicker(false);
+                            const flow = mode === "register" ? "register" : "signin";
+                            const res = await signInWithGoogle(role, "252921378@sguk.ac.in", "Student (SGU)", flow);
+                            if (res.success && res.user) {
+                              closeAuthModal();
+                              router.navigate({ to: `/app/${res.user.role || role}` });
+                            } else if (res.error) {
+                              toast.error(res.error);
+                              if (res.error.includes("register")) {
+                                setMode("register");
+                              }
+                            }
+                          }}
+                        >
+                          <div className="google-avatar" style={{ background: "linear-gradient(135deg, #10b981, #059669)" }}>S</div>
+                          <div style={{ flex: 1, minWidth: 0 }}>
+                            <div style={{ fontWeight: 600, fontSize: 13.5, color: "var(--text)" }}>
+                              SGU Institutional Student
+                            </div>
+                            <div style={{ fontSize: 12, color: "var(--mute)", overflow: "hidden", textOverflow: "ellipsis" }}>
+                              252921378@sguk.ac.in
+                            </div>
+                          </div>
+                          <span className="google-verified-badge" style={{ background: "rgba(16, 185, 129, 0.15)", color: "#10b981" }}>Official SGU</span>
+                        </button>
+                      </>
+                    )}
+
+                    {/* University Accounts */}
+                    {role === "university" && (
                       <button
                         type="button"
                         className="google-account-item"
                         onClick={async () => {
                           setShowGooglePicker(false);
                           const flow = mode === "register" ? "register" : "signin";
-                          const res = await signInWithGoogle(role, "252921378@sguk.ac.in", "Student (SGU)", flow);
+                          const res = await signInWithGoogle(role, "252921043@sguk.ac.in", "SGU Incubation & Innovation Cell", flow);
                           if (res.success && res.user) {
                             closeAuthModal();
                             router.navigate({ to: `/app/${res.user.role || role}` });
@@ -1766,16 +1863,16 @@ export function AuthDialog() {
                           }
                         }}
                       >
-                        <div className="google-avatar" style={{ background: "linear-gradient(135deg, #10b981, #059669)" }}>S</div>
+                        <div className="google-avatar" style={{ background: "linear-gradient(135deg, #8b5cf6, #6d28d9)" }}>U</div>
                         <div style={{ flex: 1, minWidth: 0 }}>
                           <div style={{ fontWeight: 600, fontSize: 13.5, color: "var(--text)" }}>
-                            SGU Institutional Student
+                            SGU Incubation &amp; Innovation Cell
                           </div>
                           <div style={{ fontSize: 12, color: "var(--mute)", overflow: "hidden", textOverflow: "ellipsis" }}>
-                            252921378@sguk.ac.in
+                            252921043@sguk.ac.in · Sanjay Ghodawat University
                           </div>
                         </div>
-                        <span className="google-verified-badge" style={{ background: "rgba(16, 185, 129, 0.15)", color: "#10b981" }}>Official SGU</span>
+                        <span className="google-verified-badge" style={{ background: "rgba(139, 92, 246, 0.15)", color: "#8b5cf6" }}>Official SGU Incubator</span>
                       </button>
                     )}
 
