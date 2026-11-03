@@ -133,7 +133,7 @@ interface State {
   students: StudentRecord[];
 }
 
-const STORAGE_KEY = "campusventure.saas.live.v3";
+const STORAGE_KEY = "campusventure.saas.live.v4";
 
 function seed(): State {
   return {
@@ -236,15 +236,19 @@ export function VentureProvider({ children }: { children: ReactNode }) {
     try {
       window.localStorage.removeItem("campusventure.state.v1");
       window.localStorage.removeItem("campusventure.state.v2");
+      window.localStorage.removeItem("campusventure.saas.live.v3");
     } catch {}
     try {
       const raw = window.localStorage.getItem(STORAGE_KEY);
       if (raw) {
         const parsed = JSON.parse(raw);
         if (parsed && typeof parsed === "object") {
+          const validCachedStartups = Array.isArray(parsed.startups)
+            ? parsed.startups.filter((s: any) => isValidUUID(s.id) && !String(s.id).startsWith("s"))
+            : [];
           setState((prev) => ({
             ...prev,
-            startups: Array.isArray(parsed.startups) ? parsed.startups : prev.startups,
+            startups: validCachedStartups,
             programs: Array.isArray(parsed.programs) ? parsed.programs : prev.programs,
             // Strictly enforce empty initial state for user-private collections
             saved: user?.id
@@ -282,73 +286,66 @@ export function VentureProvider({ children }: { children: ReactNode }) {
     window.addEventListener("cv:session-cleared", handleSessionCleared);
 
     const unsub = ventureService.subscribeToStartups((remoteStartups) => {
-      if (Array.isArray(remoteStartups) && remoteStartups.length > 0) {
-        setState((prev) => {
-          const map = new Map();
-          prev.startups.forEach((s) => map.set(s.id, s));
-          remoteStartups.forEach((s) => map.set(s.id, s));
-          return {
-            ...prev,
-            startups: Array.from(map.values()),
-          };
-        });
+      if (Array.isArray(remoteStartups)) {
+        const validRemote = remoteStartups.filter((s) => isValidUUID(s.id) && !String(s.id).startsWith("s"));
+        setState((prev) => ({
+          ...prev,
+          startups: validRemote,
+        }));
       }
     });
 
     ventureService.getAllStartups().then((remoteStartups) => {
-      if (Array.isArray(remoteStartups) && remoteStartups.length > 0) {
-        setState((prev) => {
-          const map = new Map();
-          prev.startups.forEach((s) => map.set(s.id, s));
-          remoteStartups.forEach((s) => map.set(s.id, s));
-          return {
-            ...prev,
-            startups: Array.from(map.values()),
-          };
-        });
+      if (Array.isArray(remoteStartups)) {
+        const validRemote = remoteStartups.filter((s) => isValidUUID(s.id) && !String(s.id).startsWith("s"));
+        setState((prev) => ({
+          ...prev,
+          startups: validRemote,
+        }));
       }
     });
 
     ventureService.getAllPrograms().then((remotePrograms) => {
-      if (Array.isArray(remotePrograms) && remotePrograms.length > 0) {
-        setState((prev) => {
-          const map = new Map();
-          prev.programs.forEach((p) => map.set(p.id, p));
-          remotePrograms.forEach((p) => map.set(p.id, p));
-          return {
-            ...prev,
-            programs: Array.from(map.values()),
-          };
-        });
+      if (Array.isArray(remotePrograms)) {
+        setState((prev) => ({
+          ...prev,
+          programs: remotePrograms,
+        }));
       }
     });
 
     ventureService.getAllStudentProfiles().then((remoteStudents) => {
-      if (Array.isArray(remoteStudents) && remoteStudents.length > 0) {
+      if (Array.isArray(remoteStudents)) {
+        const realStudents = remoteStudents.filter(
+          (st) =>
+            st.email &&
+            st.email !== "aarav@coep.ac.in" &&
+            st.email !== "pooja@vjti.ac.in" &&
+            st.email !== "rohan@iiitb.ac.in" &&
+            st.email !== "ananya@iitd.ac.in" &&
+            st.email !== "vikram@bits-pilani.ac.in" &&
+            st.email !== "sneha@ju.ac.in" &&
+            !String(st.id || "").startsWith("stu-")
+        );
         setState((prev) => {
-          const map = new Map();
-          prev.students.forEach((st) => map.set(st.email.toLowerCase(), st));
-          remoteStudents.forEach((st) => {
-            const existing = map.get(st.email.toLowerCase());
-            const matchingStartup = prev.startups.find(
-              (s) =>
-                (st.email && s.founderEmail?.toLowerCase() === st.email.toLowerCase()) ||
-                (st.id && s.founderId === st.id)
-            );
-            map.set(st.email.toLowerCase(), {
-              ...st,
-              verified: Boolean(
-                st.verified ||
-                existing?.verified ||
-                matchingStartup?.verified ||
-                matchingStartup?.status === "approved"
-              ),
-              startupId: matchingStartup?.id || existing?.startupId || null,
-            });
-          });
           return {
             ...prev,
-            students: Array.from(map.values()),
+            students: realStudents.map((st) => {
+              const matchingStartup = prev.startups.find(
+                (s) =>
+                  (st.email && s.founderEmail?.toLowerCase() === st.email.toLowerCase()) ||
+                  (st.id && s.founderId === st.id)
+              );
+              return {
+                ...st,
+                verified: Boolean(
+                  st.verified ||
+                  matchingStartup?.verified ||
+                  matchingStartup?.status === "approved"
+                ),
+                startupId: matchingStartup?.id || null,
+              };
+            }),
           };
         });
       }
