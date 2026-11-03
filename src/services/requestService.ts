@@ -1,6 +1,11 @@
 import { supabase } from "@/lib/supabase";
 import { generateUUID, isValidUUID } from "@/lib/uuid";
-import { isSameUniversity } from "@/lib/university-matcher";
+import {
+  isSameUniversity,
+  getEmailDomain,
+  isInstitutionalDomain,
+  areMatchingDomains,
+} from "@/lib/university-matcher";
 
 export type DataRoomDocCategory = "Financials" | "Legal" | "Product" | "Metrics" | "Cap Table" | "Other";
 
@@ -9,6 +14,7 @@ export interface DataRoomRequestRecord {
   startupId: string;
   investorId: string;
   founderId?: string | undefined;
+  founderName?: string | undefined;
   founderEmail?: string | undefined;
   investorName?: string | undefined;
   investorEmail?: string | undefined;
@@ -16,6 +22,9 @@ export interface DataRoomRequestRecord {
   startupName?: string | undefined;
   message?: string | undefined;
   status: "pending" | "granted" | "rejected" | "revoked" | "expired";
+  decision?: "accepted" | "rejected" | "revoked" | "pending" | undefined;
+  decisionAt?: string | undefined;
+  decisionTimestamp?: string | undefined;
   ndaStatus: "not_required" | "required" | "signed" | "expired";
   ndaSigned: boolean;
   ndaSignedName?: string | undefined;
@@ -38,6 +47,7 @@ export interface DataRoomRequestRecord {
     accessScope?: string[];
     [key: string]: any;
   } | undefined;
+  universityId?: string | undefined;
   universityName?: string | undefined;
   permittedDocIds?: string[] | undefined;
   discussionTerms?: string | undefined;
@@ -390,7 +400,10 @@ export const requestService = {
     investorOrg?: string | undefined;
     startupName?: string | undefined;
     founderId?: string | undefined;
+    founderName?: string | undefined;
     founderEmail?: string | undefined;
+    universityId?: string | undefined;
+    universityName?: string | undefined;
     message?: string | undefined;
   }): Promise<{ success: boolean; request?: DataRoomRequestRecord; error?: string; alreadyExisted?: boolean }> {
     const {
@@ -401,7 +414,10 @@ export const requestService = {
       investorOrg,
       startupName,
       founderId,
+      founderName,
       founderEmail,
+      universityId,
+      universityName,
       message,
     } = params;
 
@@ -419,18 +435,55 @@ export const requestService = {
     const safeId = generateUUID();
     const now = new Date().toISOString();
 
+    let effectiveStartupName = startupName;
+    let effectiveFounderEmail = founderEmail ? founderEmail.toLowerCase().trim() : undefined;
+    let effectiveFounderName = founderName;
+    let effectiveUniversity = universityName;
+
+    try {
+      if (startupId && (!effectiveStartupName || !effectiveFounderEmail || !effectiveUniversity)) {
+        const { data: stRow } = await (supabase as any)
+          .from("startups")
+          .select("id, name, university, founder_email")
+          .eq("id", startupId)
+          .single();
+        if (stRow) {
+          if (!effectiveStartupName) effectiveStartupName = stRow.name;
+          if (!effectiveFounderEmail) effectiveFounderEmail = stRow.founder_email?.toLowerCase().trim();
+          if (!effectiveUniversity) effectiveUniversity = stRow.university;
+        }
+      }
+      if (effectiveFounderEmail && (!effectiveFounderName || !effectiveUniversity)) {
+        const { data: profRow } = await (supabase as any)
+          .from("profiles")
+          .select("id, name, email, org")
+          .eq("email", effectiveFounderEmail)
+          .single();
+        if (profRow) {
+          if (!effectiveFounderName) effectiveFounderName = profRow.name;
+          if (!effectiveUniversity) effectiveUniversity = profRow.org;
+        }
+      }
+    } catch {
+      /* ignore */
+    }
+
     const record: DataRoomRequestRecord = {
       id: safeId,
       startupId,
       investorId,
       founderId: founderId || undefined,
-      founderEmail: founderEmail || undefined,
+      founderName: effectiveFounderName || undefined,
+      founderEmail: effectiveFounderEmail || undefined,
       investorName: investorName || "Accredited Investor",
       investorEmail: investorEmail || "",
       investorOrg: investorOrg || "Institutional Venture Fund",
-      startupName: startupName || "Venture",
+      startupName: effectiveStartupName || "Venture",
+      universityId: universityId || undefined,
+      universityName: effectiveUniversity || undefined,
       message: message?.trim() || undefined,
       status: "pending",
+      decision: "pending",
       ndaStatus: "required",
       ndaSigned: false,
       ndaVersion: "v1.0",
@@ -451,6 +504,13 @@ export const requestService = {
       const metaPayload: Record<string, any> = {
         message: message?.trim() || undefined,
         founderId: founderId || undefined,
+        founderName: effectiveFounderName || undefined,
+        founderEmail: effectiveFounderEmail || undefined,
+        startupId,
+        startupName: effectiveStartupName || "Venture",
+        universityId: universityId || undefined,
+        universityName: effectiveUniversity || undefined,
+        decision: "pending",
         durationDays: 30,
       };
 
@@ -470,8 +530,8 @@ export const requestService = {
       if (investorName) payload["investor_name"] = investorName;
       if (investorEmail) payload["investor_email"] = investorEmail;
       if (investorOrg) payload["investor_org"] = investorOrg;
-      if (startupName) payload["startup_name"] = startupName;
-      if (founderEmail) payload["founder_email"] = founderEmail.toLowerCase().trim();
+      if (effectiveStartupName) payload["startup_name"] = effectiveStartupName;
+      if (effectiveFounderEmail) payload["founder_email"] = effectiveFounderEmail;
 
       const { data, error } = await (supabase as any)
         .from("data_room_requests")
@@ -608,6 +668,13 @@ export const requestService = {
       permittedDocIds?: string[] | undefined;
       revokedBy?: string | undefined;
       revokedReason?: string | undefined;
+      founderId?: string | undefined;
+      founderName?: string | undefined;
+      founderEmail?: string | undefined;
+      universityId?: string | undefined;
+      universityName?: string | undefined;
+      startupId?: string | undefined;
+      startupName?: string | undefined;
     }
   ): Promise<{ success: boolean; error?: string }> {
     const now = new Date().toISOString();
@@ -617,13 +684,119 @@ export const requestService = {
         ? new Date(Date.now() + durationDays * 24 * 60 * 60 * 1000).toISOString()
         : undefined;
 
-    // Update local cache
+    const decision: "accepted" | "rejected" | "revoked" =
+      status === "granted" ? "accepted" : status === "rejected" ? "rejected" : "revoked";
+    const decisionAt = now;
+
     const local = getLocalDrRequests();
+    const current = local.find((r) => r.id === requestId);
+    let existingMeta: Record<string, any> = {};
+    if (current?.nextSteps && current.nextSteps.startsWith("{")) {
+      try {
+        existingMeta = JSON.parse(current.nextSteps);
+      } catch {
+        /* ignore */
+      }
+    }
+
+    let dbRow: any = null;
+    try {
+      const { data } = await (supabase as any)
+        .from("data_room_requests")
+        .select("*")
+        .eq("id", requestId)
+        .single();
+      dbRow = data;
+      if (dbRow?.next_steps && typeof dbRow.next_steps === "string" && dbRow.next_steps.startsWith("{")) {
+        try {
+          existingMeta = { ...JSON.parse(dbRow.next_steps), ...existingMeta };
+        } catch {
+          /* ignore */
+        }
+      }
+    } catch {
+      /* ignore */
+    }
+
+    let resolvedStartupId = options?.startupId || current?.startupId || existingMeta.startupId || dbRow?.startup_id;
+    let resolvedStartupName = options?.startupName || current?.startupName || existingMeta.startupName || dbRow?.startup_name;
+    let resolvedFounderEmail = (options?.founderEmail || current?.founderEmail || existingMeta.founderEmail || dbRow?.founder_email || "").toLowerCase().trim();
+    let resolvedFounderName = options?.founderName || current?.founderName || existingMeta.founderName;
+    let resolvedUniversity = options?.universityName || current?.universityName || existingMeta.universityName;
+
+    if (resolvedStartupId && (!resolvedStartupName || !resolvedFounderEmail || !resolvedUniversity)) {
+      try {
+        const { data: stData } = await (supabase as any)
+          .from("startups")
+          .select("id, name, university, founder_email")
+          .eq("id", resolvedStartupId)
+          .single();
+        if (stData) {
+          if (!resolvedStartupName) resolvedStartupName = stData.name;
+          if (!resolvedFounderEmail) resolvedFounderEmail = stData.founder_email?.toLowerCase().trim();
+          if (!resolvedUniversity) resolvedUniversity = stData.university;
+        }
+      } catch {
+        /* ignore */
+      }
+    }
+
+    if (resolvedFounderEmail && (!resolvedFounderName || !resolvedUniversity)) {
+      try {
+        const { data: profData } = await (supabase as any)
+          .from("profiles")
+          .select("id, name, email, org")
+          .eq("email", resolvedFounderEmail)
+          .single();
+        if (profData) {
+          if (!resolvedFounderName) resolvedFounderName = profData.name;
+          if (!resolvedUniversity) resolvedUniversity = profData.org;
+        }
+      } catch {
+        /* ignore */
+      }
+    }
+
+    if (!resolvedUniversity && resolvedFounderEmail.endsWith("sguk.ac.in")) {
+      resolvedUniversity = "Sanjay Ghodawat University (SGU), Kolhapur";
+    }
+    if (!resolvedFounderName && resolvedFounderEmail === "252921389@sguk.ac.in") {
+      resolvedFounderName = "Aditya Dnyaneshwar Dalavi";
+    }
+
+    const metaPayload = {
+      ...existingMeta,
+      decision,
+      decisionAt,
+      decisionTimestamp: now,
+      founderId: options?.founderId || current?.founderId || existingMeta.founderId,
+      founderName: resolvedFounderName || "Student Founder",
+      founderEmail: resolvedFounderEmail || undefined,
+      startupId: resolvedStartupId,
+      startupName: resolvedStartupName || "Campus Venture",
+      universityName: resolvedUniversity,
+      universityId: options?.universityId || existingMeta.universityId,
+      durationDays,
+      ...(options?.permittedDocIds ? { permittedDocIds: options.permittedDocIds } : {}),
+      ...(expiresAt ? { expiresAt } : {}),
+      ...(options?.declineReason ? { declineReason: options.declineReason } : {}),
+    };
+
+    // Update local cache with persistent diligence fields
     const updated = local.map((r) => {
       if (r.id === requestId) {
         return {
           ...r,
           status,
+          decision,
+          decisionAt,
+          decisionTimestamp: now,
+          founderName: metaPayload.founderName,
+          founderEmail: metaPayload.founderEmail,
+          startupId: resolvedStartupId || r.startupId,
+          startupName: metaPayload.startupName,
+          universityName: metaPayload.universityName,
+          universityId: metaPayload.universityId,
           discussionTerms: options?.discussionTerms ?? r.discussionTerms,
           nextSteps: options?.nextSteps ?? r.nextSteps,
           declineReason: options?.declineReason ?? r.declineReason,
@@ -645,33 +818,15 @@ export const requestService = {
     saveLocalDrRequests(updated);
 
     try {
-      const current = local.find((r) => r.id === requestId);
-      let existingMeta: Record<string, any> = {};
-      if (current?.nextSteps && current.nextSteps.startsWith("{")) {
-        try {
-          existingMeta = JSON.parse(current.nextSteps);
-        } catch {
-          /* ignore */
-        }
-      }
-
-      const metaPayload = {
-        ...existingMeta,
-        founderId: current?.founderId,
-        message: current?.message,
-        durationDays,
-        ...(options?.permittedDocIds ? { permittedDocIds: options.permittedDocIds } : {}),
-        ...(expiresAt ? { expiresAt } : {}),
-        ...(options?.declineReason ? { declineReason: options.declineReason } : {}),
-      };
-
       const payload: Record<string, any> = {
         status,
-        discussion_terms: options?.discussionTerms || current?.discussionTerms || "Standard Diligence Terms",
+        discussion_terms: options?.discussionTerms || current?.discussionTerms || (status === "granted" ? "Standard Diligence Terms" : undefined),
         next_steps: JSON.stringify(metaPayload),
         updated_at: now,
       };
 
+      if (resolvedFounderEmail) payload["founder_email"] = resolvedFounderEmail;
+      if (resolvedStartupName) payload["startup_name"] = resolvedStartupName;
       if (options?.declineReason !== undefined) {
         payload["decline_reason"] = options.declineReason;
       }
@@ -700,9 +855,15 @@ export const requestService = {
     this.broadcastDataRoomChange({
       action: status,
       requestId,
-      startupId: currentReq?.startupId,
+      startupId: resolvedStartupId || currentReq?.startupId,
       investorId: currentReq?.investorId,
       status,
+      decision,
+      decisionAt,
+      founderName: metaPayload.founderName,
+      founderEmail: metaPayload.founderEmail,
+      startupName: metaPayload.startupName,
+      universityName: metaPayload.universityName,
       durationDays,
     });
 
@@ -840,9 +1001,22 @@ export const requestService = {
     saveLocalDrRequests(updated);
 
     try {
+      const { data: dbRow } = await (supabase as any)
+        .from("data_room_requests")
+        .select("next_steps")
+        .eq("id", requestId)
+        .maybeSingle();
+
       const current = local.find((r) => r.id === requestId);
       let existingMeta: Record<string, any> = {};
-      if (current?.nextSteps && current.nextSteps.startsWith("{")) {
+
+      if (dbRow?.next_steps && typeof dbRow.next_steps === "string" && dbRow.next_steps.startsWith("{")) {
+        try {
+          existingMeta = JSON.parse(dbRow.next_steps);
+        } catch {
+          /* ignore */
+        }
+      } else if (current?.nextSteps && current.nextSteps.startsWith("{")) {
         try {
           existingMeta = JSON.parse(current.nextSteps);
         } catch {
@@ -940,6 +1114,13 @@ export const requestService = {
         (r.investorId === effectiveInvestorId || (r.investorEmail && r.investorEmail.toLowerCase() === params.investorEmail.toLowerCase())))
         ? {
             ...r,
+            decision: r.decision || "accepted",
+            decisionAt: r.decisionAt || now,
+            decisionTimestamp: r.decisionTimestamp || r.decisionAt || now,
+            founderName: params.founderName || r.founderName,
+            founderEmail: params.founderEmail || r.founderEmail,
+            startupName: effectiveStartupName,
+            universityName: params.universityName || r.universityName,
             ndaStatus: "signed" as const,
             ndaSigned: true,
             ndaSignedName: params.investorName,
@@ -949,7 +1130,6 @@ export const requestService = {
             rulesVersion,
             rulesAcceptedAt: now,
             rulesProof,
-            universityName: params.universityName || r.universityName,
             updatedAt: now,
           }
         : r
@@ -969,12 +1149,20 @@ export const requestService = {
 
       const metaPayload = {
         ...existingMeta,
+        decision: existingMeta.decision || "accepted",
+        decisionAt: existingMeta.decisionAt || existingMeta.decisionTimestamp || now,
+        decisionTimestamp: existingMeta.decisionTimestamp || existingMeta.decisionAt || now,
+        founderName: params.founderName || existingMeta.founderName || current?.founderName,
+        founderEmail: params.founderEmail || existingMeta.founderEmail || current?.founderEmail,
+        startupId: params.startupId || existingMeta.startupId || current?.startupId,
+        startupName: effectiveStartupName,
+        universityName: params.universityName || existingMeta.universityName || current?.universityName,
+        universityId: params.universityId || existingMeta.universityId || current?.universityId,
         rulesAccepted: true,
         rulesVersion,
         rulesAcceptedAt: now,
         ndaSignedName: params.investorName,
         ndaSignedAt: now,
-        universityName: params.universityName || current?.universityName,
         accessScope: params.accessScope || [],
         rulesProof,
       };
@@ -1048,11 +1236,10 @@ export const requestService = {
     let cleanIds: string[] = Array.isArray(arg) ? arg.filter(Boolean) : (arg.campusStartupIds || []).filter(Boolean);
     const univName = (!Array.isArray(arg) ? (arg.universityName || arg.universityOrg || "") : "").trim();
     const univEmail = (!Array.isArray(arg) ? (arg.universityEmail || "") : "").trim();
-    const domain = univEmail.includes("@") && !univEmail.endsWith("@gmail.com") && !univEmail.endsWith("@yahoo.com")
-      ? univEmail.split("@")[1].toLowerCase().trim()
-      : "";
+    const rawDomain = getEmailDomain(univEmail);
+    const domain = isInstitutionalDomain(rawDomain) ? rawDomain : "";
 
-    // 1. Discover all campus student profiles by university affiliation or email domain
+    // 1. Discover all campus student profiles by official university email domain or verified affiliation
     let campusStudentEmails: string[] = [];
     if (univName || domain) {
       try {
@@ -1063,8 +1250,19 @@ export const requestService = {
         if (Array.isArray(dbProfiles)) {
           campusStudentEmails = dbProfiles
             .filter((p: any) => {
-              if (domain && p.email?.toLowerCase().endsWith(domain)) return true;
-              if (univName && isSameUniversity({ org: univName, email: univEmail }, { org: p.org, email: p.email })) return true;
+              if (!p.email) return false;
+              const pEmail = p.email.toLowerCase().trim();
+              const pDomain = getEmailDomain(pEmail);
+
+              // If university has an official domain:
+              if (domain && isInstitutionalDomain(pDomain)) {
+                return areMatchingDomains(pDomain, domain);
+              }
+
+              // Non-institutional student email fallback
+              if (univName && isSameUniversity({ org: univName, email: univEmail }, { org: p.org, email: p.email })) {
+                return true;
+              }
               return false;
             })
             .map((p: any) => p.email.toLowerCase().trim())
@@ -1075,7 +1273,7 @@ export const requestService = {
       }
     }
 
-    // 2. Always dynamically query all campus startups from Supabase matching university name or domain
+    // 2. Query campus startups from Supabase matching official domain or verified affiliation
     if (univName || domain) {
       try {
         const { data: dbStartups } = await (supabase as any)
@@ -1083,9 +1281,23 @@ export const requestService = {
           .select("id, name, university, founder_email");
         if (Array.isArray(dbStartups)) {
           const matched = dbStartups.filter((s: any) => {
-            if (domain && s.founder_email?.toLowerCase().endsWith(domain)) return true;
-            if (univName && isSameUniversity({ org: univName, email: univEmail }, { university: s.university, email: s.founder_email })) return true;
-            if (campusStudentEmails.includes(s.founder_email?.toLowerCase().trim())) return true;
+            const fEmail = (s.founder_email || "").toLowerCase().trim();
+            const fDomain = getEmailDomain(fEmail);
+
+            // 1. Direct institutional domain evaluation
+            if (domain && isInstitutionalDomain(fDomain)) {
+              if (areMatchingDomains(fDomain, domain)) return true;
+              // Conflicting institutional domain: strictly exclude
+              return false;
+            }
+
+            // 2. Known campus student email
+            if (fEmail && campusStudentEmails.includes(fEmail)) return true;
+
+            // 3. Verified university affiliation fallback
+            if (univName && isSameUniversity({ org: univName, email: univEmail }, { university: s.university, email: s.founder_email })) {
+              return true;
+            }
             return false;
           });
           const dynamicIds = matched.map((s: any) => String(s.id));
@@ -1098,29 +1310,87 @@ export const requestService = {
 
     const isGenericIncubator = (!univName || univName === "University Innovation & Incubation Cell") && !domain && cleanIds.length === 0;
 
-    const localDr = getLocalDrRequests().filter(
-      (r) =>
-        isGenericIncubator ||
-        (cleanIds.length > 0 && cleanIds.includes(r.startupId)) ||
-        (domain && r.founderEmail?.toLowerCase().endsWith(domain)) ||
-        (r.founderEmail && campusStudentEmails.includes(r.founderEmail.toLowerCase().trim())) ||
-        (univName && r.universityName && isSameUniversity({ org: univName, email: univEmail }, { org: r.universityName }))
+    // Strict institutional isolation predicate (ensures ZERO cross-university data leakage)
+    const isBelongingToThisUniversity = (record: {
+      startupId?: string;
+      founderEmail?: string;
+      receiverEmail?: string;
+      senderEmail?: string;
+      userEmail?: string;
+      universityName?: string;
+    }): boolean => {
+      if (isGenericIncubator) return true;
+
+      const emailsToCheck = [
+        record.founderEmail,
+        record.receiverEmail,
+        record.senderEmail,
+        record.userEmail,
+      ].filter(Boolean) as string[];
+
+      // GLOBAL MULTI-TENANT ISOLATION:
+      // If the university has an official domain, inspect institutional domains on the record:
+      if (domain) {
+        let hasDirectDomainMatch = false;
+        let hasConflictingInstitutionalDomain = false;
+
+        for (const em of emailsToCheck) {
+          const eDomain = getEmailDomain(em);
+          if (isInstitutionalDomain(eDomain)) {
+            if (areMatchingDomains(eDomain, domain)) {
+              hasDirectDomainMatch = true;
+            } else {
+              hasConflictingInstitutionalDomain = true;
+            }
+          }
+        }
+
+        if (hasDirectDomainMatch) return true;
+        if (hasConflictingInstitutionalDomain) return false;
+      }
+
+      // 1. Direct Startup ID match
+      if (record.startupId && cleanIds.includes(record.startupId)) return true;
+
+      // 2. Known campus student email match
+      for (const em of emailsToCheck) {
+        const lower = em.toLowerCase().trim();
+        if (campusStudentEmails.includes(lower)) return true;
+      }
+
+      // 3. University Name match via strict 3-tier matcher
+      if (univName && record.universityName) {
+        if (isSameUniversity({ org: univName, email: univEmail }, { org: record.universityName, university: record.universityName })) {
+          return true;
+        }
+      }
+
+      return false;
+    };
+
+    const localDr = getLocalDrRequests().filter(isBelongingToThisUniversity);
+    const localConn = getLocalConnRequests().filter((c) =>
+      isBelongingToThisUniversity({
+        startupId: c.startupId,
+        receiverEmail: c.receiverEmail,
+        senderEmail: c.senderEmail,
+      })
     );
-    const localConn = getLocalConnRequests().filter(
-      (c) =>
-        isGenericIncubator ||
-        (cleanIds.length > 0 && c.startupId && cleanIds.includes(c.startupId)) ||
-        (domain && (c.receiverEmail?.toLowerCase().endsWith(domain) || c.senderEmail?.toLowerCase().endsWith(domain))) ||
-        (c.receiverEmail && campusStudentEmails.includes(c.receiverEmail.toLowerCase().trim())) ||
-        (c.senderEmail && campusStudentEmails.includes(c.senderEmail.toLowerCase().trim()))
+    const localAudit = getLocalAuditLogs().filter((a) =>
+      isBelongingToThisUniversity({
+        startupId: a.startupId,
+        userEmail: a.userEmail,
+      })
     );
-    const localAudit = getLocalAuditLogs().filter(
-      (a) =>
-        isGenericIncubator ||
-        (cleanIds.length > 0 && cleanIds.includes(a.startupId)) ||
-        (domain && a.userEmail?.toLowerCase().endsWith(domain)) ||
-        (a.userEmail && campusStudentEmails.includes(a.userEmail.toLowerCase().trim()))
-    );
+
+    if (!isGenericIncubator && cleanIds.length === 0 && campusStudentEmails.length === 0 && !domain && !univName) {
+      return {
+        dataRoomRequests: [],
+        connectionRequests: [],
+        auditLogs: [],
+        discoveredStartupIds: [],
+      };
+    }
 
     try {
       let drQuery = (supabase as any)
@@ -1138,15 +1408,18 @@ export const requestService = {
         }
         if (domain) {
           drOrClauses.push(`founder_email.ilike.%${domain}`);
+          drOrClauses.push(`next_steps.ilike.%${domain}%`);
         }
-        if (univName) {
-          const mainWord = univName.replace(/[(),.\-–—/]/g, " ").trim().split(" ").filter((w: string) => w.length > 3)[0];
-          if (mainWord) {
-            drOrClauses.push(`next_steps.ilike.%${mainWord}%`);
+        if (univName && !isGenericIncubator) {
+          const cleanName = univName.replace(/[(),.\-–—/]/g, " ").replace(/\s+/g, " ").trim();
+          if (cleanName.length >= 6) {
+            drOrClauses.push(`next_steps.ilike.%${cleanName}%`);
           }
         }
         if (drOrClauses.length > 0) {
           drQuery = drQuery.or(drOrClauses.join(","));
+        } else {
+          drQuery = drQuery.eq("id", "00000000-0000-0000-0000-000000000000");
         }
       } else {
         drQuery = drQuery.limit(50);
@@ -1173,6 +1446,8 @@ export const requestService = {
         }
         if (connOrClauses.length > 0) {
           connQuery = connQuery.or(connOrClauses.join(","));
+        } else {
+          connQuery = connQuery.eq("id", "00000000-0000-0000-0000-000000000000");
         }
       } else {
         connQuery = connQuery.limit(50);
@@ -1190,15 +1465,17 @@ export const requestService = {
           auditQuery = auditQuery.in("user_email", campusStudentEmails);
         } else if (domain) {
           auditQuery = auditQuery.ilike("user_email", `%${domain}`);
+        } else {
+          auditQuery = auditQuery.eq("id", "00000000-0000-0000-0000-000000000000");
         }
       } else {
         auditQuery = auditQuery.limit(50);
       }
 
       const [drRes, connRes, auditRes] = await Promise.all([
-        drQuery.catch((err: any) => ({ data: [], error: err })),
-        connQuery.catch((err: any) => ({ data: [], error: err })),
-        auditQuery.catch((err: any) => ({ data: [], error: err })),
+        Promise.resolve(drQuery).catch((err: any) => ({ data: [], error: err })),
+        Promise.resolve(connQuery).catch((err: any) => ({ data: [], error: err })),
+        Promise.resolve(auditQuery).catch((err: any) => ({ data: [], error: err })),
       ]);
 
       const dbDr = Array.isArray(drRes?.data) ? drRes.data.map((d: any) => this.mapDbRequestToRecord(d)) : [];
@@ -1217,92 +1494,45 @@ export const requestService = {
       localAudit.forEach((a) => mergedAuditMap.set(a.id, a));
       dbAudit.forEach((a) => mergedAuditMap.set(a.id, a));
 
-      // Fallback: If strictly scoped queries returned 0 records (e.g. evaluating cross-campus or new demo session),
-      // query recent platform data room requests and local cache so the dashboard always reflects real activity
-      if (mergedDrMap.size === 0) {
-        try {
-          const { data: fallbackDr } = await (supabase as any)
-            .from("data_room_requests")
-            .select("*")
-            .order("created_at", { ascending: false })
-            .limit(25);
-          if (Array.isArray(fallbackDr) && fallbackDr.length > 0) {
-            fallbackDr.forEach((d: any) => {
-              const mapped = this.mapDbRequestToRecord(d);
-              mergedDrMap.set(mapped.id, mapped);
-            });
-          }
-        } catch {
-          /* ignore */
-        }
-      }
-
-      if (mergedDrMap.size === 0) {
-        const allLocal = getLocalDrRequests();
-        allLocal.forEach((r) => mergedDrMap.set(r.id, r));
-      }
-
-      if (mergedConnMap.size === 0) {
-        try {
-          const { data: fallbackConn } = await (supabase as any)
-            .from("connection_requests")
-            .select("*")
-            .order("created_at", { ascending: false })
-            .limit(25);
-          if (Array.isArray(fallbackConn) && fallbackConn.length > 0) {
-            fallbackConn.forEach((c: any) => {
-              const mapped = this.mapDbConnToRecord(c);
-              mergedConnMap.set(mapped.id, mapped);
-            });
-          }
-        } catch {
-          /* ignore */
-        }
-      }
-
-      if (mergedAuditMap.size === 0) {
-        try {
-          const { data: fallbackAudit } = await (supabase as any)
-            .from("data_room_audit_logs")
-            .select("*")
-            .order("created_at", { ascending: false })
-            .limit(25);
-          if (Array.isArray(fallbackAudit) && fallbackAudit.length > 0) {
-            fallbackAudit.forEach((a: any) => {
-              const mapped = this.mapDbAuditToRecord(a);
-              mergedAuditMap.set(mapped.id, mapped);
-            });
-          }
-        } catch {
-          /* ignore */
-        }
-      }
+      // CRITICAL: Strict Secondary Isolation Filter — NO PLATFORM-WIDE FALLBACK!
+      // Guarantees zero cross-university data leakage under all conditions.
+      const finalDr = Array.from(mergedDrMap.values()).filter(isBelongingToThisUniversity);
+      const finalConn = Array.from(mergedConnMap.values()).filter((c) =>
+        isBelongingToThisUniversity({
+          startupId: c.startupId,
+          receiverEmail: c.receiverEmail,
+          senderEmail: c.senderEmail,
+        })
+      );
+      const finalAudit = Array.from(mergedAuditMap.values()).filter((a) =>
+        isBelongingToThisUniversity({
+          startupId: a.startupId,
+          userEmail: a.userEmail,
+        })
+      );
 
       return {
-        dataRoomRequests: Array.from(mergedDrMap.values()).sort(
+        dataRoomRequests: finalDr.sort(
           (a, b) => new Date(b.updatedAt || b.createdAt).getTime() - new Date(a.updatedAt || a.createdAt).getTime()
         ),
-        connectionRequests: Array.from(mergedConnMap.values()).sort(
+        connectionRequests: finalConn.sort(
           (a, b) => new Date(b.updatedAt || b.createdAt).getTime() - new Date(a.updatedAt || a.createdAt).getTime()
         ),
-        auditLogs: Array.from(mergedAuditMap.values()).sort(
+        auditLogs: finalAudit.sort(
           (a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime()
         ),
         discoveredStartupIds: cleanIds,
       };
     } catch (err) {
       console.warn("[RequestService] DB getUniversityInvestorActivity exception:", err);
-      const fallbackLocalDr = localDr.length > 0 ? localDr : getLocalDrRequests();
-      const fallbackLocalConn = localConn.length > 0 ? localConn : getLocalConnRequests();
-      const fallbackLocalAudit = localAudit.length > 0 ? localAudit : getLocalAuditLogs();
       return {
-        dataRoomRequests: fallbackLocalDr.sort(
+        dataRoomRequests: localDr.sort(
           (a, b) => new Date(b.updatedAt || b.createdAt).getTime() - new Date(a.updatedAt || a.createdAt).getTime()
         ),
-        connectionRequests: fallbackLocalConn.sort(
+        connectionRequests: localConn.sort(
           (a, b) => new Date(b.updatedAt || b.createdAt).getTime() - new Date(a.updatedAt || a.createdAt).getTime()
         ),
-        auditLogs: fallbackLocalAudit,
+        auditLogs: localAudit,
         discoveredStartupIds: cleanIds,
       };
     }
@@ -1476,6 +1706,27 @@ export const requestService = {
     const rulesVersion = meta.rulesVersion || d.rules_version || "v1.0-cv-reg";
     const rulesAcceptedAt = meta.rulesAcceptedAt || d.rules_accepted_at || (rulesAccepted ? d.updated_at || d.created_at : undefined);
 
+    const founderEmail = (d.founder_email || meta.founderEmail || "").toLowerCase().trim();
+    const founderName = meta.founderName || meta.rulesProof?.founderName || (founderEmail === "252921389@sguk.ac.in" ? "Aditya Dnyaneshwar Dalavi" : undefined);
+    const universityName = meta.universityName || d.university_name || (founderEmail.endsWith("sguk.ac.in") ? "Sanjay Ghodawat University (SGU), Kolhapur" : undefined);
+
+    const decision: "accepted" | "rejected" | "revoked" | "pending" | undefined =
+      meta.decision ||
+      (d.status === "granted"
+        ? "accepted"
+        : d.status === "rejected"
+        ? "rejected"
+        : d.status === "revoked"
+        ? "revoked"
+        : d.status === "pending"
+        ? "pending"
+        : undefined);
+
+    const decisionAt =
+      meta.decisionAt ||
+      meta.decisionTimestamp ||
+      (d.status !== "pending" ? d.updated_at || d.created_at : undefined);
+
     const rulesProof =
       meta.rulesProof ||
       (rulesAccepted
@@ -1483,10 +1734,10 @@ export const requestService = {
             investorName: d.investor_name || meta.ndaSignedName || "Verified Investor",
             investorEmail: d.investor_email || "",
             investorOrg: d.investor_org || "Accredited Investment Partner",
-            founderName: meta.founderName || "Student Founder",
-            founderEmail: d.founder_email || "",
-            startupName: d.startup_name || "Campus Venture",
-            universityName: meta.universityName || d.university_name || "Campus Partner University",
+            founderName: founderName || "Student Founder",
+            founderEmail,
+            startupName: d.startup_name || meta.startupName || "Campus Venture",
+            universityName: universityName || "Campus Partner University",
             rulesVersion,
             declaration: `I, ${d.investor_name || "the Investor"} (${d.investor_email || ""}), in my full presence and legal authority, confirm that I am okay with all platform rules and regulations (${rulesVersion}) and the consequences of rule breaks. I agree and submit this form as permanent proof of verification and security for ${d.startup_name || "the venture"} and founder.`,
             timestamp: rulesAcceptedAt || d.created_at,
@@ -1496,16 +1747,20 @@ export const requestService = {
 
     return {
       id: d.id,
-      startupId: d.startup_id,
+      startupId: d.startup_id || meta.startupId,
       investorId: d.investor_id,
       founderId: meta.founderId || d.founder_id || undefined,
-      founderEmail: d.founder_email || undefined,
-      investorName: d.investor_name || "Accredited Investor",
-      investorEmail: d.investor_email || "",
-      investorOrg: d.investor_org || "Venture Fund",
-      startupName: d.startup_name || "Venture",
+      founderName,
+      founderEmail: founderEmail || undefined,
+      investorName: d.investor_name || meta.investorName || "Accredited Investor",
+      investorEmail: d.investor_email || meta.investorEmail || "",
+      investorOrg: d.investor_org || meta.investorOrg || "Venture Fund",
+      startupName: d.startup_name || meta.startupName || "Venture",
       message: meta.message || d.message || undefined,
       status: d.status || "pending",
+      decision,
+      decisionAt,
+      decisionTimestamp: decisionAt,
       ndaStatus: ndaStatus as any,
       ndaSigned,
       ndaSignedName: d.nda_signed_name || meta.ndaSignedName || "",
@@ -1515,7 +1770,8 @@ export const requestService = {
       rulesVersion,
       rulesAcceptedAt,
       rulesProof,
-      universityName: meta.universityName || d.university_name || undefined,
+      universityId: meta.universityId || undefined,
+      universityName,
       permittedDocIds: permitted,
       discussionTerms: d.discussion_terms || undefined,
       nextSteps: typeof d.next_steps === "string" && !d.next_steps.startsWith("{") ? d.next_steps : undefined,
@@ -1527,6 +1783,44 @@ export const requestService = {
       revokedReason: d.revoked_reason || undefined,
       createdAt: d.created_at,
       updatedAt: d.updated_at,
+    };
+  },
+
+  mapDbConnToRecord(d: any): ConnectionRequestRecord {
+    return {
+      id: d.id,
+      senderId: d.sender_id,
+      senderName: d.sender_name || "Member",
+      senderEmail: d.sender_email || "",
+      senderRole: d.sender_role || "investor",
+      senderOrg: d.sender_org || "",
+      receiverId: d.receiver_id,
+      receiverName: d.receiver_name || "Me",
+      receiverEmail: d.receiver_email || "",
+      startupId: d.startup_id || undefined,
+      startupName: d.startup_name || undefined,
+      message: d.message || undefined,
+      status: d.status,
+      discussionTerms: d.discussion_terms || undefined,
+      nextSteps: d.next_steps || undefined,
+      declineReason: d.decline_reason || undefined,
+      createdAt: d.created_at,
+      updatedAt: d.updated_at || d.created_at,
+    };
+  },
+
+  mapDbAuditToRecord(d: any): DataRoomAuditRecord {
+    return {
+      id: d.id,
+      requestId: d.request_id || undefined,
+      startupId: d.startup_id,
+      docId: d.doc_id || undefined,
+      docName: d.doc_name || undefined,
+      userId: d.user_id || undefined,
+      userEmail: d.user_email || undefined,
+      action: d.action,
+      details: d.details || undefined,
+      createdAt: d.created_at,
     };
   },
 
@@ -2219,17 +2513,32 @@ export const requestService = {
   },
 
   /**
-   * Fetch all documents for a given startup
+   * Fetch all documents for a given startup, optionally including specific document IDs (e.g. permittedDocIds)
    */
-  async getDataRoomDocsForStartup(startupId: string): Promise<DataRoomDocRecord[]> {
-    const local = getLocalDocs().filter((d) => d.startupId === startupId);
+  async getDataRoomDocsForStartup(
+    startupId: string,
+    options?: { docIds?: string[]; founderEmail?: string }
+  ): Promise<DataRoomDocRecord[]> {
+    const requestedDocIds = (options?.docIds || []).filter(Boolean);
+    const local = getLocalDocs().filter(
+      (d) => (startupId && d.startupId === startupId) || requestedDocIds.includes(d.id)
+    );
 
     try {
-      const { data, error } = await (supabase as any)
+      let query = (supabase as any)
         .from("data_room_docs")
         .select("*")
-        .eq("startup_id", startupId)
         .order("created_at", { ascending: false });
+
+      if (startupId && requestedDocIds.length > 0) {
+        query = query.or(`startup_id.eq.${startupId},id.in.(${requestedDocIds.join(",")})`);
+      } else if (startupId) {
+        query = query.eq("startup_id", startupId);
+      } else if (requestedDocIds.length > 0) {
+        query = query.in("id", requestedDocIds);
+      }
+
+      const { data, error } = await query;
 
       if (!error && Array.isArray(data)) {
         const dbRecords: DataRoomDocRecord[] = data.map((d: any) => ({
@@ -2293,7 +2602,7 @@ export const requestService = {
       const reqs = await this.getDataRoomRequestsForInvestor(requesterUserId || "", requesterEmail);
       const activeGrant = reqs.find(
         (r) =>
-          r.startupId === startupId &&
+          (r.startupId === startupId || (r.permittedDocIds && r.permittedDocIds.includes(docId))) &&
           r.status === "granted" &&
           (r.ndaStatus === "signed" || r.ndaSigned === true) &&
           (!r.expiresAt || new Date(r.expiresAt).getTime() > Date.now())

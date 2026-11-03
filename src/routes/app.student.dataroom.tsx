@@ -147,10 +147,20 @@ function StudentDataRoom() {
   // Real-time synchronization of confidential documents from Supabase
   useEffect(() => {
     let active = true;
-    const fetchDocs = () => {
-      requestService.getDataRoomDocsForStartup(currentStartupId).then((files) => {
-        if (active) setRealDocs(files);
-      });
+    const fetchDocs = async () => {
+      const allIds = Array.from(new Set([currentStartupId, ...startupIds].filter(Boolean)));
+      if (allIds.length === 0) {
+        setRealDocs([]);
+        return;
+      }
+      const docsArrays = await Promise.all(
+        allIds.map((id) => requestService.getDataRoomDocsForStartup(id))
+      );
+      const mergedDocs = Array.from(
+        new Map(docsArrays.flat().map((d) => [d.id, d])).values()
+      ).sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
+      if (active) setRealDocs(mergedDocs);
+
       requestService.getDataRoomAuditLogs(currentStartupId).then((logs) => {
         if (active) setAuditLogs(logs);
       });
@@ -323,6 +333,12 @@ function StudentDataRoom() {
     if (!selectedReq) return;
     const reqId = selectedReq.id;
     const invName = selectedReq.investorName || "Investor";
+    const nowIso = new Date().toISOString();
+    const effectiveUniv = currentStartup?.university || user?.org || selectedReq.universityName;
+    const effectiveFounderName = user?.name || selectedReq.founderName;
+    const effectiveFounderEmail = user?.email || selectedReq.founderEmail;
+    const effectiveStartupId = currentStartup?.id || selectedReq.startupId;
+    const effectiveStartupName = currentStartup?.name || selectedReq.startupName;
 
     await requestService.updateDataRoomRequestStatus(reqId, "granted", {
       discussionTerms,
@@ -330,6 +346,12 @@ function StudentDataRoom() {
       durationDays,
       ndaRequired: true,
       permittedDocIds: selectedDocIdsForGrant,
+      founderId: user?.id,
+      founderName: effectiveFounderName,
+      founderEmail: effectiveFounderEmail,
+      universityName: effectiveUniv,
+      startupId: effectiveStartupId,
+      startupName: effectiveStartupName,
     });
     setAccessStatus(reqId, "granted");
     setLiveRequests((prev) =>
@@ -338,6 +360,14 @@ function StudentDataRoom() {
           ? {
               ...r,
               status: "granted",
+              decision: "accepted",
+              decisionAt: nowIso,
+              decisionTimestamp: nowIso,
+              founderName: effectiveFounderName,
+              founderEmail: effectiveFounderEmail,
+              universityName: effectiveUniv,
+              startupId: effectiveStartupId,
+              startupName: effectiveStartupName,
               discussionTerms,
               nextSteps,
               accessDurationDays: durationDays,
@@ -358,7 +388,7 @@ function StudentDataRoom() {
     );
 
     // Notify exclusively Student C's university (University X) about diligence approval
-    const studentUniv = currentStartup?.university || user?.org;
+    const studentUniv = effectiveUniv;
     if (studentUniv || user?.email) {
       try {
         const { data: univProfiles } = await (supabase as any)
@@ -398,13 +428,41 @@ function StudentDataRoom() {
     if (!selectedReq) return;
     const reqId = selectedReq.id;
     const invName = selectedReq.investorName || "Investor";
+    const nowIso = new Date().toISOString();
+    const effectiveUniv = currentStartup?.university || user?.org || selectedReq.universityName;
+    const effectiveFounderName = user?.name || selectedReq.founderName;
+    const effectiveFounderEmail = user?.email || selectedReq.founderEmail;
+    const effectiveStartupId = currentStartup?.id || selectedReq.startupId;
+    const effectiveStartupName = currentStartup?.name || selectedReq.startupName;
 
     await requestService.updateDataRoomRequestStatus(reqId, "rejected", {
       declineReason,
+      founderId: user?.id,
+      founderName: effectiveFounderName,
+      founderEmail: effectiveFounderEmail,
+      universityName: effectiveUniv,
+      startupId: effectiveStartupId,
+      startupName: effectiveStartupName,
     });
     setAccessStatus(reqId, "revoked");
     setLiveRequests((prev) =>
-      prev.map((r) => (r.id === reqId ? { ...r, status: "rejected", declineReason } : r))
+      prev.map((r) =>
+        r.id === reqId
+          ? {
+              ...r,
+              status: "rejected",
+              decision: "rejected",
+              decisionAt: nowIso,
+              decisionTimestamp: nowIso,
+              founderName: effectiveFounderName,
+              founderEmail: effectiveFounderEmail,
+              universityName: effectiveUniv,
+              startupId: effectiveStartupId,
+              startupName: effectiveStartupName,
+              declineReason,
+            }
+          : r
+      )
     );
     notify(
       "investor",
@@ -423,15 +481,41 @@ function StudentDataRoom() {
     if (!selectedReq) return;
     const reqId = selectedReq.id;
     const invName = selectedReq.investorName || "Investor";
+    const nowIso = new Date().toISOString();
+    const effectiveUniv = currentStartup?.university || user?.org || selectedReq.universityName;
+    const effectiveFounderName = user?.name || selectedReq.founderName;
+    const effectiveFounderEmail = user?.email || selectedReq.founderEmail;
+    const effectiveStartupId = currentStartup?.id || selectedReq.startupId;
+    const effectiveStartupName = currentStartup?.name || selectedReq.startupName;
 
     await requestService.updateDataRoomRequestStatus(reqId, "revoked", {
       revokedBy: user?.id,
       revokedReason: revokeReason,
+      founderId: user?.id,
+      founderName: effectiveFounderName,
+      founderEmail: effectiveFounderEmail,
+      universityName: effectiveUniv,
+      startupId: effectiveStartupId,
+      startupName: effectiveStartupName,
     });
     setAccessStatus(reqId, "revoked");
     setLiveRequests((prev) =>
       prev.map((r) =>
-        r.id === reqId ? { ...r, status: "revoked", revokedReason: revokeReason } : r
+        r.id === reqId
+          ? {
+              ...r,
+              status: "revoked",
+              decision: "revoked",
+              decisionAt: nowIso,
+              decisionTimestamp: nowIso,
+              founderName: effectiveFounderName,
+              founderEmail: effectiveFounderEmail,
+              universityName: effectiveUniv,
+              startupId: effectiveStartupId,
+              startupName: effectiveStartupName,
+              revokedReason: revokeReason,
+            }
+          : r
       )
     );
     notify(

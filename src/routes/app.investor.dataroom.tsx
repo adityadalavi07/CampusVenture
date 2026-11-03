@@ -182,7 +182,13 @@ function InvestorDataRooms() {
       const map: Record<string, DataRoomDocRecord[]> = {};
       const uniqueStartupIds = Array.from(new Set(liveRequests.map((r) => r.startupId).filter(Boolean)));
       for (const stId of uniqueStartupIds) {
-        const files = await requestService.getDataRoomDocsForStartup(stId);
+        const relatedReqs = liveRequests.filter((r) => r.startupId === stId);
+        const allPermitted = Array.from(
+          new Set(relatedReqs.flatMap((r) => r.permittedDocIds || []).filter(Boolean))
+        );
+        const files = await requestService.getDataRoomDocsForStartup(stId, {
+          docIds: allPermitted,
+        });
         map[stId] = files;
       }
       if (active) setStartupDocsMap(map);

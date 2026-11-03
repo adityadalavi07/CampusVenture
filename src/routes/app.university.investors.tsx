@@ -37,7 +37,7 @@ import {
   TableRow,
 } from "@/components/ui/table";
 import { formatMoney, type Investor } from "@/lib/demo-data";
-import { timeAgo, useVenture } from "@/lib/store";
+import { timeAgo, formatWhen, useVenture } from "@/lib/store";
 import { useAuth } from "@/lib/auth-context";
 import { isSameUniversity } from "@/lib/university-matcher";
 import { investorService } from "@/services/investorService";
@@ -273,21 +273,29 @@ function InvestorInterest() {
   const handleCopyProofSummary = () => {
     if (!selectedProofReq) return;
     const proof = selectedProofReq.rulesProof;
-    const summary = `CAMPUSVENTURE PROOF OF TRUST CERTIFICATE (v1.0-cv-reg)
-Reference ID: ${selectedProofReq.id}
-Investor: ${proof?.investorName || selectedProofReq.investorName} (${proof?.investorEmail || selectedProofReq.investorEmail})
-Organization: ${proof?.investorOrg || selectedProofReq.investorOrg || "Accredited Investment Partner"}
-Startup Venture: ${selectedProofReq.startupName}
-Founder: ${selectedProofReq.founderEmail}
-University: ${myUniversity || "Campus Partner University"}
-Execution Timestamp: ${proof?.timestamp || selectedProofReq.rulesAcceptedAt || selectedProofReq.updatedAt}
-Rules Version: ${proof?.rulesVersion || selectedProofReq.rulesVersion || "v1.0-cv-reg"}
-Status: Legally Acknowledged & Stored in University Database
-Declaration: ${proof?.declaration || "Rules and Regulations acknowledged in full presence and accountability."}`;
+    const summary = `CAMPUSVENTURE UNIVERSITY DILIGENCE & COMPLIANCE RECORD
+=====================================================
+Request ID: ${selectedProofReq.id}
+Startup: ${selectedProofReq.startupName} (ID: ${selectedProofReq.startupId})
+Associated University: ${myUniversity || selectedProofReq.universityName || "Campus Partner University"}
+Student Founder: ${selectedProofReq.founderName || "Student Founder"} (${selectedProofReq.founderEmail})
+Investor: ${selectedProofReq.investorName} (${selectedProofReq.investorEmail})
+Investor Organization: ${selectedProofReq.investorOrg || "Accredited Investment Partner"}
+
+CHRONOLOGICAL DILIGENCE HISTORY:
+1. Access Request Submitted: ${selectedProofReq.createdAt ? new Date(selectedProofReq.createdAt).toLocaleString() : "N/A"}
+2. Founder Decision: ${(selectedProofReq.decision || selectedProofReq.status).toUpperCase()} on ${selectedProofReq.decisionAt || selectedProofReq.updatedAt ? new Date(selectedProofReq.decisionAt || selectedProofReq.updatedAt).toLocaleString() : "N/A"}
+   Terms / Reason: ${selectedProofReq.discussionTerms || selectedProofReq.declineReason || "Standard diligence terms"}
+3. Rules & Regulations Acceptance: ${selectedProofReq.rulesAccepted || selectedProofReq.ndaSigned ? `ACCEPTED (${selectedProofReq.rulesVersion || "v1.0-cv-reg"}) on ${new Date(selectedProofReq.rulesAcceptedAt || selectedProofReq.updatedAt).toLocaleString()}` : "PENDING INVESTOR ACCEPTANCE"}
+   Declaration: ${proof?.declaration || "Platform rules and regulations acknowledged in full presence and accountability."}
+4. Current Access Status: ${selectedProofReq.status.toUpperCase()}
+   Authorized Files: ${(selectedProofReq.permittedDocIds || []).length > 0 ? `${selectedProofReq.permittedDocIds.length} file(s) authorized` : "All founder-approved files"}
+
+VERIFICATION: Tamper-evident diligence record persistent in Supabase university database.`;
 
     navigator.clipboard.writeText(summary);
     setCopiedProof(true);
-    toast.success("Signed Proof of Trust copied to clipboard.");
+    toast.success("Diligence audit certificate copied to clipboard.");
     setTimeout(() => setCopiedProof(false), 2000);
   };
 
@@ -419,43 +427,97 @@ Declaration: ${proof?.declaration || "Rules and Regulations acknowledged in full
                 <Table>
                   <TableHeader>
                     <TableRow>
-                      <TableHead>Startup &amp; Founder</TableHead>
+                      <TableHead>Startup &amp; ID</TableHead>
+                      <TableHead>Student Founder</TableHead>
                       <TableHead>Investor</TableHead>
-                      <TableHead>Diligence Status</TableHead>
-                      <TableHead>Conversation</TableHead>
-                      <TableHead>Confidential Docs</TableHead>
-                      <TableHead className="text-right">Signed Proof of Trust</TableHead>
+                      <TableHead>Submission &amp; Decision</TableHead>
+                      <TableHead>Investor Rules Acceptance</TableHead>
+                      <TableHead>Access Status</TableHead>
+                      <TableHead className="text-right">Diligence Audit</TableHead>
                     </TableRow>
                   </TableHeader>
                   <TableBody>
                     {liveDrRequests.map((req) => {
                       const st = campusStartups.find((s) => s.id === req.startupId);
                       const isSigned = Boolean(req.rulesAccepted || req.ndaSigned);
-                      const msgsWithInvestor = campusMessages.filter(
-                        (m) =>
-                          m.startupId === req.startupId &&
-                          (m.senderId === req.investorId ||
-                            m.recipientId === req.investorId ||
-                            (req.investorEmail &&
-                              (m.senderEmail?.toLowerCase() === req.investorEmail.toLowerCase() ||
-                                m.recipientEmail?.toLowerCase() === req.investorEmail.toLowerCase())))
-                      );
-
-                      const permittedDocs = campusDocs.filter(
-                        (d) =>
-                          d.startupId === req.startupId &&
-                          (!req.permittedDocIds || req.permittedDocIds.length === 0 || req.permittedDocIds.includes(d.id))
-                      );
+                      const decision = req.decision || (req.status === "granted" ? "accepted" : req.status === "rejected" ? "rejected" : req.status === "revoked" ? "revoked" : "pending");
+                      const decisionTimestamp = req.decisionAt || (req.status !== "pending" ? req.updatedAt : undefined);
 
                       return (
                         <TableRow key={req.id}>
                           <TableCell>
-                            <p className="font-medium text-sm">{req.startupName || st?.name || "Campus Venture"}</p>
-                            <p className="text-xs text-muted-foreground">Founder: {req.founderEmail || st?.founder || "Verified Student"}</p>
+                            <p className="font-medium text-sm text-foreground">{req.startupName || st?.name || "Campus Venture"}</p>
+                            <div className="flex items-center gap-1.5 mt-0.5">
+                              <span
+                                className="font-mono text-[10px] text-muted-foreground bg-muted px-1 py-0.5 rounded cursor-help"
+                                title={`Full Startup ID: ${req.startupId}`}
+                              >
+                                ID: {req.startupId ? req.startupId.slice(0, 8) : "—"}
+                              </span>
+                              <span className="text-[11px] text-muted-foreground truncate max-w-[140px]" title={req.universityName || myUniversity}>
+                                · {req.universityName || myUniversity}
+                              </span>
+                            </div>
                           </TableCell>
                           <TableCell>
-                            <p className="font-medium text-sm">{req.investorName || "Investor"}</p>
-                            <p className="text-xs text-muted-foreground">{req.investorOrg || req.investorEmail || "Accredited Entity"}</p>
+                            <p className="font-medium text-xs text-foreground">{req.founderName || "Student Founder"}</p>
+                            <p className="text-[11px] font-mono text-muted-foreground flex items-center gap-1">
+                              <CheckCircle2 className="size-3 text-emerald-600 shrink-0" />
+                              {req.founderEmail || st?.founderEmail || "student@university.edu"}
+                            </p>
+                          </TableCell>
+                          <TableCell>
+                            <p className="font-medium text-xs text-foreground">{req.investorName || "Accredited Investor"}</p>
+                            <p className="text-[11px] font-mono text-muted-foreground">{req.investorEmail || "—"}</p>
+                            <p className="text-[10px] text-muted-foreground/80">{req.investorOrg || "Venture Fund"}</p>
+                          </TableCell>
+                          <TableCell>
+                            <div className="space-y-1">
+                              <div className="flex items-center gap-1">
+                                {decision === "accepted" ? (
+                                  <Badge variant="outline" className="text-[10px] bg-emerald-500/10 text-emerald-700 dark:text-emerald-300 border-emerald-500/30 font-medium">
+                                    Founder Accepted
+                                  </Badge>
+                                ) : decision === "rejected" ? (
+                                  <Badge variant="destructive" className="text-[10px]">
+                                    Founder Rejected
+                                  </Badge>
+                                ) : decision === "revoked" ? (
+                                  <Badge variant="destructive" className="text-[10px]">
+                                    Founder Revoked
+                                  </Badge>
+                                ) : (
+                                  <Badge variant="outline" className="text-[10px] text-amber-700 dark:text-amber-300 border-amber-500/30 bg-amber-500/10">
+                                    Pending Decision
+                                  </Badge>
+                                )}
+                              </div>
+                              <p className="text-[10px] text-muted-foreground">
+                                Req: {formatWhen(req.createdAt)}
+                              </p>
+                              {decisionTimestamp && decision !== "pending" && (
+                                <p className="text-[10px] text-muted-foreground">
+                                  Decided: {formatWhen(decisionTimestamp)}
+                                </p>
+                              )}
+                            </div>
+                          </TableCell>
+                          <TableCell>
+                            {isSigned ? (
+                              <div className="space-y-0.5">
+                                <Badge variant="outline" className="gap-1 text-[10px] bg-emerald-500/10 text-emerald-700 dark:text-emerald-300 border-emerald-500/30 font-medium">
+                                  <ShieldCheck className="size-3 text-emerald-600" />
+                                  Rules Accepted ({req.rulesVersion || "v1.0-cv-reg"})
+                                </Badge>
+                                <p className="text-[10px] text-muted-foreground">
+                                  Signed: {formatWhen(req.rulesAcceptedAt || req.updatedAt)}
+                                </p>
+                              </div>
+                            ) : (
+                              <Badge variant="outline" className="text-[10px] text-muted-foreground">
+                                Pending Rules Acceptance
+                              </Badge>
+                            )}
                           </TableCell>
                           <TableCell>
                             <Badge
@@ -468,57 +530,22 @@ Declaration: ${proof?.declaration || "Rules and Regulations acknowledged in full
                               }
                               className="text-xs capitalize"
                             >
-                              {req.status}
+                              {req.status === "granted" ? "Active" : req.status}
                             </Badge>
-                            <p className="text-[11px] text-muted-foreground mt-0.5">
+                            <p className="text-[10px] text-muted-foreground mt-0.5">
                               {timeAgo(req.updatedAt || req.createdAt)}
                             </p>
                           </TableCell>
-                          <TableCell>
-                            {msgsWithInvestor.length > 0 ? (
-                              <Badge variant="outline" className="gap-1 text-xs border-blue-500/30 text-blue-700 dark:text-blue-300 bg-blue-500/10">
-                                <MessageSquare className="size-3" />
-                                {msgsWithInvestor.length} message{msgsWithInvestor.length === 1 ? "" : "s"}
-                              </Badge>
-                            ) : (
-                              <span className="text-xs text-muted-foreground">No messages yet</span>
-                            )}
-                          </TableCell>
-                          <TableCell>
-                            {req.status === "granted" ? (
-                              <div>
-                                <span className="font-medium text-xs text-foreground flex items-center gap-1">
-                                  <FileCheck2 className="size-3.5 text-emerald-600" />
-                                  {permittedDocs.length > 0
-                                    ? `${permittedDocs.length} file${permittedDocs.length === 1 ? "" : "s"} granted`
-                                    : Array.isArray(req.permittedDocIds) && req.permittedDocIds.length > 0
-                                    ? `${req.permittedDocIds.length} file(s) authorized`
-                                    : "All files authorized"}
-                                </span>
-                                <span className="text-[10px] text-muted-foreground block">
-                                  Confidential diligence scope
-                                </span>
-                              </div>
-                            ) : (
-                              <span className="text-xs text-muted-foreground">—</span>
-                            )}
-                          </TableCell>
                           <TableCell className="text-right">
-                            {isSigned ? (
-                              <Button
-                                size="sm"
-                                variant="outline"
-                                className="h-7 text-xs gap-1 border-emerald-500/30 text-emerald-700 dark:text-emerald-300 hover:bg-emerald-500/10"
-                                onClick={() => setSelectedProofReq(req)}
-                              >
-                                <ShieldCheck className="size-3.5 text-emerald-600" />
-                                View Signed Proof
-                              </Button>
-                            ) : (
-                              <Badge variant="outline" className="text-[11px] text-muted-foreground">
-                                Pending Opening
-                              </Badge>
-                            )}
+                            <Button
+                              size="sm"
+                              variant="outline"
+                              className="h-7 text-xs gap-1 border-primary/20 hover:bg-primary/5"
+                              onClick={() => setSelectedProofReq(req)}
+                            >
+                              <ShieldCheck className="size-3.5 text-primary" />
+                              Inspect History
+                            </Button>
                           </TableCell>
                         </TableRow>
                       );
@@ -535,7 +562,7 @@ Declaration: ${proof?.declaration || "Rules and Regulations acknowledged in full
       </div>
 
       {/* ==================================================================== */}
-      {/* SIGNED PROOF OF TRUST & REGULATORY COMPLIANCE MODAL                  */}
+      {/* INSTITUTIONAL DILIGENCE HISTORY & SIGNED PROOF OF TRUST MODAL         */}
       {/* ==================================================================== */}
       <Dialog
         open={selectedProofReq !== null}
@@ -551,11 +578,11 @@ Declaration: ${proof?.declaration || "Rules and Regulations acknowledged in full
             <div className="flex items-center gap-2">
               <ShieldCheck className="size-5 text-emerald-600" />
               <DialogTitle className="text-lg">
-                Signed Proof of Trust &amp; Diligence Compliance
+                Institutional Diligence History &amp; Proof of Trust
               </DialogTitle>
             </div>
             <DialogDescription className="text-xs">
-              Official institutional certificate stored in university database verifying legal adherence to Platform Rules &amp; Regulations (v1.0-cv-reg).
+              Verifiable compliance record persistent in university database for authorized staff inspection.
             </DialogDescription>
           </DialogHeader>
 
@@ -565,9 +592,11 @@ Declaration: ${proof?.declaration || "Rules and Regulations acknowledged in full
               <div className="flex items-start gap-2.5 rounded-lg border border-emerald-500/20 bg-emerald-500/10 p-3 text-emerald-800 dark:text-emerald-200">
                 <CheckCircle2 className="size-4 shrink-0 text-emerald-600 mt-0.5" />
                 <div className="space-y-0.5">
-                  <p className="font-semibold text-xs">Legally Executed &amp; Stored as Permanent Trust Proof</p>
+                  <p className="font-semibold text-xs">
+                    Persistent Diligence Record · Ref: {selectedProofReq.id}
+                  </p>
                   <p className="text-[11px] text-emerald-700/90 dark:text-emerald-300/90 leading-relaxed">
-                    The investor confirmed in full capacity and presence their acceptance of all confidentiality rules, founder protections, and consequences before gaining access to confidential documents.
+                    This diligence activity is bound to {myUniversity || selectedProofReq.universityName || "your university"} based on verified student founder institutional affiliation.
                   </p>
                 </div>
               </div>
@@ -581,44 +610,145 @@ Declaration: ${proof?.declaration || "Rules and Regulations acknowledged in full
                   <div>
                     <span className="text-muted-foreground block text-[11px]">Full Legal Name:</span>
                     <span className="font-medium text-foreground">
-                      {selectedProofReq.rulesProof?.investorName || selectedProofReq.investorName || "Accredited Investor"}
+                      {selectedProofReq.investorName || "Accredited Investor"}
                     </span>
                   </div>
                   <div>
-                    <span className="text-muted-foreground block text-[11px]">Email Address:</span>
+                    <span className="text-muted-foreground block text-[11px]">Verified Email:</span>
                     <span className="font-medium text-foreground font-mono text-[11px]">
-                      {selectedProofReq.rulesProof?.investorEmail || selectedProofReq.investorEmail || "investor@venture.com"}
+                      {selectedProofReq.investorEmail || "—"}
                     </span>
                   </div>
                   <div>
                     <span className="text-muted-foreground block text-[11px]">Organization / Entity:</span>
                     <span className="text-foreground">
-                      {selectedProofReq.rulesProof?.investorOrg || selectedProofReq.investorOrg || "Venture Capital Partner"}
+                      {selectedProofReq.investorOrg || "Venture Capital Partner"}
                     </span>
                   </div>
                 </div>
 
                 <div className="rounded-lg border bg-muted/30 p-3 space-y-1.5">
                   <span className="font-semibold text-foreground text-xs block border-b pb-1">
-                    Campus Venture &amp; Founder
+                    Campus Venture &amp; Student Founder
                   </span>
                   <div>
                     <span className="text-muted-foreground block text-[11px]">Startup Venture:</span>
                     <span className="font-medium text-foreground">
                       {selectedProofReq.startupName || "Campus Venture"}
                     </span>
+                    <span className="font-mono text-[10px] text-muted-foreground block">
+                      ID: {selectedProofReq.startupId}
+                    </span>
                   </div>
                   <div>
                     <span className="text-muted-foreground block text-[11px]">Student Founder:</span>
-                    <span className="font-medium text-foreground font-mono text-[11px]">
-                      {selectedProofReq.rulesProof?.founderEmail || selectedProofReq.founderEmail || "student@university.edu"}
+                    <span className="font-medium text-foreground">
+                      {selectedProofReq.founderName || "Student Founder"}
+                    </span>
+                    <span className="text-muted-foreground font-mono text-[11px] block">
+                      {selectedProofReq.founderEmail || "student@university.edu"}
                     </span>
                   </div>
                   <div>
-                    <span className="text-muted-foreground block text-[11px]">University Institution:</span>
-                    <span className="text-foreground">
+                    <span className="text-muted-foreground block text-[11px]">Associated University:</span>
+                    <span className="text-foreground font-medium">
                       {myUniversity || selectedProofReq.universityName || "Campus Partner University"}
                     </span>
+                  </div>
+                </div>
+              </div>
+
+              {/* Chronological Diligence Audit Trail */}
+              <div className="rounded-lg border p-3.5 space-y-3 bg-card">
+                <p className="font-semibold text-foreground text-xs uppercase tracking-wider text-muted-foreground">
+                  Chronological Diligence Lifecycle
+                </p>
+                <div className="space-y-3 border-l-2 border-border/70 pl-3.5 ml-1">
+                  {/* Step 1: Submission */}
+                  <div className="relative space-y-0.5">
+                    <div className="absolute -left-[19px] top-1 size-2 rounded-full bg-primary" />
+                    <p className="font-medium text-foreground">Step 1: Access Request Submitted</p>
+                    <p className="text-[11px] text-muted-foreground">
+                      Submitted on: {formatWhen(selectedProofReq.createdAt)}
+                    </p>
+                    {selectedProofReq.message && (
+                      <p className="text-[11px] text-muted-foreground italic bg-muted/30 p-1.5 rounded mt-1">
+                        "{selectedProofReq.message}"
+                      </p>
+                    )}
+                  </div>
+
+                  {/* Step 2: Founder Decision */}
+                  <div className="relative space-y-0.5">
+                    <div className="absolute -left-[19px] top-1 size-2 rounded-full bg-primary" />
+                    <div className="flex items-center gap-1.5">
+                      <span className="font-medium text-foreground">Step 2: Student Founder Decision:</span>
+                      <Badge
+                        variant={
+                          selectedProofReq.decision === "accepted" || selectedProofReq.status === "granted"
+                            ? "default"
+                            : selectedProofReq.decision === "rejected" || selectedProofReq.status === "rejected"
+                            ? "destructive"
+                            : "outline"
+                        }
+                        className="text-[10px] capitalize"
+                      >
+                        {selectedProofReq.decision || selectedProofReq.status}
+                      </Badge>
+                    </div>
+                    <p className="text-[11px] text-muted-foreground">
+                      Decided on: {formatWhen(selectedProofReq.decisionAt || selectedProofReq.updatedAt)} by {selectedProofReq.founderName || "Founder"}
+                    </p>
+                    {selectedProofReq.discussionTerms && (
+                      <p className="text-[11px] text-muted-foreground">
+                        Terms: {selectedProofReq.discussionTerms}
+                      </p>
+                    )}
+                    {selectedProofReq.declineReason && (
+                      <p className="text-[11px] text-destructive">
+                        Reason: {selectedProofReq.declineReason}
+                      </p>
+                    )}
+                  </div>
+
+                  {/* Step 3: Rules & Regulations Acceptance */}
+                  <div className="relative space-y-0.5">
+                    <div className="absolute -left-[19px] top-1 size-2 rounded-full bg-primary" />
+                    <div className="flex items-center gap-1.5">
+                      <span className="font-medium text-foreground">Step 3: Investor Rules Acceptance:</span>
+                      <Badge
+                        variant={selectedProofReq.rulesAccepted || selectedProofReq.ndaSigned ? "outline" : "outline"}
+                        className={`text-[10px] ${
+                          selectedProofReq.rulesAccepted || selectedProofReq.ndaSigned
+                            ? "bg-emerald-500/10 text-emerald-700 dark:text-emerald-300 border-emerald-500/30"
+                            : "text-muted-foreground"
+                        }`}
+                      >
+                        {selectedProofReq.rulesAccepted || selectedProofReq.ndaSigned
+                          ? `Accepted (${selectedProofReq.rulesVersion || "v1.0-cv-reg"})`
+                          : "Pending Investor Acceptance"}
+                      </Badge>
+                    </div>
+                    {selectedProofReq.rulesAccepted || selectedProofReq.ndaSigned ? (
+                      <p className="text-[11px] text-muted-foreground">
+                        Executed on: {formatWhen(selectedProofReq.rulesAcceptedAt || selectedProofReq.updatedAt)} by {selectedProofReq.ndaSignedName || selectedProofReq.investorName}
+                      </p>
+                    ) : (
+                      <p className="text-[11px] text-muted-foreground">
+                        Investor must accept platform rules ({selectedProofReq.rulesVersion || "v1.0-cv-reg"}) prior to unlocking confidential files.
+                      </p>
+                    )}
+                  </div>
+
+                  {/* Step 4: Access Status */}
+                  <div className="relative space-y-0.5">
+                    <div className="absolute -left-[19px] top-1 size-2 rounded-full bg-primary" />
+                    <p className="font-medium text-foreground">
+                      Step 4: Current Access Status: <span className="uppercase font-semibold">{selectedProofReq.status}</span>
+                    </p>
+                    <p className="text-[11px] text-muted-foreground">
+                      Access window: {selectedProofReq.accessDurationDays || 30} days {selectedProofReq.expiresAt ? `(Expires: ${formatWhen(selectedProofReq.expiresAt)})` : ""}
+                    </p>
                   </div>
                 </div>
               </div>
@@ -652,36 +782,37 @@ Declaration: ${proof?.declaration || "Rules and Regulations acknowledged in full
                   </div>
                 ) : (
                   <p className="text-muted-foreground text-xs">
-                    All Data Room confidential materials (pitch decks, cap tables, financial models) granted by student founder under executed mutual agreement.
+                    All Data Room confidential materials granted by student founder under executed mutual agreement.
                   </p>
                 )}
               </div>
 
-              {/* The Submitted Investor Form & Declaration */}
-              <div className="rounded-lg border bg-muted/40 p-3.5 space-y-2">
-                <div className="flex items-center justify-between border-b pb-1.5">
-                  <span className="font-semibold text-foreground text-xs">
-                    Submitted Compliance Declaration &amp; Covenant
-                  </span>
-                  <Badge variant="outline" className="text-[10px] bg-emerald-500/10 text-emerald-700 dark:text-emerald-300 border-emerald-500/20">
-                    {selectedProofReq.rulesProof?.rulesVersion || selectedProofReq.rulesVersion || "v1.0-cv-reg"}
-                  </Badge>
-                </div>
+              {/* Submitted Investor Form & Declaration */}
+              {selectedProofReq.rulesProof?.declaration && (
+                <div className="rounded-lg border bg-muted/40 p-3.5 space-y-2">
+                  <div className="flex items-center justify-between border-b pb-1.5">
+                    <span className="font-semibold text-foreground text-xs">
+                      Submitted Compliance Declaration &amp; Covenant
+                    </span>
+                    <Badge variant="outline" className="text-[10px] bg-emerald-500/10 text-emerald-700 dark:text-emerald-300 border-emerald-500/20">
+                      {selectedProofReq.rulesProof?.rulesVersion || selectedProofReq.rulesVersion || "v1.0-cv-reg"}
+                    </Badge>
+                  </div>
 
-                <blockquote className="border-l-2 border-emerald-600 pl-3 italic text-muted-foreground text-xs leading-relaxed py-0.5">
-                  "{selectedProofReq.rulesProof?.declaration ||
-                    `I confirm that I am investor ${selectedProofReq.investorName} (${selectedProofReq.investorEmail}), in my full presence and legal authority. I am okay with all platform rules and regulations (v1.0-cv-reg) and the consequences of rule breaks. I agree and submit this form as permanent proof of verification and security for ${selectedProofReq.startupName} and founder.`}"
-                </blockquote>
+                  <blockquote className="border-l-2 border-emerald-600 pl-3 italic text-muted-foreground text-xs leading-relaxed py-0.5">
+                    "{selectedProofReq.rulesProof.declaration}"
+                  </blockquote>
 
-                <div className="pt-2 flex flex-wrap items-center justify-between gap-2 text-[11px] text-muted-foreground border-t border-border/60">
-                  <span>
-                    Timestamp: {new Date(selectedProofReq.rulesProof?.timestamp || selectedProofReq.rulesAcceptedAt || selectedProofReq.updatedAt).toLocaleString()}
-                  </span>
-                  <span className="font-mono text-[10px]">
-                    Storage Hash: {selectedProofReq.id}
-                  </span>
+                  <div className="pt-2 flex flex-wrap items-center justify-between gap-2 text-[11px] text-muted-foreground border-t border-border/60">
+                    <span>
+                      Timestamp: {new Date(selectedProofReq.rulesProof.timestamp || selectedProofReq.rulesAcceptedAt || selectedProofReq.updatedAt).toLocaleString()}
+                    </span>
+                    <span className="font-mono text-[10px]">
+                      Storage Hash: {selectedProofReq.id}
+                    </span>
+                  </div>
                 </div>
-              </div>
+              )}
             </div>
           )}
 
@@ -693,7 +824,7 @@ Declaration: ${proof?.declaration || "Rules and Regulations acknowledged in full
               className="gap-1.5 text-xs"
             >
               {copiedProof ? <Check className="size-3.5 text-emerald-600" /> : <Copy className="size-3.5" />}
-              {copiedProof ? "Copied" : "Copy Verification Proof"}
+              {copiedProof ? "Copied" : "Copy Diligence Audit Certificate"}
             </Button>
             <Button size="sm" onClick={() => setSelectedProofReq(null)}>
               Close

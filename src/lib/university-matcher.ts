@@ -1,6 +1,63 @@
 import { UGC_UNIVERSITIES, type University } from "./universities";
 
 /**
+ * Public consumer email domains that should NOT be treated as institutional campus identifiers.
+ */
+export const PUBLIC_CONSUMER_DOMAINS = new Set([
+  "gmail.com",
+  "googlemail.com",
+  "yahoo.com",
+  "yahoo.co.in",
+  "yahoo.co.uk",
+  "outlook.com",
+  "hotmail.com",
+  "live.com",
+  "msn.com",
+  "icloud.com",
+  "me.com",
+  "mac.com",
+  "proton.me",
+  "protonmail.com",
+  "aol.com",
+  "zoho.com",
+  "mail.com",
+  "yandex.com",
+  "gmx.com",
+  "fastmail.com",
+]);
+
+/**
+ * Extracts normalized email domain from an email address.
+ */
+export function getEmailDomain(email?: string): string {
+  if (!email || !email.includes("@")) return "";
+  return email.split("@")[1]?.toLowerCase().trim() || "";
+}
+
+/**
+ * Determines whether a domain is an authentic institutional university domain
+ * (e.g. sguk.ac.in, coep.ac.in, mit.edu, stanford.edu, ox.ac.uk, iitb.ac.in).
+ */
+export function isInstitutionalDomain(domain?: string): boolean {
+  if (!domain) return false;
+  const d = domain.toLowerCase().trim();
+  if (d.length < 4 || !d.includes(".")) return false;
+  return !PUBLIC_CONSUMER_DOMAINS.has(d);
+}
+
+/**
+ * Checks whether two domains belong to the exact same institution,
+ * including department/campus subdomains (e.g. cs.stanford.edu and stanford.edu).
+ */
+export function areMatchingDomains(domainA?: string, domainB?: string): boolean {
+  if (!domainA || !domainB) return false;
+  const a = domainA.toLowerCase().trim();
+  const b = domainB.toLowerCase().trim();
+  if (!isInstitutionalDomain(a) || !isInstitutionalDomain(b)) return false;
+  return a === b || a.endsWith(`.${b}`) || b.endsWith(`.${a}`);
+}
+
+/**
  * Normalizes university names by stripping punctuation, common suffixes, and whitespace.
  */
 export function normalizeUniversityName(name?: string): string {
@@ -14,19 +71,23 @@ export function normalizeUniversityName(name?: string): string {
 }
 
 /**
- * Extracts normalized email domain from email address.
- */
-export function getEmailDomain(email?: string): string {
-  if (!email || !email.includes("@")) return "";
-  return email.split("@")[1]?.toLowerCase().trim() || "";
-}
-
-/**
  * Checks whether two university identifiers, profiles, or users belong to the SAME university.
- * Uses a 3-tier matching cascade:
- * 1. Email domain identity (e.g. both @sguk.ac.in, @coep.ac.in)
- * 2. Exact or normalized institution name match
- * 3. UGC Universities alias and abbreviation lookup
+ * Uses a strict, globally scalable multi-tenant evaluation:
+ *
+ * 1. INSTITUTIONAL EMAIL DOMAIN RULE (Gold Standard for global security):
+ *    - If both parties have institutional domains (e.g. @mit.edu vs @stanford.edu, or @coep.ac.in vs @sguk.ac.in),
+ *      they match IF AND ONLY IF their domains match.
+ *    - If both have institutional domains and they do NOT match, they are STRICTLY DIFFERENT UNIVERSITIES.
+ *
+ * 2. EXACT NAME MATCH:
+ *    - Case-insensitive exact match of full institution title.
+ *
+ * 3. TOKEN-LEVEL NORMALIZED MATCH:
+ *    - Compares token sets with word boundaries (minimum 80% overlap).
+ *    - Never uses loose substring matching, preventing city/generic collisions (e.g. "Pune", "Engineering").
+ *
+ * 4. CATALOG UGC / GLOBAL REGISTRY MATCH:
+ *    - Token-level exact alias / abbreviation matching with boundary protection.
  */
 export function isSameUniversity(
   source: string | { org?: string | undefined; email?: string | undefined; university?: string | undefined },
@@ -38,15 +99,21 @@ export function isSameUniversity(
   const emailA = getEmailDomain(srcObj.email);
   const emailB = getEmailDomain(tgtObj.email);
 
-  // 1. If both have institutional email domains, match them directly
-  if (emailA && emailB && emailA === emailB) {
-    return true;
+  const instA = isInstitutionalDomain(emailA);
+  const instB = isInstitutionalDomain(emailB);
+
+  // 1. Institutional Domain Evaluation:
+  if (instA && instB) {
+    // Both have official domains: exact or subdomain match is REQUIRED.
+    return areMatchingDomains(emailA, emailB);
   }
 
   const nameA = (srcObj.org || srcObj.university || "").trim();
   const nameB = (tgtObj.org || tgtObj.university || "").trim();
 
   if (!nameA || !nameB) {
+    // If one has an institutional domain and the other has a matching domain, match; otherwise false
+    if (instA && instB) return areMatchingDomains(emailA, emailB);
     return false;
   }
 
@@ -58,25 +125,45 @@ export function isSameUniversity(
   // 3. Normalized string match
   const normA = normalizeUniversityName(nameA);
   const normB = normalizeUniversityName(nameB);
-  if (normA && normB && (normA === normB || normA.includes(normB) || normB.includes(normA))) {
+
+  if (!normA || !normB) {
+    return false;
+  }
+
+  if (normA === normB) {
     return true;
   }
 
-  // 4. Match via UGC_UNIVERSITIES aliases
+  // Token-level comparison (require word-boundary token set match)
+  const tokensA = normA.split(/\s+/).filter((t) => t.length >= 3);
+  const tokensB = normB.split(/\s+/).filter((t) => t.length >= 3);
+
+  if (tokensA.length >= 2 && tokensB.length >= 2) {
+    const setB = new Set(tokensB);
+    const matches = tokensA.filter((t) => setB.has(t)).length;
+    const maxTokens = Math.max(tokensA.length, tokensB.length);
+    if (matches / maxTokens >= 0.8) {
+      return true;
+    }
+  }
+
+  // 4. Match via UGC_UNIVERSITIES catalog with strict whole-word / token boundaries
   for (const ugc of UGC_UNIVERSITIES) {
     const ugcNorm = normalizeUniversityName(ugc.name);
     const shortNorm = ugc.shortName ? normalizeUniversityName(ugc.shortName) : "";
-    const aliasesNorm = (ugc.aliases || []).map(normalizeUniversityName);
+    const aliasesNorm = (ugc.aliases || []).map(normalizeUniversityName).filter((a) => a.length >= 4);
+
+    const tokensUgc = ugcNorm.split(/\s+/).filter((t) => t.length >= 3);
 
     const matchesA =
       normA === ugcNorm ||
-      (shortNorm && normA.includes(shortNorm)) ||
-      aliasesNorm.some((a) => a && normA.includes(a));
+      (shortNorm && shortNorm.length >= 3 && tokensA.includes(shortNorm)) ||
+      aliasesNorm.some((a) => normA === a || normA.split(/\s+/).includes(a));
 
     const matchesB =
       normB === ugcNorm ||
-      (shortNorm && normB.includes(shortNorm)) ||
-      aliasesNorm.some((a) => a && normB.includes(a));
+      (shortNorm && shortNorm.length >= 3 && tokensB.includes(shortNorm)) ||
+      aliasesNorm.some((a) => normB === a || normB.split(/\s+/).includes(a));
 
     if (matchesA && matchesB) {
       return true;
