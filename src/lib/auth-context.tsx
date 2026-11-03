@@ -34,87 +34,23 @@ export interface RegisteredAccount {
 
 export const ROLE_PROFILES: Record<Role, { name: string; email: string; org: string }> = {
   student: {
-    name: "Aayush Patil",
-    email: "252921389@sguk.ac.in",
-    org: "Sanjay Ghodawat University (SGU), Kolhapur",
+    name: "Student Founder",
+    email: "",
+    org: "",
   },
   investor: {
-    name: "Anaya Krishnan",
-    email: "anaya@northbridge.vc",
-    org: "Northbridge Seed",
+    name: "Accredited Investor",
+    email: "",
+    org: "",
   },
   university: {
-    name: "SGU Innovation & Incubation Cell",
-    email: "252921043@sguk.ac.in",
-    org: "Sanjay Ghodawat University (SGU), Kolhapur",
+    name: "University Innovation Cell",
+    email: "",
+    org: "",
   },
 };
 
-export const DEFAULT_ACCOUNTS: RegisteredAccount[] = [
-  {
-    id: "usr-university-sgu-seed",
-    name: "SGU Innovation & Incubation Cell",
-    email: "252921043@sguk.ac.in",
-    password: "Password123",
-    role: "university",
-    org: "Sanjay Ghodawat University (SGU), Kolhapur",
-    createdAt: "2026-01-01T00:00:00.000Z",
-  },
-  {
-    id: "usr-student-sgu-seed",
-    name: "SGU Student Founder",
-    email: "252921389@sguk.ac.in",
-    password: "Password123",
-    role: "student",
-    org: "Sanjay Ghodawat University (SGU), Kolhapur",
-    createdAt: "2026-01-01T00:00:00.000Z",
-  },
-  {
-    id: "usr-investor-jone-seed",
-    name: "Jone Cornar",
-    email: "jonecornar@gmail.com",
-    password: "Password123",
-    role: "investor",
-    org: "Northbridge Seed",
-    createdAt: "2026-01-01T00:00:00.000Z",
-  },
-  {
-    id: "usr-investor-dalavi-seed",
-    name: "Aditya Dalvi",
-    email: "dalaviaditya07@gmail.com",
-    password: "Password123",
-    role: "investor",
-    org: "Northbridge Seed",
-    createdAt: "2026-01-01T00:00:00.000Z",
-  },
-  {
-    id: "usr-student-seed",
-    name: "Aayush Patil",
-    email: "aayush@coep.ac.in",
-    password: "Password123",
-    role: "student",
-    org: "COEP Technological University",
-    createdAt: "2026-01-01T00:00:00.000Z",
-  },
-  {
-    id: "usr-investor-seed",
-    name: "Anaya Krishnan",
-    email: "anaya@northbridge.vc",
-    password: "Password123",
-    role: "investor",
-    org: "Northbridge Seed",
-    createdAt: "2026-01-01T00:00:00.000Z",
-  },
-  {
-    id: "usr-university-seed",
-    name: "COEP Innovation Cell",
-    email: "innovation@coep.ac.in",
-    password: "Password123",
-    role: "university",
-    org: "COEP Technological University",
-    createdAt: "2026-01-01T00:00:00.000Z",
-  },
-];
+export const DEFAULT_ACCOUNTS: RegisteredAccount[] = [];
 
 const AUTH_STORAGE_KEY = "campusventure.auth.user.v1";
 const REGISTERED_USERS_KEY = "campusventure.auth.registered_users.v1";
@@ -428,21 +364,25 @@ async function validateAndEnforceInstitutionalRole(
 }
 
 function loadRegisteredUsers(): RegisteredAccount[] {
-  if (typeof window === "undefined") return DEFAULT_ACCOUNTS;
+  if (typeof window === "undefined") return [];
   try {
     const raw = window.localStorage.getItem(REGISTERED_USERS_KEY);
-    if (!raw) {
-      window.localStorage.setItem(REGISTERED_USERS_KEY, JSON.stringify(DEFAULT_ACCOUNTS));
-      return DEFAULT_ACCOUNTS;
-    }
+    if (!raw) return [];
     const parsed = JSON.parse(raw) as RegisteredAccount[];
     if (Array.isArray(parsed) && parsed.length > 0) {
-      return parsed;
+      // Purge legacy mock seed accounts
+      const cleaned = parsed.filter(
+        (u) =>
+          u.email !== "aayush@coep.ac.in" &&
+          u.email !== "anaya@northbridge.vc" &&
+          u.email !== "innovation@coep.ac.in" &&
+          !String(u.id || "").includes("seed")
+      );
+      return cleaned;
     }
-    window.localStorage.setItem(REGISTERED_USERS_KEY, JSON.stringify(DEFAULT_ACCOUNTS));
-    return DEFAULT_ACCOUNTS;
+    return [];
   } catch {
-    return DEFAULT_ACCOUNTS;
+    return [];
   }
 }
 

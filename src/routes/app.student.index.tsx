@@ -128,20 +128,7 @@ interface CoFounder {
   invitedAt: string;
 }
 
-const DEFAULT_WEEKLY_UPDATES: WeeklyUpdate[] = [
-  {
-    id: "up-1",
-    date: "Oct 16, 2026",
-    content: "Shipped v1.2 onboarding with university email verification. Onboarded 120 pilot students and improved AI grading accuracy by 22%.",
-    tags: ["ShippedFeature", "MetricGrowth"],
-  },
-  {
-    id: "up-2",
-    date: "Oct 09, 2026",
-    content: "Conducted 15 user testing interviews with campus founders. Finalized student investor pitch deck and data room assets.",
-    tags: ["CustomerFeedback", "MilestoneReached"],
-  },
-];
+const DEFAULT_WEEKLY_UPDATES: WeeklyUpdate[] = [];
 
 const AVAILABLE_TAGS = ["ShippedFeature", "MetricGrowth", "CustomerFeedback", "BugFixes", "Partnership"];
 

@@ -15,22 +15,22 @@ import { useRouter } from "@tanstack/react-router";
 
 const DEFAULTS: Record<Role, { name: string; email: string; org: string; bio: string }> = {
   student: {
-    name: "Aayush Patil",
-    email: "aayush@coep.ac.in",
-    org: "COEP Technological University",
-    bio: "Final-year computer engineering student building Lumen Labs.",
+    name: "",
+    email: "",
+    org: "",
+    bio: "",
   },
   investor: {
-    name: "Anaya Krishnan",
-    email: "anaya@northbridge.vc",
-    org: "Northbridge Seed",
-    bio: "Backing technical student founders building software for education and work.",
+    name: "",
+    email: "",
+    org: "",
+    bio: "",
   },
   university: {
-    name: "COEP Innovation Cell",
-    email: "innovation@coep.ac.in",
-    org: "COEP Technological University",
-    bio: "Verifying student startups and running readiness programmes.",
+    name: "",
+    email: "",
+    org: "",
+    bio: "",
   },
 };
 
@@ -94,9 +94,11 @@ export function SettingsView({ role }: { role: Role }) {
 
     // 2. If student, update startup founder name & university in Venture store
     if (role === "student") {
-      const myStartup =
-        startups.find((s) => s.founderEmail === profile.email || s.founder === profile.name) ||
-        startups[0];
+      const myStartup = startups.find(
+        (s) =>
+          (profile.email && s.founderEmail?.toLowerCase() === profile.email.toLowerCase()) ||
+          (profile.name && s.founder === profile.name)
+      );
       if (myStartup) {
         updateStartup(myStartup.id, {
           founder: profile.name,

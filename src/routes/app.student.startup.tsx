@@ -418,7 +418,7 @@ function MyStartup() {
                       id="st-name"
                       value={stName}
                       onChange={(e) => setStName(e.target.value)}
-                      placeholder="e.g. Lumen Labs or NeuroPulse"
+                      placeholder="e.g. AutoCampus or DroneAI"
                     />
                   </div>
                   <div className="space-y-2">

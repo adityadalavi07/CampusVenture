@@ -16,8 +16,8 @@ import { useAuth } from "@/lib/auth-context";
 export type ReviewStatus = "draft" | "pending" | "approved" | "rejected";
 
 /** The signed-in identities this build uses (auth is disabled). */
-export const MY_STARTUP_ID = "s1";
-export const MY_INVESTOR_ID = "i1";
+export const MY_STARTUP_ID = "";
+export const MY_INVESTOR_ID = "";
 
 export interface StartupRecord extends Startup {
   problem: string;
@@ -759,7 +759,7 @@ export function VentureProvider({ children }: { children: ReactNode }) {
             email: patch.email || idOrEmail,
             branch: patch.branch || "Computer Engineering",
             year: patch.year || "Final year",
-            startupId: patch.startupId || MY_STARTUP_ID,
+            startupId: patch.startupId || null,
             verified: patch.verified ?? false,
           };
           return {
