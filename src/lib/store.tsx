@@ -214,6 +214,22 @@ export function VentureProvider({ children }: { children: ReactNode }) {
         setState((prev) => ({ ...prev, saved: [] }));
       }
     }
+    // Also fetch from Supabase public.watchlist if present
+    (async () => {
+      try {
+        const { data, error } = await (supabase as any)
+          .from("watchlist")
+          .select("startup_id")
+          .eq("user_id", user.id);
+        if (!error && Array.isArray(data) && data.length > 0) {
+          const ids = data.map((d: any) => d.startup_id);
+          setState((prev) => ({
+            ...prev,
+            saved: Array.from(new Set([...prev.saved, ...ids])),
+          }));
+        }
+      } catch {}
+    })();
   }, [user?.id]);
 
   useEffect(() => {
@@ -293,6 +309,20 @@ export function VentureProvider({ children }: { children: ReactNode }) {
       }
     });
 
+    ventureService.getAllPrograms().then((remotePrograms) => {
+      if (Array.isArray(remotePrograms) && remotePrograms.length > 0) {
+        setState((prev) => {
+          const map = new Map();
+          prev.programs.forEach((p) => map.set(p.id, p));
+          remotePrograms.forEach((p) => map.set(p.id, p));
+          return {
+            ...prev,
+            programs: Array.from(map.values()),
+          };
+        });
+      }
+    });
+
     ventureService.getAllStudentProfiles().then((remoteStudents) => {
       if (Array.isArray(remoteStudents) && remoteStudents.length > 0) {
         setState((prev) => {
@@ -300,10 +330,20 @@ export function VentureProvider({ children }: { children: ReactNode }) {
           prev.students.forEach((st) => map.set(st.email.toLowerCase(), st));
           remoteStudents.forEach((st) => {
             const existing = map.get(st.email.toLowerCase());
+            const matchingStartup = prev.startups.find(
+              (s) =>
+                (st.email && s.founderEmail?.toLowerCase() === st.email.toLowerCase()) ||
+                (st.id && s.founderId === st.id)
+            );
             map.set(st.email.toLowerCase(), {
               ...st,
-              verified: existing?.verified ?? false,
-              startupId: existing?.startupId ?? null,
+              verified: Boolean(
+                st.verified ||
+                existing?.verified ||
+                matchingStartup?.verified ||
+                matchingStartup?.status === "approved"
+              ),
+              startupId: matchingStartup?.id || existing?.startupId || null,
             });
           });
           return {
@@ -512,6 +552,23 @@ export function VentureProvider({ children }: { children: ReactNode }) {
               /* ignore */
             }
           }
+          if (user?.id) {
+            (async () => {
+              try {
+                if (added) {
+                  await (supabase as any).from("watchlist").insert({
+                    user_id: user.id,
+                    startup_id: id,
+                  });
+                } else {
+                  await (supabase as any).from("watchlist").delete().match({
+                    user_id: user.id,
+                    startup_id: id,
+                  });
+                }
+              } catch {}
+            })();
+          }
           return {
             ...prev,
             saved: nextSaved,
@@ -631,36 +688,55 @@ export function VentureProvider({ children }: { children: ReactNode }) {
         })),
       toggleEnrollment: (programId, startupId) => {
         let added = false;
-        setState((prev) => ({
-          ...prev,
-          programs: prev.programs.map((p) => {
+        setState((prev) => {
+          const nextPrograms = prev.programs.map((p) => {
             if (p.id !== programId) return p;
             added = !p.enrolled.includes(startupId);
-            return {
+            const nextP = {
               ...p,
               enrolled: added
                 ? [...p.enrolled, startupId]
                 : p.enrolled.filter((x) => x !== startupId),
             };
-          }),
-        }));
+            ventureService.upsertProgram(nextP);
+            return nextP;
+          });
+          return { ...prev, programs: nextPrograms };
+        });
         return added;
       },
-      setProgramStatus: (id, status) =>
+      setProgramStatus: (id, status) => {
+        setState((prev) => {
+          const nextPrograms = prev.programs.map((p) => {
+            if (p.id !== id) return p;
+            const nextP = { ...p, status };
+            ventureService.upsertProgram(nextP);
+            return nextP;
+          });
+          return { ...prev, programs: nextPrograms };
+        });
+      },
+      addProgram: (p) => {
+        const newProg: Program = {
+          ...p,
+          id: generateUUID(),
+          enrolled: [],
+          university: user?.org || undefined,
+        };
+        ventureService.upsertProgram(newProg, user?.org);
         setState((prev) => ({
           ...prev,
-          programs: prev.programs.map((p) => (p.id === id ? { ...p, status } : p)),
-        })),
-      addProgram: (p) =>
-        setState((prev) => ({
-          ...prev,
-          programs: [{ ...p, id: rid("p"), enrolled: [] }, ...prev.programs],
-        })),
-      setStudentVerified: (id, verified) =>
+          programs: [newProg, ...prev.programs],
+        }));
+      },
+      setStudentVerified: (id, verified) => {
+        const targetStudent = state.students.find((s) => s.id === id);
+        ventureService.setStudentVerification(id, targetStudent?.email, verified);
         setState((prev) => ({
           ...prev,
           students: prev.students.map((s) => (s.id === id ? { ...s, verified } : s)),
-        })),
+        }));
+      },
       updateStudent: (idOrEmail, patch) =>
         setState((prev) => {
           const clean = idOrEmail.toLowerCase().trim();

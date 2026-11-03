@@ -116,7 +116,9 @@ function StudentsPage() {
               </TableHeader>
               <TableBody>
                 {rows.map((s) => {
-                  const startup = startups.find((x) => x.id === s.startupId);
+                  const startup = startups.find(
+                    (x) => x.id === s.startupId || (s.email && x.founderEmail?.toLowerCase() === s.email.toLowerCase())
+                  );
                   return (
                     <TableRow key={s.id}>
                       <TableCell>
@@ -140,7 +142,9 @@ function StudentsPage() {
                           onClick={() => {
                             setStudentVerified(s.id, !s.verified);
                             if (!s.verified)
-                              notify("student", "Student verified", `${s.name} is now verified.`);
+                              notify("student", "Student verified", `${s.name} is now verified.`, {
+                                recipientEmail: s.email,
+                              });
                             toast.success(s.verified ? `${s.name} unverified` : `${s.name} verified`);
                           }}
                         >

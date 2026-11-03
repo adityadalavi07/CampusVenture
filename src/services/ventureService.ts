@@ -1,5 +1,5 @@
 import { supabase } from "@/lib/supabase";
-import type { ReviewStatus, StartupRecord, StudentRecord } from "@/lib/store";
+import type { ReviewStatus, StartupRecord, StudentRecord, Program } from "@/lib/store";
 import { generateUUID, isValidUUID } from "@/lib/uuid";
 
 export function dbRowToStartupRecord(row: any): StartupRecord {
@@ -113,16 +113,33 @@ export const ventureService = {
       }
 
       if (Array.isArray(data)) {
-        return data.map((p) => ({
-          id: p.id,
-          name: p.name || p.email?.split("@")[0] || "Student Founder",
-          email: p.email,
-          branch: "Computer Science & Engineering",
-          year: "Final year",
-          startupId: null,
-          verified: false,
-          org: p.org || undefined,
-        }));
+        let cachedVerified: Record<string, boolean> = {};
+        if (typeof window !== "undefined") {
+          try {
+            const raw = window.localStorage.getItem("campusventure.verified_students");
+            if (raw) cachedVerified = JSON.parse(raw);
+          } catch {}
+        }
+
+        return data.map((p) => {
+          const emailLower = (p.email || "").toLowerCase();
+          const isVerified = Boolean(
+            p.verified ||
+            cachedVerified[emailLower] ||
+            cachedVerified[p.id]
+          );
+
+          return {
+            id: p.id,
+            name: p.name || p.email?.split("@")[0] || "Student Founder",
+            email: p.email,
+            branch: "Computer Science & Engineering",
+            year: "Final year",
+            startupId: null,
+            verified: isVerified,
+            org: p.org || undefined,
+          };
+        });
       }
       return [];
     } catch (err) {
@@ -139,7 +156,23 @@ export const ventureService = {
     founderId?: string
   ): Promise<{ success: boolean; id: string; error?: string }> {
     try {
-      const payload = startupRecordToDbRow(startup, founderId);
+      let resolvedFounderId = founderId && isValidUUID(founderId) ? founderId : null;
+      if (!resolvedFounderId && startup.founderEmail) {
+        try {
+          const { data: prof } = await (supabase as any)
+            .from("profiles")
+            .select("id")
+            .ilike("email", startup.founderEmail.trim().toLowerCase())
+            .maybeSingle();
+          if (prof?.id && isValidUUID(prof.id)) {
+            resolvedFounderId = prof.id;
+          }
+        } catch {
+          /* ignore */
+        }
+      }
+
+      const payload = startupRecordToDbRow(startup, resolvedFounderId || undefined);
       let { error } = await (supabase as any)
         .from("startups")
         .upsert(payload, { onConflict: "id" });
@@ -255,5 +288,127 @@ export const ventureService = {
       if (pollingTimer) clearInterval(pollingTimer);
       supabase.removeChannel(channel);
     };
+  },
+
+  /**
+   * Fetch all accelerator programs from Supabase public.programs
+   */
+  async getAllPrograms(): Promise<Program[]> {
+    try {
+      const { data, error } = await (supabase as any)
+        .from("programs")
+        .select("*")
+        .order("created_at", { ascending: false });
+
+      if (error) {
+        return [];
+      }
+
+      if (Array.isArray(data)) {
+        return data.map((p) => ({
+          id: p.id,
+          name: p.name,
+          cohort: p.cohort,
+          mentor: p.mentor,
+          seats: Number(p.seats || 10),
+          status: p.status || "open",
+          startsOn: p.starts_on || "",
+          enrolled: Array.isArray(p.enrolled) ? p.enrolled : [],
+          university: p.university,
+        }));
+      }
+      return [];
+    } catch {
+      return [];
+    }
+  },
+
+  /**
+   * Upsert a program in Supabase cloud database
+   */
+  async upsertProgram(
+    program: Program,
+    universityOrg?: string
+  ): Promise<{ success: boolean; id: string; error?: string }> {
+    try {
+      const safeId = isValidUUID(program.id) ? program.id : generateUUID();
+      const payload: Record<string, any> = {
+        id: safeId,
+        name: program.name.trim(),
+        cohort: program.cohort.trim(),
+        mentor: program.mentor.trim(),
+        seats: program.seats || 10,
+        status: program.status || "open",
+        starts_on: program.startsOn || "",
+        enrolled: program.enrolled || [],
+        university: universityOrg || program.university || "University",
+        updated_at: new Date().toISOString(),
+      };
+
+      const { error } = await (supabase as any)
+        .from("programs")
+        .upsert(payload, { onConflict: "id" });
+
+      if (error) {
+        return { success: false, id: safeId, error: error.message };
+      }
+      return { success: true, id: safeId };
+    } catch (err: any) {
+      return { success: false, id: program.id, error: err?.message };
+    }
+  },
+
+  /**
+   * Set student verification in profiles, associated startups, and cache
+   */
+  async setStudentVerification(
+    studentId: string,
+    studentEmail?: string,
+    verified: boolean = true
+  ): Promise<boolean> {
+    try {
+      // 1. Update profiles table
+      try {
+        await (supabase as any)
+          .from("profiles")
+          .update({ verified, updated_at: new Date().toISOString() })
+          .eq("id", studentId);
+      } catch {}
+
+      // 2. Update associated startups
+      if (studentEmail || studentId) {
+        try {
+          const query = (supabase as any).from("startups").update({
+            verified,
+            status: verified ? "approved" : "pending",
+            updated_at: new Date().toISOString(),
+          });
+
+          if (studentEmail && studentId) {
+            await query.or(`founder_email.eq.${studentEmail},founder_id.eq.${studentId}`);
+          } else if (studentEmail) {
+            await query.eq("founder_email", studentEmail);
+          } else {
+            await query.eq("founder_id", studentId);
+          }
+        } catch {}
+      }
+
+      // 3. Keep local verification cache
+      if (typeof window !== "undefined") {
+        try {
+          const key = `campusventure.verified_students`;
+          const raw = window.localStorage.getItem(key);
+          const map = raw ? JSON.parse(raw) : {};
+          if (studentEmail) map[studentEmail.toLowerCase()] = verified;
+          if (studentId) map[studentId] = verified;
+          window.localStorage.setItem(key, JSON.stringify(map));
+        } catch {}
+      }
+
+      return true;
+    } catch {
+      return false;
+    }
   },
 };

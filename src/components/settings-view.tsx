@@ -34,10 +34,11 @@ const DEFAULTS: Record<Role, { name: string; email: string; org: string; bio: st
   },
 };
 
-const KEY = (role: Role) => `campusventure.profile.${role}`;
+const getStorageKey = (userId?: string, role?: Role) =>
+  userId ? `campusventure.profile.${userId}` : `campusventure.profile.${role || "default"}`;
 
 export function SettingsView({ role }: { role: Role }) {
-  const { resetDemo, startups, updateStartup, updateStudent } = useVenture();
+  const { startups, updateStartup, updateStudent } = useVenture();
   const { user, signOut, updateProfile } = useAuth();
   const router = useRouter();
   const [saving, setSaving] = useState(false);
@@ -46,18 +47,17 @@ export function SettingsView({ role }: { role: Role }) {
     let saved: Partial<{ name: string; email: string; org: string; bio: string }> = {};
     if (typeof window !== "undefined") {
       try {
-        const raw = window.localStorage.getItem(KEY(role));
+        const raw = window.localStorage.getItem(getStorageKey(user?.id, role));
         if (raw) saved = JSON.parse(raw);
       } catch {
         /* ignore */
       }
     }
     return {
-      ...DEFAULTS[role],
-      ...saved,
-      name: user?.name || saved.name || DEFAULTS[role].name,
-      email: user?.email || saved.email || DEFAULTS[role].email,
-      org: user?.org || saved.org || DEFAULTS[role].org,
+      name: user?.name || saved.name || (user?.email ? user.email.split("@")[0] : ""),
+      email: user?.email || saved.email || "",
+      org: user?.org || saved.org || "",
+      bio: saved.bio || "",
     };
   });
 
@@ -65,7 +65,7 @@ export function SettingsView({ role }: { role: Role }) {
     if (user) {
       setProfile((prev) => ({
         ...prev,
-        name: user.name || prev.name,
+        name: user.name || prev.name || (user.email ? user.email.split("@")[0] : ""),
         email: user.email || prev.email,
         org: user.org || prev.org,
       }));
@@ -77,7 +77,7 @@ export function SettingsView({ role }: { role: Role }) {
   async function save() {
     setSaving(true);
     try {
-      window.localStorage.setItem(KEY(role), JSON.stringify(profile));
+      window.localStorage.setItem(getStorageKey(user?.id, role), JSON.stringify(profile));
     } catch {
       /* ignore */
     }
@@ -250,20 +250,24 @@ export function SettingsView({ role }: { role: Role }) {
 
         <Card>
           <CardHeader>
-            <CardTitle className="text-base">Workspace data</CardTitle>
+            <CardTitle className="text-base">Browser Cache &amp; Sync</CardTitle>
             <CardDescription>
-              Reset every startup, message, meeting and data-room record back to the seeded set.
+              Clear local client cache and reload verified data directly from Supabase.
             </CardDescription>
           </CardHeader>
           <CardContent>
             <Button
               variant="outline"
               onClick={() => {
-                resetDemo();
-                toast.success("Workspace reset");
+                if (typeof window !== "undefined") {
+                  try {
+                    window.localStorage.removeItem("campusventure.saas.live.v3");
+                  } catch {}
+                  window.location.reload();
+                }
               }}
             >
-              <RotateCcw className="size-4" aria-hidden="true" /> Reset workspace
+              <RotateCcw className="size-4" aria-hidden="true" /> Clear Cache &amp; Refresh
             </Button>
           </CardContent>
         </Card>

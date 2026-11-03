@@ -904,24 +904,42 @@ export const requestService = {
     try {
       const current = local.find((r) => r.id === requestId);
       let existingMeta: Record<string, any> = {};
+
+      try {
+        const { data: dbRow } = await (supabase as any)
+          .from("data_room_requests")
+          .select("next_steps, startup_id, startup_name, founder_email, university_name")
+          .eq("id", requestId)
+          .maybeSingle();
+        if (dbRow?.next_steps && typeof dbRow.next_steps === "string" && dbRow.next_steps.startsWith("{")) {
+          try {
+            existingMeta = JSON.parse(dbRow.next_steps);
+          } catch {
+            /* ignore */
+          }
+        }
+      } catch {
+        /* ignore */
+      }
+
       if (current?.nextSteps && current.nextSteps.startsWith("{")) {
         try {
-          existingMeta = JSON.parse(current.nextSteps);
+          existingMeta = { ...existingMeta, ...JSON.parse(current.nextSteps) };
         } catch {
           /* ignore */
         }
       }
 
       const effectiveRulesVersion = "v1.0-cv-reg";
-      const stName = current?.startupName || "Campus Venture";
-      const founderEmail = current?.founderEmail || "Student Founder";
-      const investorEmail = signerEmail || current?.investorEmail || "";
+      const stName = current?.startupName || existingMeta.startupName || "Campus Venture";
+      const founderEmail = current?.founderEmail || existingMeta.founderEmail || "Student Founder";
+      const investorEmail = signerEmail || current?.investorEmail || existingMeta.investorEmail || "";
       const legalDeclaration = `I confirm that I am investor ${signedName} (${investorEmail}), in my full presence and legal authority. I am okay with all platform rules and regulations (${effectiveRulesVersion}) and the consequences of rule breaks. I agree and submit this form as permanent proof of verification and security for ${stName} and founder (${founderEmail}).`;
 
       const rulesProof = existingMeta.rulesProof || {
         investorName: signedName,
         investorEmail,
-        investorOrg: current?.investorOrg || "Accredited Investment Partner",
+        investorOrg: current?.investorOrg || existingMeta.investorOrg || "Accredited Investment Partner",
         founderName: founderEmail,
         founderEmail,
         startupName: stName,
@@ -1083,6 +1101,7 @@ export const requestService = {
     rulesVersion?: string | undefined;
     accessScope?: string[] | undefined;
     legalStatement?: string | undefined;
+    legalHash?: string | undefined;
   }): Promise<{ success: boolean; error?: string }> {
     const now = new Date().toISOString();
     const effectiveInvestorId = params.investorUserId || params.investorId || "";
@@ -1105,6 +1124,7 @@ export const requestService = {
       declaration,
       timestamp: now,
       accessScope: params.accessScope || [],
+      legalHash: params.legalHash || undefined,
     };
 
     const local = getLocalDrRequests();
@@ -1139,13 +1159,36 @@ export const requestService = {
     try {
       const current = local.find((r) => r.id === params.requestId);
       let existingMeta: Record<string, any> = {};
+
+      try {
+        const { data: dbRow } = await (supabase as any)
+          .from("data_room_requests")
+          .select("next_steps, startup_id, startup_name, founder_email, university_name")
+          .eq("id", params.requestId)
+          .maybeSingle();
+        if (dbRow?.next_steps && typeof dbRow.next_steps === "string" && dbRow.next_steps.startsWith("{")) {
+          try {
+            existingMeta = JSON.parse(dbRow.next_steps);
+          } catch {
+            /* ignore */
+          }
+        }
+      } catch {
+        /* ignore */
+      }
+
       if (current?.nextSteps && current.nextSteps.startsWith("{")) {
         try {
-          existingMeta = JSON.parse(current.nextSteps);
+          existingMeta = { ...existingMeta, ...JSON.parse(current.nextSteps) };
         } catch {
           /* ignore */
         }
       }
+
+      const effectivePermittedDocs =
+        params.accessScope && params.accessScope.length > 0
+          ? params.accessScope
+          : existingMeta.permittedDocIds || current?.permittedDocIds || [];
 
       const metaPayload = {
         ...existingMeta,
@@ -1158,12 +1201,13 @@ export const requestService = {
         startupName: effectiveStartupName,
         universityName: params.universityName || existingMeta.universityName || current?.universityName,
         universityId: params.universityId || existingMeta.universityId || current?.universityId,
+        permittedDocIds: effectivePermittedDocs,
+        accessScope: effectivePermittedDocs,
         rulesAccepted: true,
         rulesVersion,
         rulesAcceptedAt: now,
         ndaSignedName: params.investorName,
         ndaSignedAt: now,
-        accessScope: params.accessScope || [],
         rulesProof,
       };
 
@@ -1693,6 +1737,7 @@ export const requestService = {
 
     const permitted =
       meta.permittedDocIds ||
+      meta.accessScope ||
       (Array.isArray(d.permitted_doc_ids)
         ? d.permitted_doc_ids
         : typeof d.permitted_doc_ids === "string" && d.permitted_doc_ids.trim().length > 0
@@ -1742,6 +1787,7 @@ export const requestService = {
             declaration: `I, ${d.investor_name || "the Investor"} (${d.investor_email || ""}), in my full presence and legal authority, confirm that I am okay with all platform rules and regulations (${rulesVersion}) and the consequences of rule breaks. I agree and submit this form as permanent proof of verification and security for ${d.startup_name || "the venture"} and founder.`,
             timestamp: rulesAcceptedAt || d.created_at,
             accessScope: permitted || [],
+            legalHash: meta.rulesProof?.legalHash || meta.legalHash || undefined,
           }
         : undefined);
 
@@ -2531,7 +2577,7 @@ export const requestService = {
         .order("created_at", { ascending: false });
 
       if (startupId && requestedDocIds.length > 0) {
-        query = query.or(`startup_id.eq.${startupId},id.in.(${requestedDocIds.join(",")})`);
+        query = query.eq("startup_id", startupId).in("id", requestedDocIds);
       } else if (startupId) {
         query = query.eq("startup_id", startupId);
       } else if (requestedDocIds.length > 0) {
@@ -2595,14 +2641,37 @@ export const requestService = {
       isDownload = false,
     } = params;
 
-    const isFounder = requesterRole === "student";
+    let isFounder = false;
+    if (requesterRole === "student" && startupId) {
+      try {
+        const { data: stRow } = await (supabase as any)
+          .from("startups")
+          .select("founder_id, founder_email")
+          .eq("id", startupId)
+          .maybeSingle();
+
+        if (stRow) {
+          if (stRow.founder_id && requesterUserId && String(stRow.founder_id) === String(requesterUserId)) {
+            isFounder = true;
+          } else if (
+            stRow.founder_email &&
+            requesterEmail &&
+            stRow.founder_email.toLowerCase().trim() === requesterEmail.toLowerCase().trim()
+          ) {
+            isFounder = true;
+          }
+        }
+      } catch {
+        /* ignore */
+      }
+    }
 
     if (!isFounder) {
       // Re-verify authorization on backend before generating URL
       const reqs = await this.getDataRoomRequestsForInvestor(requesterUserId || "", requesterEmail);
       const activeGrant = reqs.find(
         (r) =>
-          (r.startupId === startupId || (r.permittedDocIds && r.permittedDocIds.includes(docId))) &&
+          r.startupId === startupId &&
           r.status === "granted" &&
           (r.ndaStatus === "signed" || r.ndaSigned === true) &&
           (!r.expiresAt || new Date(r.expiresAt).getTime() > Date.now())

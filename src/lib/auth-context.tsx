@@ -197,10 +197,25 @@ function extractUserData(
       : supabaseUser.email?.split("@")[0] || "User";
 
   const rawOrg = meta["org"];
-  const org =
-    typeof rawOrg === "string" && rawOrg.trim().length > 0
-      ? rawOrg
-      : ROLE_PROFILES[role]?.org || "CampusVenture";
+  let org = typeof rawOrg === "string" && rawOrg.trim().length > 0 ? rawOrg.trim() : "";
+  if (!org) {
+    if (role === "student" || role === "university") {
+      const domain = userEmail.split("@")[1];
+      if (domain && domain.includes("sguk.ac.in")) {
+        org = "Sanjay Ghodawat University (SGU), Kolhapur";
+      } else if (domain && domain.includes("coep.ac.in")) {
+        org = "COEP Technological University, Pune";
+      } else if (domain) {
+        const parts = domain.split(".");
+        const prefix = parts[0] ? parts[0].toUpperCase() : "Campus";
+        org = `${prefix} University`;
+      } else {
+        org = "University";
+      }
+    } else {
+      org = "Accredited Investor";
+    }
+  }
 
   return {
     id: supabaseUser.id,
