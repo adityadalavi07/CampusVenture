@@ -298,8 +298,8 @@ async function validateAndEnforceInstitutionalRole(
 
   // If user has not registered yet (neither in database nor in registered users)
   if (!dbProfile && !localAccount) {
-    // If the user was in sign-in mode or no explicit registration role is present, strictly reject
-    if (authFlow === "signin" || (!pendingRole && !meta["role"])) {
+    // If the user is not in explicit registration flow, strictly reject non-registered users
+    if (authFlow !== "register") {
       clearOAuthPendingRole();
       if (typeof window !== "undefined") {
         window.localStorage.removeItem("cv_oauth_flow");
@@ -679,8 +679,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         authErrorMessage = err?.message || "";
       }
 
-      // If user is completely unregistered in central DB, Supabase Auth, and local registry:
-      if (!authenticated && !dbProfile && !localAccount && !authenticatedUser) {
+      // If user is completely unregistered in central DB and local registry:
+      if (!dbProfile && !localAccount) {
         return {
           success: false,
           error: "No account found with this email. Please register an account first.",
@@ -901,8 +901,6 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         window.localStorage.removeItem("campusventure.saas.live.v3");
         window.localStorage.removeItem("campusventure.state.v1");
         window.localStorage.removeItem("campusventure.state.v2");
-        window.localStorage.removeItem("campusventure.dataroom.requests.v3");
-        window.localStorage.removeItem("campusventure.connections.requests.v2");
         window.localStorage.removeItem("campusventure.notifications.live.v2");
         window.localStorage.removeItem("campusventure.profile.investor");
         window.localStorage.removeItem("cv_oauth_pending_role");
@@ -1063,7 +1061,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         };
 
         // Sync directly to Supabase profiles
-        let targetId = existing.id;
+        let targetId = existing?.id || dbProfile?.id;
         try {
           const { data: existingProf } = await (supabase as any)
             .from("profiles")
@@ -1118,6 +1116,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         if (typeof window !== "undefined") {
           window.localStorage.setItem("cv_oauth_pending_role", role);
           window.sessionStorage.setItem("cv_oauth_pending_role", role);
+          window.localStorage.setItem("cv_oauth_flow", authMode);
+          window.sessionStorage.setItem("cv_oauth_flow", authMode);
         }
 
         const oauthOptions: {
