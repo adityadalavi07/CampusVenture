@@ -256,8 +256,8 @@ VERIFICATION: Tamper-evident diligence record persistent in Supabase university 
                 <p>When investors request confidential data room access and student founders grant permissions, signed compliance records and shared confidential documents will appear here.</p>
               </div>
             ) : (
-              <div className="rounded-md border overflow-x-auto">
-                <Table>
+              <div className="rounded-md border overflow-x-auto w-full">
+                <Table className="min-w-[700px]">
                   <TableHeader>
                     <TableRow>
                       <TableHead>Startup &amp; ID</TableHead>

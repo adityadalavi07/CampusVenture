@@ -48,6 +48,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Checkbox } from "@/components/ui/checkbox";
 import { timeAgo, useVenture } from "@/lib/store";
 import { useAuth } from "@/lib/auth-context";
+import { downloadDataRoomDocument } from "@/lib/download-helper";
 import {
   requestService,
   type DataRoomRequestRecord,
@@ -741,36 +742,36 @@ function StudentDataRoom() {
         </div>
 
         <Tabs value={activeTab} onValueChange={setActiveTab} className="space-y-4">
-          <TabsList className="grid grid-cols-5 w-full">
-            <TabsTrigger value="documents" className="gap-1.5 text-xs">
-              <FileLock2 className="size-3.5" />
-              My Documents ({realDocs.length})
+          <TabsList className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 h-auto p-1 gap-1 w-full">
+            <TabsTrigger value="documents" className="gap-1 text-xs py-2 px-1 text-center truncate">
+              <FileLock2 className="size-3.5 inline-block mr-1 shrink-0" />
+              <span className="truncate">Docs ({realDocs.length})</span>
             </TabsTrigger>
-            <TabsTrigger value="access-requests" className="gap-1.5 text-xs">
-              <ShieldCheck className="size-3.5" />
-              Access Requests
+            <TabsTrigger value="access-requests" className="gap-1 text-xs py-2 px-1 text-center truncate">
+              <ShieldCheck className="size-3.5 inline-block mr-1 shrink-0" />
+              <span className="truncate">Access</span>
               {pendingDrCount > 0 && (
-                <Badge variant="default" className="ml-1 h-5 px-1.5 text-[10px] bg-emerald-600 text-white">
+                <Badge variant="default" className="ml-1 h-4 px-1 text-[9px] bg-emerald-600 text-white">
                   {pendingDrCount}
                 </Badge>
               )}
             </TabsTrigger>
-            <TabsTrigger value="connections" className="gap-1.5 text-xs">
-              <UserCheck className="size-3.5" />
-              Connections
+            <TabsTrigger value="connections" className="gap-1 text-xs py-2 px-1 text-center truncate">
+              <UserCheck className="size-3.5 inline-block mr-1 shrink-0" />
+              <span className="truncate">Connect</span>
               {pendingConnCount > 0 && (
-                <Badge variant="default" className="ml-1 h-5 px-1.5 text-[10px] bg-primary text-primary-foreground">
+                <Badge variant="default" className="ml-1 h-4 px-1 text-[9px] bg-primary text-primary-foreground">
                   {pendingConnCount}
                 </Badge>
               )}
             </TabsTrigger>
-            <TabsTrigger value="inquiries" className="gap-1.5 text-xs">
-              <MessageSquare className="size-3.5" />
-              Inquiries ({recentMessages.length})
+            <TabsTrigger value="inquiries" className="gap-1 text-xs py-2 px-1 text-center truncate">
+              <MessageSquare className="size-3.5 inline-block mr-1 shrink-0" />
+              <span className="truncate">Inquiries ({recentMessages.length})</span>
             </TabsTrigger>
-            <TabsTrigger value="audit" className="gap-1.5 text-xs">
-              <History className="size-3.5" />
-              Audit Log ({auditLogs.length})
+            <TabsTrigger value="audit" className="gap-1 text-xs py-2 px-1 text-center truncate">
+              <History className="size-3.5 inline-block mr-1 shrink-0" />
+              <span className="truncate">Audit ({auditLogs.length})</span>
             </TabsTrigger>
           </TabsList>
 
@@ -854,15 +855,15 @@ function StudentDataRoom() {
                       </div>
                     </div>
 
-                    <div className="flex items-center gap-1.5 shrink-0">
+                    <div className="flex flex-wrap items-center gap-1.5 shrink-0 w-full sm:w-auto justify-start sm:justify-end mt-2 sm:mt-0">
                       <Badge variant="outline" className="text-[10px] bg-emerald-500/10 text-emerald-700 dark:text-emerald-400 border-emerald-500/20">
                         <ShieldCheck className="size-3 mr-1" />
-                        Founder Asset · Full Access
+                        Founder Asset
                       </Badge>
                       <Button
                         size="sm"
                         variant="outline"
-                        className="h-7 text-xs gap-1"
+                        className="h-7 text-xs gap-1 flex-1 sm:flex-initial"
                         onClick={() => handlePreviewDoc(d)}
                       >
                         <Eye className="size-3" />
@@ -871,7 +872,7 @@ function StudentDataRoom() {
                       <Button
                         size="sm"
                         variant="outline"
-                        className="h-7 text-xs gap-1"
+                        className="h-7 text-xs gap-1 flex-1 sm:flex-initial"
                         onClick={() => {
                           setReplacingDocId(d.id);
                           replaceFileRef.current?.click();
@@ -883,7 +884,7 @@ function StudentDataRoom() {
                       <Button
                         size="icon"
                         variant="ghost"
-                        className="size-7 text-destructive hover:bg-destructive/10"
+                        className="size-7 text-destructive hover:bg-destructive/10 shrink-0"
                         aria-label={`Remove ${d.name}`}
                         onClick={async () => {
                           await requestService.deleteDataRoomDoc(d.id, d.storagePath);
@@ -1770,27 +1771,21 @@ function StudentDataRoom() {
                 size="sm"
                 className="gap-1.5"
                 onClick={async () => {
-                  toast.loading("Preparing download...", { id: "dl" });
-                  const res = await requestService.getDocumentSignedUrl({
-                    docId: previewDoc.id,
+                  toast.loading(`Preparing secure download for ${previewDoc.name}...`, { id: "dl" });
+                  const res = await downloadDataRoomDocument({
+                    doc: previewDoc,
                     startupId: currentStartupId,
-                    storagePath: previewDoc.storagePath,
+                    startupName: currentStartup?.name,
+                    universityName: currentStartup?.university,
                     requesterUserId: user?.id,
                     requesterEmail: user?.email,
                     requesterRole: "student",
-                    isDownload: true,
                   });
                   toast.dismiss("dl");
-                  if (res.signedUrl) {
-                    const a = document.createElement("a");
-                    a.href = res.signedUrl;
-                    a.download = previewDoc.name;
-                    document.body.appendChild(a);
-                    a.click();
-                    document.body.removeChild(a);
+                  if (res.success) {
                     toast.success(`Downloaded ${previewDoc.name}`);
                   } else {
-                    toast.info(`Downloaded metadata copy of ${previewDoc.name}`);
+                    toast.error(res.error || `Failed to download ${previewDoc.name}`);
                   }
                 }}
               >

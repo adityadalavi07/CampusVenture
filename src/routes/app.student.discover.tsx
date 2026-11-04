@@ -213,7 +213,7 @@ function DiscoverInvestors() {
                         ))}
                       </ul>
                     </div>
-                    <div className="flex items-center gap-2 pt-2 border-t">
+                    <div className="flex flex-wrap items-center gap-2 pt-2 border-t">
                       {isConnected ? (
                         <Button size="sm" variant="secondary" disabled className="gap-1.5 text-xs flex-1">
                           <Check className="size-3.5 text-emerald-600" /> Connection Requested

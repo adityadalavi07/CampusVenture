@@ -825,15 +825,15 @@ function StudentDashboard() {
               {STATUS_LABEL[STARTUP.status]}
             </p>
           </div>
-          <div className="flex flex-wrap items-center gap-2">
-            <Button variant="outline" asChild size="sm" className="h-9 text-xs">
+          <div className="flex flex-wrap items-center gap-2 w-full sm:w-auto">
+            <Button variant="outline" asChild size="sm" className="h-9 text-xs flex-1 sm:flex-initial">
               <Link to="/app/student/startup">Edit my startup</Link>
             </Button>
             <Button
               onClick={runAnalysis}
               disabled={analyzing}
               size="sm"
-              className="h-9 gap-1.5 text-xs bg-gradient-to-r from-primary to-primary/85 shadow-sm transition-all hover:shadow"
+              className="h-9 gap-1.5 text-xs bg-gradient-to-r from-primary to-primary/85 shadow-sm transition-all hover:shadow flex-1 sm:flex-initial"
             >
               {analyzing ? (
                 <Loader2 className="size-3.5 animate-spin" />

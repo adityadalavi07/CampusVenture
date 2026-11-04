@@ -38,6 +38,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Checkbox } from "@/components/ui/checkbox";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { timeAgo, useVenture } from "@/lib/store";
+import { downloadDataRoomDocument } from "@/lib/download-helper";
 import { useAuth } from "@/lib/auth-context";
 import {
   requestService,
@@ -266,36 +267,28 @@ function InvestorDataRooms() {
     }
   };
 
-  // Handle document download with short-lived signed URL and audit logging
+  // Handle document download with short-lived signed URL, resilient blob/fallback, and audit logging
   const handleDownload = async (
     doc: DataRoomDocRecord,
     startupId: string,
     startupName?: string,
-    founderEmail?: string
+    founderEmail?: string,
+    universityName?: string
   ) => {
     toast.loading(`Preparing secure download for ${doc.name}...`, { id: "download-link" });
-    const res = await requestService.getDocumentSignedUrl({
-      docId: doc.id,
+    const res = await downloadDataRoomDocument({
+      doc,
       startupId,
-      storagePath: doc.storagePath,
+      startupName,
+      universityName,
       requesterUserId: user?.id || myInvestorId,
       requesterEmail: user?.email,
       requesterRole: "investor",
-      isDownload: true,
+      founderEmail,
     });
 
-    if (res.success && res.signedUrl) {
-      toast.dismiss("download-link");
-      // Trigger browser download via invisible link
-      const link = document.createElement("a");
-      link.href = res.signedUrl;
-      link.download = doc.name;
-      link.target = "_blank";
-      link.rel = "noopener noreferrer";
-      document.body.appendChild(link);
-      link.click();
-      document.body.removeChild(link);
-
+    toast.dismiss("download-link");
+    if (res.success) {
       registerDownload(startupId, myInvestorId);
       notify(
         "student",
@@ -303,9 +296,9 @@ function InvestorDataRooms() {
         `${investorName} downloaded "${doc.name}" from the ${startupName || "your venture"} Data Room.`,
         founderEmail ? { recipientEmail: founderEmail } : undefined
       );
-      toast.success(`${doc.name} download initiated.`);
+      toast.success(`${doc.name} downloaded successfully.`);
     } else {
-      toast.error(res.error || "Unable to generate download URL.", { id: "download-link" });
+      toast.error(res.error || "Unable to download document.", { id: "download-link" });
     }
   };
 
@@ -325,7 +318,7 @@ function InvestorDataRooms() {
       setRulesConfirmed(false);
       return;
     }
-    handleDownload(doc, req.startupId, req.startupName, req.founderEmail);
+    handleDownload(doc, req.startupId, req.startupName, req.founderEmail, req.universityName);
   };
 
   // Record rules acceptance permanently in Supabase and audit ledger
@@ -434,7 +427,7 @@ function InvestorDataRooms() {
       if (action === "preview") {
         handlePreview(doc, req.startupId);
       } else {
-        handleDownload(doc, req.startupId, req.startupName, req.founderEmail);
+        handleDownload(doc, req.startupId, req.startupName, req.founderEmail, req.universityName);
       }
     } catch (err: any) {
       toast.error(err?.message || "Failed to record compliance acceptance.");
@@ -603,22 +596,22 @@ function InvestorDataRooms() {
         </div>
 
         <Tabs value={activeTab} onValueChange={(v: any) => setActiveTab(v)} className="space-y-4">
-          <TabsList className="grid grid-cols-4 w-full">
-            <TabsTrigger value="accessible" className="gap-1.5 text-xs">
-              <FolderLock className="size-3.5 text-emerald-600" />
-              Accessible Rooms ({accessibleRequests.length})
+          <TabsList className="grid grid-cols-2 sm:grid-cols-4 h-auto p-1 gap-1 w-full">
+            <TabsTrigger value="accessible" className="gap-1 text-xs py-2 px-1 text-center truncate">
+              <FolderLock className="size-3.5 text-emerald-600 shrink-0 inline-block mr-1" />
+              <span className="truncate">Accessible ({accessibleRequests.length})</span>
             </TabsTrigger>
-            <TabsTrigger value="requests" className="gap-1.5 text-xs">
-              <Clock className="size-3.5 text-amber-600" />
-              My Requests ({pendingOrAwaitingNdaRequests.length})
+            <TabsTrigger value="requests" className="gap-1 text-xs py-2 px-1 text-center truncate">
+              <Clock className="size-3.5 text-amber-600 shrink-0 inline-block mr-1" />
+              <span className="truncate">Requests ({pendingOrAwaitingNdaRequests.length})</span>
             </TabsTrigger>
-            <TabsTrigger value="rejected" className="gap-1.5 text-xs">
-              <XCircle className="size-3.5 text-destructive" />
-              Rejected Requests ({rejectedRequests.length})
+            <TabsTrigger value="rejected" className="gap-1 text-xs py-2 px-1 text-center truncate">
+              <XCircle className="size-3.5 text-destructive shrink-0 inline-block mr-1" />
+              <span className="truncate">Rejected ({rejectedRequests.length})</span>
             </TabsTrigger>
-            <TabsTrigger value="expired" className="gap-1.5 text-xs">
-              <ShieldAlert className="size-3.5 text-muted-foreground" />
-              Expired / Revoked ({expiredOrRevokedRequests.length})
+            <TabsTrigger value="expired" className="gap-1 text-xs py-2 px-1 text-center truncate">
+              <ShieldAlert className="size-3.5 text-muted-foreground shrink-0 inline-block mr-1" />
+              <span className="truncate">Expired ({expiredOrRevokedRequests.length})</span>
             </TabsTrigger>
           </TabsList>
 
@@ -842,11 +835,11 @@ function InvestorDataRooms() {
                                   </div>
                                 </div>
 
-                                <div className="flex items-center gap-2 shrink-0">
+                                <div className="flex items-center gap-2 shrink-0 w-full sm:w-auto justify-end mt-1 sm:mt-0">
                                   <Button
                                     size="sm"
                                     variant="outline"
-                                    className="h-8 gap-1.5 text-xs"
+                                    className="h-8 gap-1.5 text-xs flex-1 sm:flex-initial"
                                     onClick={() => onInitiatePreview(doc, req)}
                                   >
                                     <Eye className="size-3.5" />
@@ -855,7 +848,7 @@ function InvestorDataRooms() {
                                   <Button
                                     size="sm"
                                     variant="default"
-                                    className="h-8 gap-1.5 text-xs"
+                                    className="h-8 gap-1.5 text-xs flex-1 sm:flex-initial"
                                     onClick={() => onInitiateDownload(doc, req)}
                                   >
                                     <Download className="size-3.5" />

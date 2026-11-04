@@ -391,7 +391,7 @@ function MyStartup() {
         </Card>
 
         <Tabs defaultValue="overview">
-          <TabsList className="flex-wrap">
+          <TabsList className="flex flex-wrap h-auto p-1 gap-1 w-full">
             <TabsTrigger value="overview">Overview & Identity</TabsTrigger>
             <TabsTrigger value="problem">Problem</TabsTrigger>
             <TabsTrigger value="solution">Solution</TabsTrigger>

@@ -59,7 +59,7 @@ function ReviewQueue() {
         </div>
 
         <Tabs defaultValue="pending">
-          <TabsList className="flex-wrap">
+          <TabsList className="flex flex-wrap h-auto p-1 gap-1 w-full">
             {FILTERS.map((f) => (
               <TabsTrigger key={f.value} value={f.value}>
                 {f.label} ({uniStartups.filter((s) => s.status === f.value).length})

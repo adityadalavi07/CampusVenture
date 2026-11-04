@@ -405,7 +405,7 @@ function StartupDetail() {
           </div>
         </div>
 
-        <div className="grid gap-4 sm:grid-cols-4">
+        <div className="grid gap-3 grid-cols-2 sm:grid-cols-4">
           <Metric label="Raising" value={formatMoney(startup.fundingRequired)} />
           <Metric label="Readiness" value={`${startup.readiness}/100`} />
           <Metric label="Team" value={String(startup.teamSize)} />

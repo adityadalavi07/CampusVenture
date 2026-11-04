@@ -328,8 +328,8 @@ VERIFICATION: Tamper-evident diligence record persistent in Supabase university 
             <CardTitle className="text-base">Investors engaging with your campus</CardTitle>
             <CardDescription>Ranked by total verified activity for {myUniversity || "your university"}.</CardDescription>
           </CardHeader>
-          <CardContent>
-            <Table>
+          <CardContent className="overflow-x-auto">
+            <Table className="min-w-[650px]">
               <TableHeader>
                 <TableRow>
                   <TableHead>Investor</TableHead>
@@ -423,8 +423,8 @@ VERIFICATION: Tamper-evident diligence record persistent in Supabase university 
                 <p>When accredited investors request Data Room access for startups from your institution, diligence status, confidential document scopes, and signed compliance proofs will be tracked here.</p>
               </div>
             ) : (
-              <div className="rounded-md border overflow-x-auto">
-                <Table>
+              <div className="rounded-md border overflow-x-auto w-full">
+                <Table className="min-w-[700px]">
                   <TableHeader>
                     <TableRow>
                       <TableHead>Startup &amp; ID</TableHead>

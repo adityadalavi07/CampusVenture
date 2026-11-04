@@ -331,7 +331,7 @@ function InvestorDashboard() {
         </div>
 
         {/* Live, Isolated Dashboard Metric Counters */}
-        <div className="grid gap-4 sm:grid-cols-4">
+        <div className="grid gap-3 grid-cols-2 sm:grid-cols-4">
           <MiniStat label="Matches" value={String(results.length)} />
           <MiniStat label="Saved Startups" value={String(saved.length)} />
           <MiniStat
@@ -374,18 +374,19 @@ function InvestorDashboard() {
                       <p className="text-xs text-muted-foreground italic">"{conn.message}"</p>
                     )}
                   </div>
-                  <div className="flex items-center gap-2">
+                  <div className="flex flex-wrap items-center gap-2 w-full sm:w-auto">
                     <Button
                       size="sm"
                       onClick={() => handleRespondToIncoming(conn.id, "accepted")}
-                      className="gap-1.5"
+                      className="gap-1.5 flex-1 sm:flex-initial"
                     >
-                      <Check className="size-3.5" /> Accept Connection
+                      <Check className="size-3.5" /> Accept
                     </Button>
                     <Button
                       size="sm"
                       variant="outline"
                       onClick={() => handleRespondToIncoming(conn.id, "rejected")}
+                      className="flex-1 sm:flex-initial"
                     >
                       Decline
                     </Button>
@@ -393,7 +394,7 @@ function InvestorDashboard() {
                       size="sm"
                       variant="ghost"
                       asChild
-                      className="gap-1 text-xs"
+                      className="gap-1 text-xs w-full sm:w-auto"
                     >
                       <Link to={`/app/investor/messages?partnerId=${conn.senderId}`}>
                         <MessagesSquare className="size-3.5" /> Open Messages

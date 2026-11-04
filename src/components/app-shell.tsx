@@ -99,28 +99,28 @@ export function AppShell({ role, children }: { role: Role; children: ReactNode }
         </nav>
       </aside>
 
-      <div className="lg:pl-64">
+      <div className="lg:pl-64 min-w-0 max-w-full overflow-x-hidden">
         <header className="sticky top-0 z-20 flex items-center justify-between gap-3 border-b bg-background/80 px-4 py-3 backdrop-blur-sm transition-colors duration-300 lg:px-8">
           <Link to={`/app/${role}`} className="flex items-center gap-2 lg:hidden" aria-label="CampusVenture Dashboard">
             <span className="grid size-8 place-items-center rounded-lg bg-gradient-brand text-xs font-bold text-primary-foreground">
               CV
             </span>
-            <span className="text-sm font-semibold">CampusVenture</span>
+            <span className="text-sm font-semibold truncate">CampusVenture</span>
           </Link>
           <div className="hidden lg:block" />
-          <div className="flex items-center gap-1.5">
+          <div className="flex items-center gap-1.5 shrink-0">
             <NotificationBell role={role} />
             <ThemeToggle />
             <AccountMenu role={role} />
           </div>
         </header>
 
-        <main className="px-4 py-6 lg:px-8 lg:py-8">
+        <main className="px-3.5 sm:px-4 py-4 sm:py-6 lg:px-8 lg:py-8 pb-24 lg:pb-8 w-full max-w-full min-w-0">
           <AuthGuard requiredRole={role}>{children}</AuthGuard>
         </main>
 
         <nav
-          className="sticky bottom-0 z-20 flex items-center justify-around border-t bg-background/95 py-2 backdrop-blur-sm transition-colors duration-300 lg:hidden"
+          className="sticky bottom-0 z-20 flex items-center justify-around border-t bg-background/95 py-2 backdrop-blur-sm transition-colors duration-300 lg:hidden px-1 safe-area-bottom"
           aria-label="Sections"
         >
           {[...items.slice(0, 4), items[items.length - 1]!].map((item) => (
@@ -128,12 +128,12 @@ export function AppShell({ role, children }: { role: Role; children: ReactNode }
               key={item.label}
               to={item.to}
               className={cn(
-                "flex flex-col items-center gap-1 rounded-md px-2 py-1 text-[11px] text-muted-foreground transition-colors duration-200 active:scale-95",
-                pathname === item.to && "text-primary",
+                "flex flex-col items-center justify-center gap-0.5 rounded-md px-1.5 py-1 text-[10px] sm:text-[11px] text-muted-foreground transition-colors duration-200 active:scale-95 min-w-0 truncate",
+                pathname === item.to && "text-primary font-medium",
               )}
             >
-              <item.icon className="size-5" aria-hidden="true" />
-              {item.label.split(" ")[0]}
+              <item.icon className="size-4.5 sm:size-5 shrink-0" aria-hidden="true" />
+              <span className="truncate max-w-[64px] text-center">{item.label.split(" ")[0]}</span>
             </Link>
           ))}
         </nav>

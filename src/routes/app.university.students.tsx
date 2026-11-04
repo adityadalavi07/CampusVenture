@@ -103,8 +103,8 @@ function StudentsPage() {
             <CardTitle className="text-base">Student roster</CardTitle>
             <CardDescription>Verification unlocks investor visibility.</CardDescription>
           </CardHeader>
-          <CardContent>
-            <Table>
+          <CardContent className="overflow-x-auto">
+            <Table className="min-w-[550px]">
               <TableHeader>
                 <TableRow>
                   <TableHead>Name</TableHead>
