@@ -1705,6 +1705,27 @@ export function AuthDialog() {
                     >
                       {busy ? "Verifying..." : "Verify Code & Proceed"}
                     </button>
+                    {verCode && (
+                      <button
+                        type="button"
+                        className="btn ghost"
+                        style={{
+                          fontSize: "12px",
+                          padding: "8px 12px",
+                          border: "1px dashed rgba(99, 102, 241, 0.4)",
+                          color: "var(--brand, #6366f1)",
+                          display: "flex",
+                          alignItems: "center",
+                          justifyContent: "center",
+                          gap: "6px",
+                          cursor: "pointer",
+                        }}
+                        onClick={handleAutoFillOtp}
+                      >
+                        <Icon name="check" size={14} />
+                        Auto-Verify with Security Code ({verCode})
+                      </button>
+                    )}
                   </div>
 
                   <div style={{ marginTop: 14 }}>
