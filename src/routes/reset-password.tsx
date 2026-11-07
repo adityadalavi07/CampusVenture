@@ -34,24 +34,102 @@ function ResetPasswordPage() {
   const [isSuccess, setIsSuccess] = useState(false);
   const [errorMsg, setErrorMsg] = useState("");
   const [hasSession, setHasSession] = useState<boolean>(true);
+  const [userEmail, setUserEmail] = useState<string>("");
 
-  // Check if recovery token or hash fragment is present
+  // Extract session from recovery link parameters (PKCE code, token_hash, or hash fragment)
   useEffect(() => {
-    if (typeof window !== "undefined") {
-      const hash = window.location.hash;
-      if (hash && hash.includes("error=")) {
-        const params = new URLSearchParams(hash.replace("#", "?"));
-        const desc = params.get("error_description");
-        setErrorMsg(desc || "This password reset link has expired or is invalid. Please request a new one.");
+    if (typeof window === "undefined") return;
+
+    async function initRecoverySession() {
+      try {
+        const url = new URL(window.location.href);
+        const searchParams = url.searchParams;
+        const hash = window.location.hash || "";
+
+        // Check for error in hash or search query
+        if (hash.includes("error=") || searchParams.has("error")) {
+          const params = new URLSearchParams(hash.replace("#", "?"));
+          const desc = params.get("error_description") || searchParams.get("error_description");
+          setErrorMsg(desc || "This password reset link has expired or is invalid. Please request a new link.");
+          setHasSession(false);
+          return;
+        }
+
+        // 1. Check for PKCE code in query string (?code=...)
+        const code = searchParams.get("code");
+        if (code) {
+          setIsLoading(true);
+          const { data, error } = await supabase.auth.exchangeCodeForSession(code);
+          setIsLoading(false);
+          if (!error && data.session) {
+            setHasSession(true);
+            setUserEmail(data.session.user.email || "");
+            setErrorMsg("");
+            return;
+          }
+        }
+
+        // 2. Check for token_hash & type=recovery in query string
+        const tokenHash = searchParams.get("token_hash");
+        const type = searchParams.get("type");
+        if (tokenHash && type === "recovery") {
+          setIsLoading(true);
+          const { data, error } = await supabase.auth.verifyOtp({
+            token_hash: tokenHash,
+            type: "recovery",
+          });
+          setIsLoading(false);
+          if (!error && data.session) {
+            setHasSession(true);
+            setUserEmail(data.session.user.email || "");
+            setErrorMsg("");
+            return;
+          }
+        }
+
+        // 3. Check for implicit hash fragment (#access_token=...&refresh_token=...)
+        if (hash.includes("access_token")) {
+          const hashParams = new URLSearchParams(hash.replace("#", ""));
+          const accessToken = hashParams.get("access_token");
+          const refreshToken = hashParams.get("refresh_token");
+          if (accessToken && refreshToken) {
+            setIsLoading(true);
+            const { data, error } = await supabase.auth.setSession({
+              access_token: accessToken,
+              refresh_token: refreshToken,
+            });
+            setIsLoading(false);
+            if (!error && data.session) {
+              setHasSession(true);
+              setUserEmail(data.session.user.email || "");
+              setErrorMsg("");
+              return;
+            }
+          }
+        }
+
+        // 4. Check existing session
+        const { data: { session } } = await supabase.auth.getSession();
+        if (session) {
+          setHasSession(true);
+          setUserEmail(session.user.email || "");
+        } else {
+          // Listen for incoming recovery auth state change
+          const { data: { subscription } } = supabase.auth.onAuthStateChange((event, s) => {
+            if ((event === "PASSWORD_RECOVERY" || event === "SIGNED_IN") && s) {
+              setHasSession(true);
+              setUserEmail(s.user.email || "");
+              setErrorMsg("");
+            }
+          });
+          setTimeout(() => subscription.unsubscribe(), 6000);
+        }
+      } catch (err: any) {
+        console.warn("Recovery session init notice:", err);
       }
     }
 
-    supabase.auth.getSession().then(({ data }) => {
-      const hasTokenInHash = typeof window !== "undefined" && window.location.hash.includes("access_token");
-      if (!data.session && !hasTokenInHash) {
-        setHasSession(false);
-      }
-    });
+    initRecoverySession();
   }, []);
 
   const handleResetPassword = async (e: React.FormEvent) => {
@@ -70,6 +148,26 @@ function ResetPasswordPage() {
     setIsLoading(true);
 
     try {
+      // Ensure active session before calling updateUser
+      let session = (await supabase.auth.getSession()).data.session;
+      if (!session && typeof window !== "undefined") {
+        const hash = window.location.hash || "";
+        if (hash.includes("access_token")) {
+          const hashParams = new URLSearchParams(hash.replace("#", ""));
+          const at = hashParams.get("access_token");
+          const rt = hashParams.get("refresh_token");
+          if (at && rt) {
+            const { data } = await supabase.auth.setSession({ access_token: at, refresh_token: rt });
+            session = data.session;
+          }
+        }
+        const code = new URLSearchParams(window.location.search).get("code");
+        if (code && !session) {
+          const { data } = await supabase.auth.exchangeCodeForSession(code);
+          session = data.session;
+        }
+      }
+
       const { data, error } = await supabase.auth.updateUser({
         password: newPassword,
       });
@@ -78,14 +176,25 @@ function ResetPasswordPage() {
         throw error;
       }
 
-      setIsSuccess(true);
-      toast.success("Password updated successfully! You can now log into your account.");
+      // Update password in local registered accounts cache as well
+      const resolvedEmail = data.user?.email || userEmail || session?.user?.email;
+      if (resolvedEmail) {
+        const cleanEmail = resolvedEmail.trim().toLowerCase();
+        try {
+          const stored = localStorage.getItem("campusventure_registered_users");
+          if (stored) {
+            const users = JSON.parse(stored);
+            const updated = users.map((u: any) =>
+              u.email.toLowerCase() === cleanEmail ? { ...u, password: newPassword } : u
+            );
+            localStorage.setItem("campusventure_registered_users", JSON.stringify(updated));
+          }
+        } catch {
+          /* ignore */
+        }
 
-      // Broadcast real-time event to open tabs and desktop devices
-      try {
-        const userEmail = data.user?.email;
-        if (userEmail) {
-          const cleanEmail = userEmail.trim().toLowerCase();
+        // Broadcast real-time event to open desktop devices and tabs
+        try {
           const ch = supabase.channel(`password-reset-${cleanEmail}`);
           ch.subscribe((status) => {
             if (status === "SUBSCRIBED") {
@@ -96,13 +205,25 @@ function ResetPasswordPage() {
               });
             }
           });
+        } catch (broadcastErr) {
+          console.warn("Realtime broadcast notice:", broadcastErr);
         }
-      } catch (broadcastErr) {
-        console.warn("Realtime broadcast notice:", broadcastErr);
       }
+
+      setIsSuccess(true);
+      toast.success("Password updated successfully! You can now log into your account.");
     } catch (err: any) {
       console.error("Password update error:", err);
-      setErrorMsg(err?.message || "Failed to update password. Your reset session may have expired.");
+      const isSessionErr =
+        err?.message?.includes("session") ||
+        err?.message?.includes("Auth session missing") ||
+        err?.code === "auth_session_missing";
+
+      if (isSessionErr) {
+        setErrorMsg("Your reset session has expired or was already used. Please request a new password reset link.");
+      } else {
+        setErrorMsg(err?.message || "Failed to update password. Please try again.");
+      }
       toast.error(err?.message || "Failed to update password.");
     } finally {
       setIsLoading(false);
@@ -167,26 +288,20 @@ function ResetPasswordPage() {
                       variant="outline"
                       size="sm"
                       className="w-full text-xs font-semibold"
-                      onClick={() => openAuthModal(undefined, "forgot")}
+                      onClick={() => {
+                        navigate({ to: "/" });
+                        setTimeout(() => openAuthModal(undefined, "forgot"), 300);
+                      }}
                     >
-                      🔑 Try In-App Password Reset
+                      Request New Reset Link
                     </Button>
                   </div>
                 )}
 
-                {!hasSession && !errorMsg && (
-                  <div className="rounded-lg border border-amber-500/20 bg-amber-500/10 p-3 text-xs text-amber-800 dark:text-amber-300 space-y-2">
-                    <p className="font-medium">No active recovery link session detected.</p>
-                    <p className="text-[11px] opacity-90">If you navigated here directly or your link expired, use the fast in-app reset with a 6-digit security code:</p>
-                    <Button
-                      type="button"
-                      variant="outline"
-                      size="sm"
-                      className="w-full text-xs font-semibold bg-background"
-                      onClick={() => openAuthModal(undefined, "forgot")}
-                    >
-                      🔑 Open In-App Password Reset
-                    </Button>
+                {isLoading && (
+                  <div className="rounded-lg border border-primary/20 bg-primary/5 p-3 text-xs text-primary flex items-center justify-center gap-2">
+                    <span className="size-4 animate-spin rounded-full border-2 border-primary border-t-transparent" />
+                    <span>Authenticating secure reset session...</span>
                   </div>
                 )}
 
