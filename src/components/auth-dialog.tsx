@@ -107,6 +107,7 @@ export function AuthDialog() {
     user,
     isAuthenticated,
     isAuthModalOpen,
+    openAuthModal,
     closeAuthModal,
     authModalDefaultRole,
     authModalDefaultMode,
