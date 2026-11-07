@@ -80,6 +80,26 @@ function ResetPasswordPage() {
 
       setIsSuccess(true);
       toast.success("Password updated successfully! You can now log into your account.");
+
+      // Broadcast real-time event to open tabs and desktop devices
+      try {
+        const userEmail = data.user?.email;
+        if (userEmail) {
+          const cleanEmail = userEmail.trim().toLowerCase();
+          const ch = supabase.channel(`password-reset-${cleanEmail}`);
+          ch.subscribe((status) => {
+            if (status === "SUBSCRIBED") {
+              ch.send({
+                type: "broadcast",
+                event: "password-updated",
+                payload: { email: cleanEmail },
+              });
+            }
+          });
+        }
+      } catch (broadcastErr) {
+        console.warn("Realtime broadcast notice:", broadcastErr);
+      }
     } catch (err: any) {
       console.error("Password update error:", err);
       setErrorMsg(err?.message || "Failed to update password. Your reset session may have expired.");

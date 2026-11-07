@@ -172,6 +172,26 @@ export function AuthDialog() {
   const [showForgotPw, setShowForgotPw] = useState(false);
   const [showForgotPw2, setShowForgotPw2] = useState(false);
   const [isResettingPw, setIsResettingPw] = useState(false);
+  const [isPasswordUpdated, setIsPasswordUpdated] = useState(false);
+
+  // Listen for real-time password reset event from phone or other tabs
+  useEffect(() => {
+    if (mode !== "sent" || !fEmail) return;
+
+    const cleanEmail = fEmail.trim().toLowerCase();
+    const channel = supabase.channel(`password-reset-${cleanEmail}`);
+
+    channel
+      .on("broadcast", { event: "password-updated" }, () => {
+        setIsPasswordUpdated(true);
+        toast.success("New password created successfully! Please sign in with your new credentials.");
+      })
+      .subscribe();
+
+    return () => {
+      supabase.removeChannel(channel);
+    };
+  }, [mode, fEmail]);
 
   // University autocomplete state
   const [univSuggestions, setUnivSuggestions] = useState<University[]>([]);
@@ -723,13 +743,6 @@ export function AuthDialog() {
     setIsSendingReset(true);
     clearFieldError("email");
 
-    // Generate 6-digit security code
-    const array = new Uint32Array(1);
-    crypto.getRandomValues(array);
-    const code = String((array[0] ?? 0) % 1000000).padStart(6, "0");
-    setForgotCode(code);
-    setForgotEnteredCode("");
-
     // Try live Supabase password reset link
     try {
       const redirectUrl =
@@ -738,30 +751,13 @@ export function AuthDialog() {
           : "https://campusventure.io/reset-password";
       await supabase.auth.resetPasswordForEmail(clean, { redirectTo: redirectUrl });
     } catch {
-      /* continue to code reset */
-    }
-
-    // Try Supabase OTP dispatch as well
-    try {
-      await supabase.auth.signInWithOtp({ email: clean });
-    } catch {
-      /* continue to code reset */
-    }
-
-    // Notify server logger
-    try {
-      await fetch("/api/auth/send-code", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ email: clean, code, role: "investor" }),
-      });
-    } catch {
-      /* ignore */
+      /* continue */
     }
 
     setIsSendingReset(false);
-    setForgotStep("reset");
-    toast.success(`Security reset code generated for ${clean}`);
+    setIsPasswordUpdated(false);
+    setMode("sent");
+    toast.success(`Password reset link dispatched to ${clean}. Please check your email.`);
   };
 
   const handleAutoFillForgotCode = () => {
@@ -1352,7 +1348,7 @@ export function AuthDialog() {
                       <Icon name="back" size={16} /> Back to sign in
                     </button>
                     <h1>Reset your password</h1>
-                    <p className="sub">Enter your email and we'll send you a password reset security code.</p>
+                    <p className="sub">Enter your email and we'll send you a secure password reset link.</p>
 
                     <div className="field">
                       <label htmlFor="auth-forgot-email">Email Address</label>
@@ -1376,7 +1372,7 @@ export function AuthDialog() {
                       onClick={handleSendReset}
                       disabled={isSendingReset}
                     >
-                      {isSendingReset ? "Sending security code..." : "Send Reset Code"}
+                      {isSendingReset ? "Sending reset link..." : "Send Reset Link"}
                     </button>
                   </>
                 ) : (
@@ -1486,43 +1482,93 @@ export function AuthDialog() {
             {/* VIEW 4: RESET SENT */}
             {mode === "sent" && (
               <div className="view dash">
-                <div className="ico ok">
-                  <Icon name="mail" size={22} />
-                </div>
-                <h1>Check your inbox</h1>
-                <p className="sub">
-                  A password reset link was dispatched to <strong>{fEmail}</strong>. Click the link in your email to choose a new password.
-                </p>
-                <div className="btns" style={{ marginTop: 12 }}>
-                  <button
-                    type="button"
-                    className="btn primary"
-                    onClick={() => {
-                      setForgotStep("reset");
-                      setMode("forgot");
-                    }}
-                  >
-                    Enter Reset Code Directly
-                  </button>
-                  <button
-                    type="button"
-                    className="btn ghost"
-                    onClick={handleSendReset}
-                    disabled={isSendingReset}
-                  >
-                    {isSendingReset ? "Resending..." : "Resend reset link"}
-                  </button>
-                </div>
-                <button
-                  type="button"
-                  className="btn ghost"
-                  onClick={() => {
-                    setErrors({});
-                    setMode("signin");
-                  }}
-                >
-                  Back to sign in
-                </button>
+                {isPasswordUpdated ? (
+                  <>
+                    <div className="ico ok" style={{ background: "rgba(16, 185, 129, 0.15)", color: "#10b981" }}>
+                      <Icon name="check" size={26} />
+                    </div>
+                    <h1>New Password Created!</h1>
+                    <p className="sub">
+                      Your password for <strong>{fEmail}</strong> was updated successfully. You can now sign in with your new credentials.
+                    </p>
+                    <div className="btns" style={{ marginTop: 16 }}>
+                      <button
+                        type="button"
+                        className="btn primary"
+                        onClick={() => {
+                          setErrors({});
+                          setEmail(fEmail);
+                          setMode("signin");
+                        }}
+                      >
+                        Sign In with New Password
+                      </button>
+                    </div>
+                  </>
+                ) : (
+                  <>
+                    <div className="ico ok">
+                      <Icon name="mail" size={24} />
+                    </div>
+                    <h1>Check your email</h1>
+                    <p className="sub">
+                      A password reset link was dispatched to <strong>{fEmail}</strong>.
+                    </p>
+
+                    <div
+                      style={{
+                        margin: "12px 0",
+                        padding: "12px 14px",
+                        background: "rgba(59, 130, 246, 0.08)",
+                        borderRadius: "8px",
+                        border: "1px solid rgba(59, 130, 246, 0.2)",
+                        fontSize: "12px",
+                        color: "#93c5fd",
+                        textAlign: "left",
+                        lineHeight: 1.6,
+                      }}
+                    >
+                      <p style={{ margin: "0 0 6px 0", fontWeight: 600, color: "#bfdbfe" }}>Next Steps:</p>
+                      <ol style={{ margin: 0, paddingLeft: "16px" }}>
+                        <li>Open the email on your phone or computer.</li>
+                        <li>Click <strong>Reset password</strong> to open the secure page.</li>
+                        <li>Set your new password and submit.</li>
+                      </ol>
+                    </div>
+
+                    <div className="btns" style={{ marginTop: 10 }}>
+                      <button
+                        type="button"
+                        className="btn primary"
+                        onClick={() => {
+                          setErrors({});
+                          setEmail(fEmail);
+                          setMode("signin");
+                        }}
+                      >
+                        I've Updated My Password — Sign In
+                      </button>
+                      <button
+                        type="button"
+                        className="btn ghost"
+                        onClick={handleSendReset}
+                        disabled={isSendingReset}
+                      >
+                        {isSendingReset ? "Resending..." : "Resend reset link"}
+                      </button>
+                    </div>
+                    <button
+                      type="button"
+                      className="btn ghost"
+                      onClick={() => {
+                        setErrors({});
+                        setMode("signin");
+                      }}
+                    >
+                      Back to sign in
+                    </button>
+                  </>
+                )}
               </div>
             )}
 
