@@ -360,10 +360,15 @@ export function AuthDialog() {
       if (typeof window !== "undefined") {
         localStorage.setItem("cv_email_ver_pending", clean);
       }
+      const redirectUrl =
+        typeof window !== "undefined"
+          ? `${window.location.origin}`
+          : "https://campusventure.io";
       const { error: otpErr } = await supabase.auth.signInWithOtp({
         email: clean,
         options: {
           shouldCreateUser: true,
+          emailRedirectTo: redirectUrl,
         },
       });
 
