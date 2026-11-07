@@ -146,7 +146,6 @@ export function AuthDialog() {
 
   // OTP Verification state
   const [verSent, setVerSent] = useState<string | null>(null);
-  const [verCode, setVerCode] = useState<string | null>(null);
   const [verExp, setVerExp] = useState(0);
   const [verTries, setVerTries] = useState(0);
   const [verCool, setVerCool] = useState(0);
@@ -266,7 +265,6 @@ export function AuthDialog() {
     setVerOk(false);
     setVerEmail(null);
     setVerSent(null);
-    setVerCode(null);
     setShowUnivDropdown(false);
     setUnivSuggestions([]);
   };
@@ -347,24 +345,15 @@ export function AuthDialog() {
     if (verCool > Date.now()) return;
 
     setBusy(true);
-    await new Promise((r) => setTimeout(r, 600));
-
-    // Generate 6 digit random OTP code
-    const array = new Uint32Array(1);
-    crypto.getRandomValues(array);
-    const code = String((array[0] ?? 0) % 1000000).padStart(6, "0");
-
     setVerSent(clean);
-    setVerCode(code);
     setVerExp(Date.now() + 10 * 60000); // 10 minutes
     setVerTries(0);
     setVerCool(Date.now() + 30000); // 30 seconds cooldown
     setOtpDigits(["", "", "", "", "", ""]);
     setOtpError("");
     setVerShow(true);
-    setBusy(false);
 
-    // 1. Dispatch real 6-digit verification code to user's real email inbox via Supabase Auth
+    // Dispatch real OTP code via Supabase Auth
     let emailDispatchedSuccessfully = false;
     let dispatchErrorMessage = "";
     try {
@@ -387,39 +376,28 @@ export function AuthDialog() {
     } catch (err: any) {
       dispatchErrorMessage = err?.message || "Network error";
       console.error("[CampusVenture Auth] Live email dispatch error:", err);
-    }
-
-    // 2. Also notify server-side logger
-    try {
-      fetch("/api/auth/send-code", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ email: clean, code, role }),
-      }).catch(() => {});
-    } catch {
-      /* ignore */
+    } finally {
+      setBusy(false);
     }
 
     if (emailDispatchedSuccessfully) {
       toast.success(`Verification code dispatched to ${clean}`, {
         description: "Please check your email inbox and spam folder for your 6-digit security code.",
-        duration: 10000,
+        duration: 8000,
       });
     } else {
       toast.error(`Email dispatch issue: ${dispatchErrorMessage || "Could not deliver email"}`, {
-        description: "Please check your Supabase SMTP settings (ensure Port is 587 and 16-character App Password is set).",
+        description: "Please verify your email address or try again.",
         duration: 8000,
       });
     }
-
-    console.info(`[CampusVenture Auth] Security Code dispatched to ${clean}: ${code}`);
 
     setTimeout(() => {
       otpInputsRef.current[0]?.focus();
     }, 100);
   };
 
-  // Auto-verify ONLY if user explicitly requested verification and is actively waiting on the OTP dialog
+  // Realtime verification listener if user clicks confirmation link in email
   useEffect(() => {
     if (!verShow) return;
 
@@ -431,12 +409,11 @@ export function AuthDialog() {
       if (currentTarget && cleanEmail === currentTarget) {
         setVerOk(true);
         setVerEmail(cleanEmail);
-        setVerCode(null);
         setVerShow(false);
         if (typeof window !== "undefined") {
           localStorage.removeItem("cv_email_ver_pending");
         }
-        toast.success("Email verified successfully!");
+        toast.success("Email verified successfully via secure confirmation link!");
       }
     };
 
@@ -452,29 +429,6 @@ export function AuthDialog() {
       subscription.unsubscribe();
     };
   }, [verShow]);
-
-  // 1-Click Auto-fill OTP code with instant verification fallback
-  const handleAutoFillOtp = () => {
-    if (!verCode) return;
-    const digits = verCode.slice(0, 6).split("");
-    while (digits.length < 6) digits.push("");
-    setOtpDigits(digits);
-    setOtpError("");
-    setVerOk(true);
-    setVerEmail(verSent || fEmail.trim().toLowerCase());
-    setVerCode(null);
-    setVerShow(false);
-    toast.success("Email verified successfully! You can now complete registration.");
-  };
-
-  // 1-Click Copy code to clipboard
-  const handleCopyCode = () => {
-    if (!verCode) return;
-    if (typeof navigator !== "undefined" && navigator.clipboard) {
-      navigator.clipboard.writeText(verCode);
-      toast.success("Security code copied to clipboard!");
-    }
-  };
 
   // Google OAuth & 1-Click Institutional Account Sign-In
   const handleGoogleAuth = async (targetRole: Role) => {
@@ -512,24 +466,24 @@ export function AuthDialog() {
     }
   };
 
-  // 2. Verify OTP code
+  // 2. Verify OTP code strictly via Supabase Backend
   const handleVerifyOtp = async () => {
     const entered = otpDigits.join("");
     if (entered.length < 6) return;
 
     if (Date.now() > verExp) {
-      setOtpError("This code has expired. Request a new one.");
+      setOtpError("This verification code has expired. Please request a new one.");
       return;
     }
 
     if (verTries >= 5) {
-      setOtpError("Too many attempts. Request a new code.");
+      setOtpError("Too many incorrect attempts. Please request a new code.");
       return;
     }
 
     setBusy(true);
+    setOtpError("");
 
-    // 1. Live Supabase verifyOtp validation (checks code sent to user's real email)
     try {
       const targetEmail = verSent || fEmail.trim().toLowerCase();
       const { data, error } = await supabase.auth.verifyOtp({
@@ -541,31 +495,23 @@ export function AuthDialog() {
       if (!error && (data.user || data.session)) {
         setVerOk(true);
         setVerEmail(targetEmail);
-        setVerCode(null);
         setVerShow(false);
         setBusy(false);
         toast.success("Email verified successfully! You can now proceed to register.");
         return;
       }
-    } catch {
-      /* continue */
-    }
 
-    // 2. Direct code validation fallback
-    if (entered === verCode) {
-      setVerOk(true);
-      setVerEmail(verSent);
-      setVerCode(null);
-      setVerShow(false);
       setBusy(false);
-      toast.success("Email verified successfully! You can now proceed to register.");
-      return;
+      const nextTries = verTries + 1;
+      setVerTries(nextTries);
+      const remainingAttempts = 5 - nextTries;
+      setOtpError(
+        error?.message || `Invalid verification code. ${remainingAttempts} attempt${remainingAttempts === 1 ? "" : "s"} left.`
+      );
+    } catch (err: any) {
+      setBusy(false);
+      setOtpError(err?.message || "Verification failed. Please check the code and try again.");
     }
-
-    setBusy(false);
-    const nextTries = verTries + 1;
-    setVerTries(nextTries);
-    setOtpError(`Invalid verification code. ${5 - nextTries} attempt${5 - nextTries === 1 ? "" : "s"} left.`);
   };
 
   // Handle OTP input navigation
@@ -684,11 +630,13 @@ export function AuthDialog() {
       setFieldError("pw2", "Passwords do not match.");
       bad = true;
     }
-    if (!(verOk && verEmail === cleanEmail)) {
-      setFieldError("email", "Verify this email first.");
-      bad = true;
-    }
     if (bad) return;
+
+    if (!(verOk && verEmail === cleanEmail)) {
+      toast.info("Please verify your email address with the security code to complete registration.");
+      handleSendOtp();
+      return;
+    }
 
     setBusy(true);
     const res = await signUp({
@@ -1298,20 +1246,22 @@ export function AuthDialog() {
                   type="button"
                   className="btn primary"
                   onClick={handleRegister}
-                  disabled={!isEmailVerified || busy}
+                  disabled={busy}
                 >
                   {busy ? (
                     <>
-                      <span className="spin" /> Creating account
+                      <span className="spin" /> Creating account...
                     </>
                   ) : (
                     `Register as ${ROLES[role]}`
                   )}
                 </button>
 
-                <div className="hint" style={{ textAlign: "center" }}>
-                  {isEmailVerified ? "" : "Verify your email to enable registration."}
-                </div>
+                {!isEmailVerified && (
+                  <div className="hint" style={{ textAlign: "center", fontSize: 11.5, color: "var(--mute)", marginTop: 6 }}>
+                    🔒 Real 6-digit email verification code required to activate your verified account.
+                  </div>
+                )}
 
                 <div style={{ textAlign: "center", marginTop: 14 }}>
                   <span className="sub" style={{ margin: 0 }}>
@@ -1669,7 +1619,7 @@ export function AuthDialog() {
                       color: "var(--text)",
                     }}
                   >
-                    📩 Enter the 6-digit verification code sent to your email inbox below.
+                    📩 Enter the 6-digit verification code sent to your email inbox below. You can also click the secure confirmation link directly inside your email.
                   </div>
 
                   <div className="otp" id="otp">
@@ -1703,29 +1653,14 @@ export function AuthDialog() {
                       onClick={handleVerifyOtp}
                       disabled={otpDigits.join("").length < 6 || busy}
                     >
-                      {busy ? "Verifying..." : "Verify Code & Proceed"}
+                      {busy ? (
+                        <>
+                          <span className="spin" /> Verifying Security Code...
+                        </>
+                      ) : (
+                        "Verify Code & Proceed"
+                      )}
                     </button>
-                    {verCode && (
-                      <button
-                        type="button"
-                        className="btn ghost"
-                        style={{
-                          fontSize: "12px",
-                          padding: "8px 12px",
-                          border: "1px dashed rgba(99, 102, 241, 0.4)",
-                          color: "var(--brand, #6366f1)",
-                          display: "flex",
-                          alignItems: "center",
-                          justifyContent: "center",
-                          gap: "6px",
-                          cursor: "pointer",
-                        }}
-                        onClick={handleAutoFillOtp}
-                      >
-                        <Icon name="check" size={14} />
-                        Auto-Verify with Security Code ({verCode})
-                      </button>
-                    )}
                   </div>
 
                   <div style={{ marginTop: 14 }}>
