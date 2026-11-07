@@ -444,6 +444,12 @@ export function AuthDialog() {
         setVerShow(false);
         if (typeof window !== "undefined") {
           localStorage.removeItem("cv_email_ver_pending");
+          if (session?.user?.id) {
+            window.sessionStorage.setItem("cv_verified_user_id", session.user.id);
+            window.localStorage.setItem("cv_verified_user_id", session.user.id);
+            window.sessionStorage.setItem("cv_auth_flow", "register");
+            window.localStorage.setItem("cv_auth_flow", "register");
+          }
         }
         toast.success("Email verified successfully!");
       }
@@ -518,6 +524,15 @@ export function AuthDialog() {
       });
 
       if (!error && (data.user || data.session)) {
+        const verifiedUserId = data.user?.id || data.session?.user?.id;
+        if (verifiedUserId && typeof window !== "undefined") {
+          window.sessionStorage.setItem("cv_verified_user_id", verifiedUserId);
+          window.localStorage.setItem("cv_verified_user_id", verifiedUserId);
+          window.sessionStorage.setItem("cv_auth_flow", "register");
+          window.localStorage.setItem("cv_auth_flow", "register");
+          window.sessionStorage.setItem("cv_oauth_flow", "register");
+          window.localStorage.setItem("cv_oauth_flow", "register");
+        }
         setVerOk(true);
         setVerEmail(targetEmail);
         setVerShow(false);

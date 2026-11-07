@@ -257,6 +257,8 @@ async function validateAndEnforceInstitutionalRole(
         window.localStorage.getItem("cv_auth_flow") ||
         window.sessionStorage.getItem("cv_auth_flow")
       : null;
+  const emailVerPending = typeof window !== "undefined" ? window.localStorage.getItem("cv_email_ver_pending") : null;
+  const isRegistering = authFlow === "register" || !!emailVerPending;
 
   // The backend role is authoritative. Never grant permissions based only on the role selected in the frontend.
   const verifiedBackendRole = dbProfile?.role || localAccount?.role;
@@ -287,7 +289,7 @@ async function validateAndEnforceInstitutionalRole(
   const profileNotFound = dbChecked ? !dbProfile : (!dbProfile && !localAccount);
   if (profileNotFound) {
     // If the user is in explicit registration flow, ALLOW THEM TO PROCEED (do NOT sign out!)
-    if (authFlow === "register") {
+    if (isRegistering) {
       const name =
         (typeof meta["full_name"] === "string" && (meta["full_name"] as string).trim()) ||
         (typeof meta["name"] === "string" && (meta["name"] as string).trim()) ||
@@ -740,6 +742,13 @@ export function AuthProvider({ children }: { children: ReactNode }) {
           table: "profiles",
         },
         (payload) => {
+          const authFlow = typeof window !== "undefined"
+            ? window.sessionStorage.getItem("cv_auth_flow") ||
+              window.localStorage.getItem("cv_auth_flow")
+            : null;
+          const emailVerPending = typeof window !== "undefined" ? window.localStorage.getItem("cv_email_ver_pending") : null;
+          if (authFlow === "register" || emailVerPending) return;
+
           const oldRecord = (payload.old as any) || {};
           const deletedId = oldRecord.id;
           const deletedEmail = (oldRecord.email || "").toLowerCase().trim();
@@ -790,6 +799,19 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     // 2. Heartbeat polling verification (runs every 4 seconds) + window focus
     const verifyProfileStillExists = async () => {
       if (!isMounted) return;
+
+      // DO NOT run deletion eviction if user is in registration flow!
+      const authFlow = typeof window !== "undefined"
+        ? window.sessionStorage.getItem("cv_auth_flow") ||
+          window.localStorage.getItem("cv_auth_flow") ||
+          window.sessionStorage.getItem("cv_oauth_flow") ||
+          window.localStorage.getItem("cv_oauth_flow")
+        : null;
+      const emailVerPending = typeof window !== "undefined" ? window.localStorage.getItem("cv_email_ver_pending") : null;
+      if (authFlow === "register" || emailVerPending) {
+        return;
+      }
+
       try {
         const { data, error } = await (supabase as any)
           .from("profiles")
@@ -1072,7 +1094,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         window.localStorage.setItem("cv_oauth_flow", "register");
       }
 
-      let targetId: string = generateUUID();
+      let targetId: string | null = null;
       let supabaseSessionActive = false;
 
       // 1. Check if user already has an active session from verifyOtp
@@ -1090,6 +1112,16 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         console.warn("[CampusVenture Auth] Session check notice:", sessErr);
       }
 
+      // Check verified user ID from verifyOtp stored in sessionStorage/localStorage
+      if (!targetId && typeof window !== "undefined") {
+        const storedId =
+          window.sessionStorage.getItem("cv_verified_user_id") ||
+          window.localStorage.getItem("cv_verified_user_id");
+        if (storedId && storedId.length === 36) {
+          targetId = storedId;
+        }
+      }
+
       // 2. If no active session, register via supabase.auth.signUp or signInWithPassword
       if (!supabaseSessionActive) {
         try {
@@ -1101,10 +1133,10 @@ export function AuthProvider({ children }: { children: ReactNode }) {
             },
           });
 
-          if (authData?.user) {
+          if (authData?.user && authData.user.identities && authData.user.identities.length > 0) {
             targetId = authData.user.id;
-          } else if (signUpError) {
-            console.warn("[CampusVenture Auth] signUp notice:", signUpError.message);
+            supabaseSessionActive = !!authData.session;
+          } else {
             // User might exist from signInWithOtp; try signInWithPassword
             const { data: signInData } = await supabase.auth.signInWithPassword({
               email: cleanEmail,
@@ -1112,11 +1144,27 @@ export function AuthProvider({ children }: { children: ReactNode }) {
             });
             if (signInData?.user) {
               targetId = signInData.user.id;
+              supabaseSessionActive = true;
             }
           }
         } catch (suErr: any) {
           console.warn("[CampusVenture Auth] Auth creation notice:", suErr?.message);
         }
+      }
+
+      // If targetId is still null, check getUser()
+      if (!targetId) {
+        try {
+          const { data: { user: u } } = await supabase.auth.getUser();
+          if (u?.id) targetId = u.id;
+        } catch {
+          /* ignore */
+        }
+      }
+
+      // Final fallback to generate UUID if needed
+      if (!targetId) {
+        targetId = generateUUID();
       }
 
       // 3. Immediately insert profile into Supabase public.profiles table
@@ -1132,20 +1180,22 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       try {
         const { error: upsertErr } = await (supabase as any)
           .from("profiles")
-          .upsert(profileRow);
+          .upsert(profileRow)
+          .select();
 
         if (upsertErr) {
           console.warn("[CampusVenture Auth] Profile upsert notice, trying insert:", upsertErr.message);
           const { error: insertErr } = await (supabase as any)
             .from("profiles")
-            .insert(profileRow);
+            .insert(profileRow)
+            .select();
           if (insertErr) {
             console.error("[CampusVenture Auth] Profile insert failed:", insertErr.message);
             const { data: { user: curUser } } = await supabase.auth.getUser();
             if (curUser?.id && curUser.id !== targetId) {
               targetId = curUser.id;
               profileRow.id = targetId;
-              await (supabase as any).from("profiles").upsert(profileRow);
+              await (supabase as any).from("profiles").upsert(profileRow).select();
             }
           }
         }
