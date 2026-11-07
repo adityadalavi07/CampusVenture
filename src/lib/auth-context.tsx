@@ -25,7 +25,8 @@ export interface AuthUser {
 export interface RegisteredAccount {
   id: string;
   email: string;
-  password: string;
+  password?: string;
+  passwordHash?: string;
   name: string;
   role: Role;
   org: string;
@@ -426,10 +427,29 @@ function loadRegisteredUsers(): RegisteredAccount[] {
   }
 }
 
+function quickHash(str: string): string {
+  if (!str) return "";
+  let hash = 0;
+  for (let i = 0; i < str.length; i++) {
+    const char = str.charCodeAt(i);
+    hash = (hash << 5) - hash + char;
+    hash |= 0;
+  }
+  return `h_${Math.abs(hash).toString(36)}`;
+}
+
 function saveRegisteredUsers(users: RegisteredAccount[]): void {
   if (typeof window === "undefined") return;
   try {
-    window.localStorage.setItem(REGISTERED_USERS_KEY, JSON.stringify(users));
+    const sanitized = users.map((u) => {
+      const copy = { ...u };
+      if (copy.password && !copy.passwordHash) {
+        copy.passwordHash = quickHash(copy.password);
+      }
+      delete copy.password;
+      return copy;
+    });
+    window.localStorage.setItem(REGISTERED_USERS_KEY, JSON.stringify(sanitized));
   } catch {
     /* ignore storage errors */
   }
@@ -938,8 +958,12 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       let authErrorMessage = "";
 
       // Try local password match first
-      if (localAccount && localAccount.password === password) {
-        authenticated = true;
+      if (localAccount) {
+        if (localAccount.password && localAccount.password === password) {
+          authenticated = true;
+        } else if (localAccount.passwordHash && localAccount.passwordHash === quickHash(password)) {
+          authenticated = true;
+        }
       }
 
       // Try Supabase auth

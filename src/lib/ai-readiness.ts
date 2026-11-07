@@ -57,22 +57,11 @@ export function getAIConfig(): AIConfig {
       return {
         ...DEFAULT_AI_CONFIG,
         ...parsed,
-        // Fall back to Vite environment variables if local key is empty
-        apiKey:
-          parsed.apiKey ||
-          (parsed.provider === "gemini"
-            ? (import.meta.env["VITE_GEMINI_API_KEY"] as string) || ""
-            : (import.meta.env["VITE_OPENAI_API_KEY"] as string) || ""),
+        apiKey: parsed.apiKey || "",
       };
     }
   } catch {
     /* ignore error */
-  }
-
-  const envGemini = (import.meta.env["VITE_GEMINI_API_KEY"] as string) || "";
-
-  if (envGemini) {
-    return { ...DEFAULT_AI_CONFIG, provider: "gemini", apiKey: envGemini };
   }
 
   return DEFAULT_AI_CONFIG;

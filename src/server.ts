@@ -72,7 +72,8 @@ function checkRateLimit(
 
 async function handleServerAIAnalyze(request: Request, env: unknown): Promise<Response> {
   try {
-    const clientIp = request.headers.get("x-forwarded-for") || "unknown-client";
+    const rawIp = request.headers.get("x-forwarded-for") || request.headers.get("x-real-ip") || "unknown-client";
+    const clientIp = rawIp.split(",")[0].trim();
     const rateCheck = checkRateLimit(`ai:${clientIp}`, 6, 60000);
     if (!rateCheck.allowed) {
       return new Response(
@@ -280,7 +281,8 @@ async function handleServerSendCode(request: Request, env: unknown): Promise<Res
     }
 
     const cleanEmail = email.trim().toLowerCase();
-    const clientIp = request.headers.get("x-forwarded-for") || "unknown-ip";
+    const rawIp = request.headers.get("x-forwarded-for") || request.headers.get("x-real-ip") || "unknown-ip";
+    const clientIp = rawIp.split(",")[0].trim();
     const rateCheck = checkRateLimit(`code:${cleanEmail}:${clientIp}`, 4, 120000);
     if (!rateCheck.allowed) {
       return new Response(
