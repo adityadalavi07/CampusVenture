@@ -402,38 +402,43 @@ export function AuthDialog() {
     }, 100);
   };
 
-  // Realtime verification listener if user clicks confirmation link in email
+  // Realtime verification listener across devices
   useEffect(() => {
     if (!verShow) return;
+    const cleanEmail = (verSent || fEmail).trim().toLowerCase();
+    if (!cleanEmail) return;
 
-    const handleCheckSession = (email: string) => {
-      const cleanEmail = email.toLowerCase();
-      const currentTarget = (verSentRef.current || "").toLowerCase();
-      
-      // ONLY trigger if this specific verification is actively pending for this exact email
-      if (currentTarget && cleanEmail === currentTarget) {
+    // 1. Cross-device Realtime channel
+    const channel = supabase.channel(`email-verify-${cleanEmail}`);
+    channel
+      .on("broadcast", { event: "verified" }, () => {
+        setVerOk(true);
+        setVerEmail(cleanEmail);
+        setVerShow(false);
+        toast.success("Email verified successfully!");
+      })
+      .subscribe();
+
+    // 2. Auth state change listener
+    const {
+      data: { subscription },
+    } = supabase.auth.onAuthStateChange((event, session) => {
+      if ((event === "SIGNED_IN" || event === "USER_UPDATED") && session?.user?.email?.toLowerCase() === cleanEmail) {
         setVerOk(true);
         setVerEmail(cleanEmail);
         setVerShow(false);
         if (typeof window !== "undefined") {
           localStorage.removeItem("cv_email_ver_pending");
         }
-        toast.success("Email verified successfully via secure confirmation link!");
-      }
-    };
-
-    const {
-      data: { subscription },
-    } = supabase.auth.onAuthStateChange((event, session) => {
-      if ((event === "SIGNED_IN" || event === "USER_UPDATED") && session?.user?.email) {
-        handleCheckSession(session.user.email);
+        toast.success("Email verified successfully!");
       }
     });
 
     return () => {
+      channel.unsubscribe();
       subscription.unsubscribe();
     };
-  }, [verShow]);
+  }, [verShow, verSent, fEmail]);
 
   // Google OAuth & 1-Click Institutional Account Sign-In
   const handleGoogleAuth = async (targetRole: Role) => {
@@ -502,7 +507,40 @@ export function AuthDialog() {
         setVerEmail(targetEmail);
         setVerShow(false);
         setBusy(false);
-        toast.success("Email verified successfully! You can now proceed to register.");
+
+        // Broadcast verification event to other tabs/devices
+        try {
+          const ch = supabase.channel(`email-verify-${targetEmail}`);
+          ch.subscribe((status) => {
+            if (status === "SUBSCRIBED") {
+              ch.send({ type: "broadcast", event: "verified", payload: { email: targetEmail } });
+            }
+          });
+        } catch {
+          /* ignore */
+        }
+
+        // If in registration mode and all details are already provided, complete registration immediately!
+        if (mode === "register" && fName.trim().length >= 2 && pwOk(fPw) && fPw === fPw2) {
+          setBusy(true);
+          const res = await signUp({
+            name: fName.trim(),
+            org: fOrg.trim(),
+            email: targetEmail,
+            password: fPw,
+            role,
+          });
+          setBusy(false);
+
+          if (res.success) {
+            closeAuthModal();
+            toast.success(`Welcome to CampusVenture, ${fName.trim()}!`);
+            router.navigate({ to: `/app/${role}` });
+            return;
+          }
+        }
+
+        toast.success("Email verified successfully! You can now complete your registration.");
         return;
       }
 
