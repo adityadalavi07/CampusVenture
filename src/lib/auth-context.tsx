@@ -253,36 +253,10 @@ async function validateAndEnforceInstitutionalRole(
   const authFlow =
     typeof window !== "undefined"
       ? window.localStorage.getItem("cv_oauth_flow") ||
-        window.sessionStorage.getItem("cv_oauth_flow")
+        window.sessionStorage.getItem("cv_oauth_flow") ||
+        window.localStorage.getItem("cv_auth_flow") ||
+        window.sessionStorage.getItem("cv_auth_flow")
       : null;
-
-  // If user profile is not in the database (or deleted from database) and this is NOT a registration flow:
-  // Central database is authoritative.
-  const profileNotFound = dbChecked ? !dbProfile : (!dbProfile && !localAccount);
-  if (profileNotFound) {
-    // If the user is not in explicit registration flow, strictly reject non-registered / deleted users
-    if (authFlow !== "register") {
-      clearOAuthPendingRole();
-      if (typeof window !== "undefined") {
-        window.localStorage.removeItem("cv_oauth_flow");
-        window.sessionStorage.removeItem("cv_oauth_flow");
-        window.localStorage.removeItem(AUTH_STORAGE_KEY);
-      }
-      // Purge stale local account if it was deleted from DB
-      if (localAccount) {
-        const purged = currentAccounts.filter((a) => a.email.toLowerCase() !== userEmail);
-        saveRegisteredUsers(purged);
-      }
-      try {
-        await supabase.auth.signOut();
-      } catch {
-        /* ignore */
-      }
-      const errMsg = "No account found with this email. Please register an account first.";
-      toast.error(errMsg, { id: "auth-account-not-found", duration: 8000 });
-      return { allowed: false, error: errMsg };
-    }
-  }
 
   // The backend role is authoritative. Never grant permissions based only on the role selected in the frontend.
   const verifiedBackendRole = dbProfile?.role || localAccount?.role;
@@ -307,6 +281,54 @@ async function validateAndEnforceInstitutionalRole(
         /* ignore */
       }
     }
+  }
+
+  // Central database is authoritative.
+  const profileNotFound = dbChecked ? !dbProfile : (!dbProfile && !localAccount);
+  if (profileNotFound) {
+    // If the user is in explicit registration flow, ALLOW THEM TO PROCEED (do NOT sign out!)
+    if (authFlow === "register") {
+      const name =
+        (typeof meta["full_name"] === "string" && (meta["full_name"] as string).trim()) ||
+        (typeof meta["name"] === "string" && (meta["name"] as string).trim()) ||
+        userEmail.split("@")[0] ||
+        "User";
+      const defaultOrg = ROLE_PROFILES[intendedRole]?.org || "CampusVenture";
+      const org = (typeof meta["org"] === "string" && (meta["org"] as string).trim()) || defaultOrg;
+      const authUser: AuthUser = {
+        id: sessionUser.id,
+        email: userEmail,
+        name,
+        role: intendedRole,
+        org,
+        avatarInitials: getInitials(name),
+        isDemo: false,
+      };
+      return { allowed: true, authUser };
+    }
+
+    // In normal sign-in or session restoration: if profile is not in the database, reject and sign out
+    clearOAuthPendingRole();
+    if (typeof window !== "undefined") {
+      window.localStorage.removeItem("cv_oauth_flow");
+      window.sessionStorage.removeItem("cv_oauth_flow");
+      window.localStorage.removeItem("cv_auth_flow");
+      window.sessionStorage.removeItem("cv_auth_flow");
+      window.localStorage.removeItem(AUTH_STORAGE_KEY);
+    }
+    // Purge stale local account if it was deleted from DB
+    if (localAccount) {
+      const purged = currentAccounts.filter((a) => a.email.toLowerCase() !== userEmail);
+      saveRegisteredUsers(purged);
+    }
+    try {
+      await supabase.auth.signOut();
+    } catch {
+      /* ignore */
+    }
+    const errMsg = "No account found with this email. Please register an account first.";
+    toast.error(errMsg, { id: "auth-account-not-found", duration: 8000 });
+    return { allowed: false, error: errMsg };
   }
 
   // STRICT RULE: Students require an approved university email and verified university association.
@@ -423,6 +445,13 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const openAuthModal = useCallback((defaultRole?: Role, defaultMode: "signin" | "register" | "forgot" = "signin") => {
     setAuthModalDefaultRole(defaultRole);
     setAuthModalDefaultMode(defaultMode);
+    if (typeof window !== "undefined") {
+      const flow = defaultMode === "register" ? "register" : "signin";
+      window.sessionStorage.setItem("cv_auth_flow", flow);
+      window.localStorage.setItem("cv_auth_flow", flow);
+      window.sessionStorage.setItem("cv_oauth_flow", flow);
+      window.localStorage.setItem("cv_oauth_flow", flow);
+    }
     setIsAuthModalOpen(true);
   }, []);
 
@@ -662,6 +691,153 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     };
   }, []);
 
+  // Real-time database synchronization & immediate eviction if profile is deleted in Supabase
+  useEffect(() => {
+    if (!user?.id || !user?.email) return;
+
+    let isMounted = true;
+    const currentUserId = user.id;
+    const currentUserEmail = user.email.toLowerCase().trim();
+
+    const handleForceEvict = (reason: string) => {
+      if (!isMounted) return;
+      console.warn("[CampusVenture Auth] Immediate eviction:", reason);
+      try {
+        window.localStorage.removeItem(AUTH_STORAGE_KEY);
+      } catch {
+        /* ignore */
+      }
+      const currentAccounts = loadRegisteredUsers();
+      const purged = currentAccounts.filter(
+        (a) => a.email.toLowerCase().trim() !== currentUserEmail
+      );
+      saveRegisteredUsers(purged);
+      setRegisteredUsers(purged);
+      setUser(null);
+      try {
+        supabase.auth.signOut();
+      } catch {
+        /* ignore */
+      }
+      toast.error("Your profile has been removed from the database.", {
+        id: "profile-deleted-evict",
+        duration: 8000,
+      });
+      if (typeof window !== "undefined" && window.location.pathname.startsWith("/app")) {
+        window.location.href = "/";
+      }
+    };
+
+    // 1. Supabase Realtime channel listening to DELETE and UPDATE events on public.profiles
+    const channelName = `cv_profiles_sync_${currentUserId.slice(0, 8)}_${Date.now()}`;
+    const channel = supabase
+      .channel(channelName)
+      .on(
+        "postgres_changes",
+        {
+          event: "DELETE",
+          schema: "public",
+          table: "profiles",
+        },
+        (payload) => {
+          const oldRecord = (payload.old as any) || {};
+          const deletedId = oldRecord.id;
+          const deletedEmail = (oldRecord.email || "").toLowerCase().trim();
+          if (
+            deletedId === currentUserId ||
+            (deletedEmail && deletedEmail === currentUserEmail)
+          ) {
+            handleForceEvict("Account deleted via realtime event");
+          }
+        }
+      )
+      .on(
+        "postgres_changes",
+        {
+          event: "UPDATE",
+          schema: "public",
+          table: "profiles",
+        },
+        (payload) => {
+          const newRecord = (payload.new as any) || {};
+          const updatedId = newRecord.id;
+          const updatedEmail = (newRecord.email || "").toLowerCase().trim();
+          if (
+            updatedId === currentUserId ||
+            (updatedEmail && updatedEmail === currentUserEmail)
+          ) {
+            setUser((prev) => {
+              if (!prev) return prev;
+              const updated: AuthUser = {
+                ...prev,
+                name: newRecord.name || prev.name,
+                role: (newRecord.role as Role) || prev.role,
+                org: newRecord.org || prev.org,
+                avatarInitials: getInitials(newRecord.name || prev.name),
+              };
+              try {
+                window.localStorage.setItem(AUTH_STORAGE_KEY, JSON.stringify(updated));
+              } catch {
+                /* ignore */
+              }
+              return updated;
+            });
+          }
+        }
+      )
+      .subscribe();
+
+    // 2. Heartbeat polling verification (runs every 4 seconds) + window focus
+    const verifyProfileStillExists = async () => {
+      if (!isMounted) return;
+      try {
+        const { data, error } = await (supabase as any)
+          .from("profiles")
+          .select("id, email, name, role, org")
+          .or(`id.eq.${currentUserId},email.ilike.${currentUserEmail}`)
+          .maybeSingle();
+
+        if (!error && !data) {
+          // Profile is no longer present in Supabase public.profiles table!
+          handleForceEvict("Account row missing during heartbeat check");
+        } else if (!error && data && isMounted) {
+          // Keep role, name, org strictly synced with database
+          setUser((prev) => {
+            if (!prev) return prev;
+            if (prev.role !== data.role || prev.name !== data.name || prev.org !== data.org) {
+              const updated: AuthUser = {
+                ...prev,
+                name: data.name || prev.name,
+                role: (data.role as Role) || prev.role,
+                org: data.org || prev.org,
+                avatarInitials: getInitials(data.name || prev.name),
+              };
+              try {
+                window.localStorage.setItem(AUTH_STORAGE_KEY, JSON.stringify(updated));
+              } catch {
+                /* ignore */
+              }
+              return updated;
+            }
+            return prev;
+          });
+        }
+      } catch {
+        /* ignore temporary network hiccups */
+      }
+    };
+
+    const interval = setInterval(verifyProfileStillExists, 4000);
+    window.addEventListener("focus", verifyProfileStillExists);
+
+    return () => {
+      isMounted = false;
+      clearInterval(interval);
+      window.removeEventListener("focus", verifyProfileStillExists);
+      supabase.removeChannel(channel);
+    };
+  }, [user?.id, user?.email]);
+
   // Email + password sign in with strict server-validated role authorization check
   const signIn = useCallback(
     async (
@@ -859,6 +1035,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       org: string;
     }): Promise<{ success: boolean; error?: string; user?: AuthUser }> => {
       const cleanEmail = email.trim().toLowerCase();
+      const cleanName = name.trim();
+      const cleanOrg = org.trim() || ROLE_PROFILES[role]?.org || "CampusVenture";
 
       // Strict institutional check for Student & University
       if ((role === "student" || role === "university") && !isUniversityEmail(cleanEmail)) {
@@ -868,37 +1046,137 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         };
       }
 
-      // Check if already registered
-      const currentAccounts = loadRegisteredUsers();
-      if (currentAccounts.some((a) => a.email.toLowerCase() === cleanEmail)) {
-        return {
-          success: false,
-          error: "An account with this email already exists. Try signing in.",
-        };
+      // Check if already registered in central database
+      try {
+        const { data: existingDbProfile } = await (supabase as any)
+          .from("profiles")
+          .select("id")
+          .ilike("email", cleanEmail)
+          .maybeSingle();
+
+        if (existingDbProfile) {
+          return {
+            success: false,
+            error: "An account with this email already exists in the database. Please sign in.",
+          };
+        }
+      } catch {
+        /* ignore */
       }
 
-      // Create new account
-      const newAccount: RegisteredAccount = {
-        id: `usr-${role}-${Date.now().toString(36)}`,
+      // Mark auth flow as register so session verification doesn't interfere
+      if (typeof window !== "undefined") {
+        window.sessionStorage.setItem("cv_auth_flow", "register");
+        window.localStorage.setItem("cv_auth_flow", "register");
+        window.sessionStorage.setItem("cv_oauth_flow", "register");
+        window.localStorage.setItem("cv_oauth_flow", "register");
+      }
+
+      let targetId: string = generateUUID();
+      let supabaseSessionActive = false;
+
+      // 1. Check if user already has an active session from verifyOtp
+      try {
+        const { data: { session } } = await supabase.auth.getSession();
+        if (session?.user && session.user.email?.toLowerCase() === cleanEmail) {
+          targetId = session.user.id;
+          supabaseSessionActive = true;
+          await supabase.auth.updateUser({
+            password,
+            data: { role, name: cleanName, org: cleanOrg },
+          });
+        }
+      } catch (sessErr) {
+        console.warn("[CampusVenture Auth] Session check notice:", sessErr);
+      }
+
+      // 2. If no active session, register via supabase.auth.signUp or signInWithPassword
+      if (!supabaseSessionActive) {
+        try {
+          const { data: authData, error: signUpError } = await supabase.auth.signUp({
+            email: cleanEmail,
+            password,
+            options: {
+              data: { role, name: cleanName, org: cleanOrg },
+            },
+          });
+
+          if (authData?.user) {
+            targetId = authData.user.id;
+          } else if (signUpError) {
+            console.warn("[CampusVenture Auth] signUp notice:", signUpError.message);
+            // User might exist from signInWithOtp; try signInWithPassword
+            const { data: signInData } = await supabase.auth.signInWithPassword({
+              email: cleanEmail,
+              password,
+            });
+            if (signInData?.user) {
+              targetId = signInData.user.id;
+            }
+          }
+        } catch (suErr: any) {
+          console.warn("[CampusVenture Auth] Auth creation notice:", suErr?.message);
+        }
+      }
+
+      // 3. Immediately insert profile into Supabase public.profiles table
+      const profileRow = {
+        id: targetId,
         email: cleanEmail,
-        password,
-        name: name.trim(),
+        name: cleanName,
         role,
-        org: org.trim() || ROLE_PROFILES[role]?.org || "CampusVenture",
-        createdAt: new Date().toISOString(),
+        org: cleanOrg,
+        updated_at: new Date().toISOString(),
       };
 
+      try {
+        const { error: upsertErr } = await (supabase as any)
+          .from("profiles")
+          .upsert(profileRow);
+
+        if (upsertErr) {
+          console.warn("[CampusVenture Auth] Profile upsert notice, trying insert:", upsertErr.message);
+          const { error: insertErr } = await (supabase as any)
+            .from("profiles")
+            .insert(profileRow);
+          if (insertErr) {
+            console.error("[CampusVenture Auth] Profile insert failed:", insertErr.message);
+            const { data: { user: curUser } } = await supabase.auth.getUser();
+            if (curUser?.id && curUser.id !== targetId) {
+              targetId = curUser.id;
+              profileRow.id = targetId;
+              await (supabase as any).from("profiles").upsert(profileRow);
+            }
+          }
+        }
+      } catch (dbErr: any) {
+        console.error("[CampusVenture Auth] Database sync error:", dbErr?.message);
+      }
+
+      // 4. Update local accounts registry and active auth user state
+      const currentAccounts = loadRegisteredUsers().filter(
+        (a) => a.email.toLowerCase() !== cleanEmail
+      );
+      const newAccount: RegisteredAccount = {
+        id: targetId,
+        email: cleanEmail,
+        password,
+        name: cleanName,
+        role,
+        org: cleanOrg,
+        createdAt: new Date().toISOString(),
+      };
       const updatedAccounts = [...currentAccounts, newAccount];
       saveRegisteredUsers(updatedAccounts);
       setRegisteredUsers(updatedAccounts);
 
       const authUser: AuthUser = {
-        id: newAccount.id,
-        email: newAccount.email,
-        name: newAccount.name,
-        role: newAccount.role,
-        org: newAccount.org,
-        avatarInitials: getInitials(newAccount.name),
+        id: targetId,
+        email: cleanEmail,
+        name: cleanName,
+        role,
+        org: cleanOrg,
+        avatarInitials: getInitials(cleanName),
         isDemo: false,
       };
 
@@ -909,41 +1187,12 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         /* ignore */
       }
 
-      // Register or sync with Supabase Auth & public.profiles
-      try {
-        const { data: { session } } = await supabase.auth.getSession();
-        let targetId = newAccount.id;
-
-        if (session?.user && session.user.email?.toLowerCase() === cleanEmail) {
-          targetId = session.user.id;
-          await supabase.auth.updateUser({
-            password,
-            data: { role, name: name.trim(), org: newAccount.org },
-          });
-        } else {
-          const { data: authData } = await supabase.auth.signUp({
-            email: cleanEmail,
-            password,
-            options: {
-              data: { role, name: name.trim(), org: newAccount.org },
-            },
-          });
-          if (authData?.user) {
-            targetId = authData.user.id;
-          }
-        }
-
-        // Upsert profile into public.profiles
-        await (supabase as any).from("profiles").upsert({
-          id: targetId,
-          email: cleanEmail,
-          name: name.trim(),
-          role,
-          org: newAccount.org || null,
-          updated_at: new Date().toISOString(),
-        });
-      } catch (sbErr) {
-        console.warn("[CampusVenture Auth] Supabase sync notice:", sbErr);
+      // Clear temporary registration flags
+      if (typeof window !== "undefined") {
+        window.sessionStorage.removeItem("cv_auth_flow");
+        window.localStorage.removeItem("cv_auth_flow");
+        window.sessionStorage.removeItem("cv_oauth_flow");
+        window.localStorage.removeItem("cv_oauth_flow");
       }
 
       setIsAuthModalOpen(false);

@@ -249,6 +249,17 @@ export function AuthDialog() {
     }
   }, [isAuthModalOpen, authModalDefaultRole, authModalDefaultMode, isAuthenticated, user?.role]);
 
+  // Keep auth flow in sync with view mode so backend verification knows when registration is active
+  useEffect(() => {
+    if (typeof window !== "undefined") {
+      const flow = mode === "register" ? "register" : "signin";
+      window.sessionStorage.setItem("cv_auth_flow", flow);
+      window.localStorage.setItem("cv_auth_flow", flow);
+      window.sessionStorage.setItem("cv_oauth_flow", flow);
+      window.localStorage.setItem("cv_oauth_flow", flow);
+    }
+  }, [mode]);
+
   // Switch role and clear all filled inputs so the new role starts completely fresh
   const handleRoleChange = (newRole: Role) => {
     setRole(newRole);
@@ -359,6 +370,10 @@ export function AuthDialog() {
     try {
       if (typeof window !== "undefined") {
         localStorage.setItem("cv_email_ver_pending", clean);
+        window.sessionStorage.setItem("cv_auth_flow", "register");
+        window.localStorage.setItem("cv_auth_flow", "register");
+        window.sessionStorage.setItem("cv_oauth_flow", "register");
+        window.localStorage.setItem("cv_oauth_flow", "register");
       }
       const redirectUrl =
         typeof window !== "undefined"
@@ -679,6 +694,13 @@ export function AuthDialog() {
       toast.info("Please verify your email address with the security code to complete registration.");
       handleSendOtp();
       return;
+    }
+
+    if (typeof window !== "undefined") {
+      window.sessionStorage.setItem("cv_auth_flow", "register");
+      window.localStorage.setItem("cv_auth_flow", "register");
+      window.sessionStorage.setItem("cv_oauth_flow", "register");
+      window.localStorage.setItem("cv_oauth_flow", "register");
     }
 
     setBusy(true);
