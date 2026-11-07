@@ -213,24 +213,33 @@ async function validateAndEnforceInstitutionalRole(
   const userEmail = (sessionUser.email || "").toLowerCase().trim();
   const meta = sessionUser.user_metadata || {};
   let dbProfile: any = null;
+  let dbChecked = false;
 
   // 1. Fetch persistent role directly from Supabase public.profiles
   try {
-    const { data } = await (supabase as any)
+    const { data, error } = await (supabase as any)
       .from("profiles")
       .select("id, email, name, role, org")
       .eq("id", sessionUser.id)
       .maybeSingle();
 
-    if (data) {
-      dbProfile = data;
-    } else {
-      const { data: byEmail } = await (supabase as any)
+    if (!error) {
+      dbChecked = true;
+      if (data) {
+        dbProfile = data;
+      }
+    }
+
+    if (!dbProfile && userEmail) {
+      const { data: byEmail, error: emailErr } = await (supabase as any)
         .from("profiles")
         .select("id, email, name, role, org")
         .ilike("email", userEmail)
         .maybeSingle();
-      if (byEmail) dbProfile = byEmail;
+      if (!emailErr) {
+        dbChecked = true;
+        if (byEmail) dbProfile = byEmail;
+      }
     }
   } catch (err) {
     console.warn("[CampusVenture Auth] Profile check notice:", err);
@@ -247,15 +256,22 @@ async function validateAndEnforceInstitutionalRole(
         window.sessionStorage.getItem("cv_oauth_flow")
       : null;
 
-  // If user has not registered yet (neither in database nor in registered users)
-  if (!dbProfile && !localAccount) {
-    // If the user is not in explicit registration flow, strictly reject non-registered users
+  // If user profile is not in the database (or deleted from database) and this is NOT a registration flow:
+  // Central database is authoritative.
+  const profileNotFound = dbChecked ? !dbProfile : (!dbProfile && !localAccount);
+  if (profileNotFound) {
+    // If the user is not in explicit registration flow, strictly reject non-registered / deleted users
     if (authFlow !== "register") {
       clearOAuthPendingRole();
       if (typeof window !== "undefined") {
         window.localStorage.removeItem("cv_oauth_flow");
         window.sessionStorage.removeItem("cv_oauth_flow");
         window.localStorage.removeItem(AUTH_STORAGE_KEY);
+      }
+      // Purge stale local account if it was deleted from DB
+      if (localAccount) {
+        const purged = currentAccounts.filter((a) => a.email.toLowerCase() !== userEmail);
+        saveRegisteredUsers(purged);
       }
       try {
         await supabase.auth.signOut();
@@ -343,8 +359,8 @@ async function validateAndEnforceInstitutionalRole(
     isDemo: false,
   };
 
-  // Sync to public.profiles table in Supabase if not yet present
-  if (!dbProfile) {
+  // Sync to public.profiles table in Supabase ONLY during registration flow
+  if (!dbProfile && authFlow === "register") {
     try {
       await (supabase as any).from("profiles").upsert({
         id: sessionUser.id,
@@ -457,10 +473,14 @@ export function AuthProvider({ children }: { children: ReactNode }) {
             }
           } else {
             setUser(null);
+            try {
+              window.localStorage.removeItem(AUTH_STORAGE_KEY);
+            } catch {
+              /* ignore */
+            }
             if (
               typeof window !== "undefined" &&
-              (window.location.pathname.includes("/app/student") ||
-                window.location.pathname.includes("/app/university"))
+              window.location.pathname.startsWith("/app")
             ) {
               window.location.href = "/";
             }
@@ -478,11 +498,67 @@ export function AuthProvider({ children }: { children: ReactNode }) {
               ) {
                 window.localStorage.removeItem(AUTH_STORAGE_KEY);
                 setUser(null);
+                if (typeof window !== "undefined" && window.location.pathname.startsWith("/app")) {
+                  window.location.href = "/";
+                }
               } else {
-                setUser({
-                  ...parsed,
-                  avatarInitials: getInitials(parsed.name),
-                });
+                // Verify with Supabase public.profiles if the profile still exists in database
+                let profileStillExists = true;
+                let activeProfile: any = null;
+                try {
+                  const { data: dbProf, error: dbErr } = await (supabase as any)
+                    .from("profiles")
+                    .select("id, email, name, role, org")
+                    .ilike("email", parsed.email)
+                    .maybeSingle();
+
+                  if (!dbErr) {
+                    if (!dbProf) {
+                      profileStillExists = false;
+                    } else {
+                      activeProfile = dbProf;
+                    }
+                  }
+                } catch {
+                  // Network error, keep cached
+                }
+
+                if (!profileStillExists) {
+                  // Profile was deleted from database: purge cached auth, wipe local storage, and boot out
+                  window.localStorage.removeItem(AUTH_STORAGE_KEY);
+                  const currentAccounts = loadRegisteredUsers();
+                  const purged = currentAccounts.filter(
+                    (a) => a.email.toLowerCase() !== parsed.email.toLowerCase()
+                  );
+                  saveRegisteredUsers(purged);
+                  setRegisteredUsers(purged);
+                  setUser(null);
+                  try {
+                    await supabase.auth.signOut();
+                  } catch {
+                    /* ignore */
+                  }
+                  if (typeof window !== "undefined" && window.location.pathname.startsWith("/app")) {
+                    window.location.href = "/";
+                  }
+                } else if (mounted) {
+                  const verifiedName = activeProfile?.name || parsed.name;
+                  const verifiedRole = (activeProfile?.role as Role) || parsed.role;
+                  const verifiedOrg = activeProfile?.org || parsed.org;
+                  const verifiedUser: AuthUser = {
+                    ...parsed,
+                    name: verifiedName,
+                    role: verifiedRole,
+                    org: verifiedOrg,
+                    avatarInitials: getInitials(verifiedName),
+                  };
+                  setUser(verifiedUser);
+                  try {
+                    window.localStorage.setItem(AUTH_STORAGE_KEY, JSON.stringify(verifiedUser));
+                  } catch {
+                    /* ignore */
+                  }
+                }
               }
             } catch {
               // Corrupt cache - leave user null
@@ -492,10 +568,21 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
         // 3. Hydrate registered users list from database public.profiles
         try {
-          const { data: dbProfiles } = await (supabase as any)
+          const { data: dbProfiles, error: dbErr } = await (supabase as any)
             .from("profiles")
             .select("id, email, name, role, org, created_at");
-          if (dbProfiles && Array.isArray(dbProfiles) && dbProfiles.length > 0 && mounted) {
+          if (!dbErr && dbProfiles && Array.isArray(dbProfiles) && mounted) {
+            const dbEmails = new Set(
+              dbProfiles
+                .filter((p: any) => p && p.email)
+                .map((p: any) => p.email.toLowerCase().trim())
+            );
+
+            // Filter out any stale local accounts whose profiles were deleted from the database
+            const validLocalAccounts = loadedAccounts.filter((a) =>
+              dbEmails.has(a.email.toLowerCase().trim())
+            );
+
             const mapped = dbProfiles.map((p: any) => ({
               id: p.id,
               email: p.email,
@@ -504,12 +591,14 @@ export function AuthProvider({ children }: { children: ReactNode }) {
               org: p.org || "CampusVenture",
               createdAt: p.created_at || new Date().toISOString(),
             }));
-            const combined = [...loadedAccounts];
+
+            const combined = [...validLocalAccounts];
             for (const m of mapped) {
               if (!combined.some((c) => c.email.toLowerCase() === m.email.toLowerCase())) {
                 combined.push(m);
               }
             }
+            saveRegisteredUsers(combined);
             setRegisteredUsers(combined);
           }
         } catch {
@@ -539,10 +628,14 @@ export function AuthProvider({ children }: { children: ReactNode }) {
           }
         } else {
           setUser(null);
+          try {
+            window.localStorage.removeItem(AUTH_STORAGE_KEY);
+          } catch {
+            /* ignore */
+          }
           if (
             typeof window !== "undefined" &&
-            (window.location.pathname.includes("/app/student") ||
-              window.location.pathname.includes("/app/university"))
+            window.location.pathname.startsWith("/app")
           ) {
             window.location.href = "/";
           }
@@ -553,6 +646,12 @@ export function AuthProvider({ children }: { children: ReactNode }) {
           window.localStorage.removeItem(AUTH_STORAGE_KEY);
         } catch {
           /* ignore */
+        }
+        if (
+          typeof window !== "undefined" &&
+          window.location.pathname.startsWith("/app")
+        ) {
+          window.location.href = "/";
         }
       }
     });
@@ -587,6 +686,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
       // 2. Fetch public.profiles to verify stored server-side role
       let dbProfile: any = null;
+      let dbChecked = false;
       try {
         const { data, error } = await (supabase as any)
           .from("profiles")
@@ -594,8 +694,11 @@ export function AuthProvider({ children }: { children: ReactNode }) {
           .ilike("email", cleanEmail)
           .maybeSingle();
 
-        if (!error && data) {
-          dbProfile = data;
+        if (!error) {
+          dbChecked = true;
+          if (data) {
+            dbProfile = data;
+          }
         }
       } catch (err) {
         console.warn("[CampusVenture Auth] Error checking profile existence:", err);
@@ -606,6 +709,30 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       const localAccount = currentAccounts.find(
         (acc) => acc.email.toLowerCase() === cleanEmail
       );
+
+      // If database was successfully queried and no profile exists:
+      // The profile was deleted from the database or never registered.
+      if (dbChecked && !dbProfile) {
+        if (localAccount) {
+          const purged = currentAccounts.filter(
+            (acc) => acc.email.toLowerCase() !== cleanEmail
+          );
+          saveRegisteredUsers(purged);
+          setRegisteredUsers(purged);
+        }
+        if (typeof window !== "undefined") {
+          window.localStorage.removeItem(AUTH_STORAGE_KEY);
+        }
+        try {
+          await supabase.auth.signOut();
+        } catch {
+          /* ignore */
+        }
+        return {
+          success: false,
+          error: "No account found with this email. Please register an account first.",
+        };
+      }
 
       // 3. Authenticate credentials via Supabase Auth and/or Local Store
       let authenticated = false;
@@ -690,21 +817,6 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       let userName = dbProfile?.name || authenticatedUser?.user_metadata?.name || localAccount?.name || cleanEmail.split("@")[0];
       let userOrg = dbProfile?.org || authenticatedUser?.user_metadata?.org || localAccount?.org || ROLE_PROFILES[actualRole]?.org || "CampusVenture";
 
-      // Sync to public.profiles table if missing
-      if (!dbProfile) {
-        try {
-          await (supabase as any).from("profiles").upsert({
-            id: authenticatedId,
-            email: cleanEmail,
-            name: userName,
-            role: actualRole,
-            org: userOrg,
-            updated_at: new Date().toISOString(),
-          });
-        } catch {
-          /* ignore */
-        }
-      }
 
       // 6. Build authenticated user strictly using server-validated role
       const authUser: AuthUser = {
@@ -967,25 +1079,43 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
         // Also check if profile exists in Supabase public.profiles
         let dbProfile: any = null;
+        let dbChecked = false;
         try {
-          const { data } = await (supabase as any)
+          const { data, error } = await (supabase as any)
             .from("profiles")
             .select("id, email, name, role, org")
             .ilike("email", cleanEmail)
             .maybeSingle();
-          if (data) dbProfile = data;
+          if (!error) {
+            dbChecked = true;
+            if (data) dbProfile = data;
+          }
         } catch {
           /* ignore */
         }
 
-        // In sign-in mode, reject non-registered users immediately!
-        if (!existing && !dbProfile) {
-          if (authMode === "signin") {
+        // In sign-in mode, reject non-registered or deleted profiles immediately!
+        if (authMode === "signin") {
+          const profileMissing = dbChecked ? !dbProfile : (!existing && !dbProfile);
+          if (profileMissing) {
+            if (existing) {
+              const purged = currentAccounts.filter((a) => a.email.toLowerCase() !== cleanEmail);
+              saveRegisteredUsers(purged);
+              setRegisteredUsers(purged);
+            }
+            if (typeof window !== "undefined") {
+              window.localStorage.removeItem(AUTH_STORAGE_KEY);
+            }
+            try {
+              await supabase.auth.signOut();
+            } catch {
+              /* ignore */
+            }
             const errMsg = "No account found with this email. Please register an account first.";
             toast.error(errMsg);
             return { success: false, error: errMsg };
           }
-
+        } else if (!existing && !dbProfile) {
           existing = {
             id: `usr-google-${Date.now().toString(36)}`,
             email: cleanEmail,
@@ -1015,43 +1145,45 @@ export function AuthProvider({ children }: { children: ReactNode }) {
           isDemo: false,
         };
 
-        // Sync directly to Supabase profiles
-        let targetId = existing?.id || dbProfile?.id;
-        try {
-          const { data: existingProf } = await (supabase as any)
-            .from("profiles")
-            .select("id")
-            .eq("email", cleanEmail)
-            .maybeSingle();
+        // Sync directly to Supabase profiles ONLY during registration or if profile already exists
+        if (authMode === "register" || dbProfile) {
+          let targetId = existing?.id || dbProfile?.id;
+          try {
+            const { data: existingProf } = await (supabase as any)
+              .from("profiles")
+              .select("id")
+              .eq("email", cleanEmail)
+              .maybeSingle();
 
-          if ((existingProf as any)?.id) {
-            targetId = (existingProf as any).id;
-          } else {
-            const { data: authData } = await supabase.auth.signUp({
-              email: cleanEmail,
-              password: "google_oauth_auth_" + cleanEmail,
-              options: {
-                data: { role, name: cleanName, org: defaultOrg },
-              },
-            });
-            if (authData?.user?.id) {
-              targetId = authData.user.id;
+            if ((existingProf as any)?.id) {
+              targetId = (existingProf as any).id;
+            } else if (authMode === "register") {
+              const { data: authData } = await supabase.auth.signUp({
+                email: cleanEmail,
+                password: "google_oauth_auth_" + cleanEmail,
+                options: {
+                  data: { role, name: cleanName, org: defaultOrg },
+                },
+              });
+              if (authData?.user?.id) {
+                targetId = authData.user.id;
+              }
             }
-          }
 
-          if (targetId && targetId.includes("-")) {
-            await (supabase as any).from("profiles").upsert({
-              id: targetId,
-              email: cleanEmail,
-              name: cleanName,
-              role,
-              org: defaultOrg,
-              updated_at: new Date().toISOString(),
-            });
-            authUser.id = targetId;
+            if (targetId && targetId.includes("-")) {
+              await (supabase as any).from("profiles").upsert({
+                id: targetId,
+                email: cleanEmail,
+                name: cleanName,
+                role: dbProfile?.role || role,
+                org: dbProfile?.org || defaultOrg,
+                updated_at: new Date().toISOString(),
+              });
+              authUser.id = targetId;
+            }
+          } catch (syncErr) {
+            console.warn("[CampusVenture Auth] Google profile sync notice:", syncErr);
           }
-        } catch (syncErr) {
-          console.warn("[CampusVenture Auth] Google profile sync notice:", syncErr);
         }
 
         setUser(authUser);
