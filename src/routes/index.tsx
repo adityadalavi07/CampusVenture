@@ -1,4 +1,5 @@
 import { createFileRoute, Link } from "@tanstack/react-router";
+import { useEffect } from "react";
 import {
   ArrowRight,
   BadgeCheck,
@@ -80,6 +81,16 @@ const STEPS = [
 
 function Landing() {
   const { user, isAuthenticated, openAuthModal, signOut } = useAuth();
+
+  // If user lands on root with recovery link from email, immediately direct to reset-password
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    const hash = window.location.hash || "";
+    const search = window.location.search || "";
+    if (hash.includes("type=recovery") || search.includes("type=recovery")) {
+      window.location.replace(`/reset-password${search}${hash}`);
+    }
+  }, []);
 
   return (
     <div className="min-h-screen bg-background">

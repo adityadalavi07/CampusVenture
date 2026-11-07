@@ -261,34 +261,6 @@ export function AuthDialog() {
     }
   }, [mode]);
 
-  // Check if instructed to auto open auth modal (e.g. redirected from reset-password or URL param)
-  useEffect(() => {
-    if (typeof window === "undefined") return;
-    const autoOpen = window.sessionStorage.getItem("cv_auto_open_auth");
-    if (autoOpen === "signin" || autoOpen === "register" || autoOpen === "forgot") {
-      window.sessionStorage.removeItem("cv_auto_open_auth");
-      const prefillEmail = window.sessionStorage.getItem("cv_prefill_email");
-      if (prefillEmail) {
-        window.sessionStorage.removeItem("cv_prefill_email");
-        setFEmail(prefillEmail);
-      }
-      openAuthModal(undefined, autoOpen);
-      return;
-    }
-
-    try {
-      const url = new URL(window.location.href);
-      const authParam = url.searchParams.get("auth");
-      if (authParam === "signin" || authParam === "register" || authParam === "forgot") {
-        url.searchParams.delete("auth");
-        window.history.replaceState({}, document.title, url.pathname + (url.search ? url.search : "") + url.hash);
-        openAuthModal(undefined, authParam as "signin" | "register" | "forgot");
-      }
-    } catch {
-      /* ignore */
-    }
-  }, [openAuthModal]);
-
   // Switch role and clear all filled inputs so the new role starts completely fresh
   const handleRoleChange = (newRole: Role) => {
     setRole(newRole);
@@ -892,6 +864,12 @@ export function AuthDialog() {
   };
 
   const isEmailVerified = verOk && verEmail === fEmail.trim().toLowerCase();
+
+  // On /reset-password, users are resetting their credentials directly on the page.
+  // Never show or open the auth dialog modal over the reset-password view.
+  if (typeof window !== "undefined" && window.location.pathname.startsWith("/reset-password")) {
+    return null;
+  }
 
   return (
     <Dialog open={isAuthModalOpen} onOpenChange={(open) => !open && closeAuthModal()}>

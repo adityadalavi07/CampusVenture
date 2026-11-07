@@ -271,14 +271,8 @@ function ResetPasswordPage() {
                 <Button
                   className="w-full gap-2 mt-4"
                   onClick={() => {
-                    if (typeof window !== "undefined") {
-                      window.sessionStorage.setItem("cv_auto_open_auth", "signin");
-                      if (userEmail) {
-                        window.sessionStorage.setItem("cv_prefill_email", userEmail);
-                      }
-                    }
-                    openAuthModal(undefined, "signin");
                     navigate({ to: "/" });
+                    setTimeout(() => openAuthModal(), 300);
                   }}
                 >
                   Sign In Now <ArrowRight className="size-4" />
@@ -295,11 +289,8 @@ function ResetPasswordPage() {
                       size="sm"
                       className="w-full text-xs font-semibold"
                       onClick={() => {
-                        if (typeof window !== "undefined") {
-                          window.sessionStorage.setItem("cv_auto_open_auth", "forgot");
-                        }
-                        openAuthModal(undefined, "forgot");
                         navigate({ to: "/" });
+                        setTimeout(() => openAuthModal(undefined, "forgot"), 300);
                       }}
                     >
                       Request New Reset Link
