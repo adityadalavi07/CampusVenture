@@ -146,28 +146,6 @@ export function AuthGuard({ requiredRole, children }: AuthGuardProps) {
             </div>
 
             <div className="flex flex-col gap-2.5">
-              {requiredRole === "university" && (
-                <Button
-                  onClick={async () => {
-                    await signInWithGoogle("university", "252921043@sguk.ac.in", "SGU Incubation & Innovation Cell", "signin");
-                  }}
-                  className="w-full flex items-center justify-center gap-2 bg-purple-600 hover:bg-purple-700 text-white font-medium"
-                >
-                  <Building2 className="size-4" />
-                  Switch to SGU University Portal (252921043@sguk.ac.in)
-                </Button>
-              )}
-              {requiredRole === "student" && (
-                <Button
-                  onClick={async () => {
-                    await signInWithGoogle("student", "252921389@sguk.ac.in", "SGU Student Founder", "signin");
-                  }}
-                  className="w-full flex items-center justify-center gap-2 bg-emerald-600 hover:bg-emerald-700 text-white font-medium"
-                >
-                  <GraduationCap className="size-4" />
-                  Switch to SGU Student Account (252921389@sguk.ac.in)
-                </Button>
-              )}
               <Button
                 onClick={() => {
                   signOut();
@@ -248,39 +226,6 @@ export function AuthGuard({ requiredRole, children }: AuthGuardProps) {
             </div>
 
             <div className="flex flex-col gap-2.5">
-              {requiredRole === "university" && (
-                <Button
-                  onClick={async () => {
-                    await signInWithGoogle("university", "252921043@sguk.ac.in", "SGU Incubation & Innovation Cell", "signin");
-                  }}
-                  className="w-full flex items-center justify-center gap-2 bg-purple-600 hover:bg-purple-700 text-white font-medium"
-                >
-                  <Building2 className="size-4" />
-                  Switch to SGU University Portal (252921043@sguk.ac.in)
-                </Button>
-              )}
-              {requiredRole === "student" && (
-                <Button
-                  onClick={async () => {
-                    await signInWithGoogle("student", "252921389@sguk.ac.in", "SGU Student Founder", "signin");
-                  }}
-                  className="w-full flex items-center justify-center gap-2 bg-emerald-600 hover:bg-emerald-700 text-white font-medium"
-                >
-                  <GraduationCap className="size-4" />
-                  Switch to SGU Student Account (252921389@sguk.ac.in)
-                </Button>
-              )}
-              {requiredRole === "investor" && (
-                <Button
-                  onClick={async () => {
-                    await signInWithGoogle("investor", "jonecornar@gmail.com", "Jone Cornar", "signin");
-                  }}
-                  className="w-full flex items-center justify-center gap-2 bg-blue-600 hover:bg-blue-700 text-white font-medium"
-                >
-                  <LineChart className="size-4" />
-                  Switch to Verified Investor (jonecornar@gmail.com)
-                </Button>
-              )}
               <Button
                 onClick={() => {
                   signOut();
