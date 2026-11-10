@@ -1,3 +1,4 @@
+// CampusVenture Server — Nitro entry point (gemini-2.0-flash, v2)
 import "./lib/error-capture";
 
 import { consumeLastCapturedError } from "./lib/error-capture";

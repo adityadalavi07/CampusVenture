@@ -241,7 +241,7 @@ Perform deep institutional due diligence. Score truthfully — a weak idea shoul
 
     JSON.parse(cleaned); // throws if invalid — caught below
 
-    return res.status(200).json({ success: true, rawJson: cleaned, provider: "gemini-1.5-flash" });
+    return res.status(200).json({ success: true, rawJson: cleaned, provider: "gemini-2.0-flash" });
   } catch (err) {
     console.error("[AI Analyze] Fatal error calling Gemini:", err);
     return res.status(200).json({

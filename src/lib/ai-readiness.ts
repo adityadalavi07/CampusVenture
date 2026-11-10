@@ -354,7 +354,7 @@ async function callGeminiAPI(
   systemPrompt: string,
   userPrompt: string,
 ): Promise<string> {
-  const selectedModel = model || "gemini-1.5-flash";
+  const selectedModel = model || "gemini-2.0-flash";
   const url = `https://generativelanguage.googleapis.com/v1beta/models/${selectedModel}:generateContent?key=${apiKey}`;
 
   const response = await fetch(url, {
@@ -995,7 +995,7 @@ export async function runAIReadinessAnalysis(
         recommendations: Array.isArray(parsed.recommendations) ? parsed.recommendations.slice(0, 4) : [],
         honestyLevel,
         providerUsed: "gemini",
-        modelUsed: "gemini-1.5-flash",
+        modelUsed: "gemini-2.0-flash (Secure Server AI)",
         assessedAt: new Date().toISOString(),
       };
 
@@ -1025,7 +1025,7 @@ export async function testAIConnection(
 
   try {
     if (config.provider === "gemini") {
-      const model = config.model || "gemini-1.5-flash";
+      const model = config.model || "gemini-2.0-flash";
       const url = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${config.apiKey.trim()}`;
       const res = await fetch(url, {
         method: "POST",
