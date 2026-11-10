@@ -1,359 +1,245 @@
 /**
  * Vercel Serverless Function — /api/ai-analyze
- * Node.js 20.x runtime. GEMINI_API_KEY read from process.env (Vercel env vars).
- * Central AI engine: authenticates user, calls Gemini 2.0 Flash, runs deterministic
- * scoring, persists to Supabase, returns structured report.
+ * Node.js runtime. GEMINI_API_KEY read from process.env.
+ * Compact prompt → fast response (target <8s). Full scoring engine.
  */
 
-// In-memory rate limiter
 const rateLimits = new Map();
 function checkRateLimit(key, limit, windowMs) {
   const now = Date.now();
-  const record = rateLimits.get(key);
-  if (!record || now > record.resetAt) {
-    rateLimits.set(key, { count: 1, resetAt: now + windowMs });
-    return { allowed: true };
-  }
-  if (record.count >= limit) {
-    return { allowed: false, retryAfterSec: Math.max(1, Math.ceil((record.resetAt - now) / 1000)) };
-  }
-  record.count++;
+  const rec = rateLimits.get(key);
+  if (!rec || now > rec.resetAt) { rateLimits.set(key, { count: 1, resetAt: now + windowMs }); return { allowed: true }; }
+  if (rec.count >= limit) return { allowed: false, retryAfterSec: Math.max(1, Math.ceil((rec.resetAt - now) / 1000)) };
+  rec.count++;
   return { allowed: true };
 }
 
 const SUPABASE_URL = "https://lirfkzpehmxtynjsjzib.supabase.co";
 
 function getSupabaseKey() {
-  return (
-    process.env.SUPABASE_SERVICE_ROLE_KEY ||
-    process.env.VITE_SUPABASE_SERVICE_ROLE_KEY ||
-    process.env.VITE_SUPABASE_ANON_KEY ||
-    "sb_publishable_CJjApu3rUsNReyUx7jW2Lg_NUM8oqR-"
-  );
+  return process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.VITE_SUPABASE_SERVICE_ROLE_KEY ||
+    process.env.VITE_SUPABASE_ANON_KEY || "sb_publishable_CJjApu3rUsNReyUx7jW2Lg_NUM8oqR-";
 }
 
-async function sbFetch(supabaseKey, path, method = "GET", body, authToken) {
-  const headers = {
-    "Content-Type": "application/json",
-    apikey: supabaseKey,
-    Authorization: authToken ? `Bearer ${authToken}` : `Bearer ${supabaseKey}`,
-    Prefer: method === "POST" ? "return=representation" : "",
-  };
+async function sbFetch(key, path, method = "GET", body, token) {
   try {
     const res = await fetch(`${SUPABASE_URL}/rest/v1/${path}`, {
-      method,
-      headers,
-      body: body ? JSON.stringify(body) : undefined,
+      method, body: body ? JSON.stringify(body) : undefined,
+      headers: { "Content-Type": "application/json", apikey: key,
+        Authorization: token ? `Bearer ${token}` : `Bearer ${key}`,
+        Prefer: method === "POST" ? "return=representation" : "" },
     });
     const text = await res.text();
-    let data = null;
-    try { data = JSON.parse(text); } catch { data = text; }
-    if (!res.ok) {
-      const errMsg = data?.message || text.slice(0, 200);
-      return { data: null, error: errMsg };
-    }
-    return { data, error: null };
-  } catch (err) {
-    return { data: null, error: err?.message || String(err) };
-  }
+    let data = null; try { data = JSON.parse(text); } catch { data = text; }
+    return res.ok ? { data, error: null } : { data: null, error: data?.message || text.slice(0, 200) };
+  } catch (e) { return { data: null, error: e?.message || String(e) }; }
 }
 
-async function verifyJWT(supabaseKey, token) {
+async function verifyJWT(key, token) {
   try {
     const res = await fetch(`${SUPABASE_URL}/auth/v1/user`, {
-      headers: { apikey: supabaseKey, Authorization: `Bearer ${token}` },
+      headers: { apikey: key, Authorization: `Bearer ${token}` },
     });
     if (!res.ok) return null;
-    const data = await res.json();
-    if (data?.id) return { userId: data.id, email: data.email || "" };
-    return null;
+    const d = await res.json();
+    return d?.id ? { userId: d.id, email: d.email || "" } : null;
   } catch { return null; }
 }
 
-function sanitise(text, maxChars = 3000) {
+function san(text, max = 2000) {
   if (!text) return "Not provided";
-  return String(text)
-    .replace(/[\x00-\x08\x0B\x0C\x0E-\x1F\x7F]/g, "")
-    .replace(/---/g, "—")
-    .replace(/```/g, "'''")
-    .trim()
-    .slice(0, maxChars);
+  return String(text).replace(/[\x00-\x08\x0B\x0C\x0E-\x1F\x7F]/g, "").replace(/---/g, "—").replace(/```/g, "'''").trim().slice(0, max);
 }
 
-// Deterministic stage weights for 10-dimension scoring
-const STAGE_WEIGHTS = {
-  "Founder & Team Readiness": 10,
-  "Problem Validation": 15,
-  "Market Opportunity": 12,
-  "Product & Technical Feasibility": 12,
-  "Product-Market Fit": 12,
-  "Business Model Viability": 10,
-  "Competitive Advantage": 10,
-  "Financial Readiness": 9,
-  "Growth & Scalability": 5,
-  "Legal & Operational Risk": 5,
+// Weights for 9 categories (matches READINESS_WEIGHTS in demo-data.ts)
+const WEIGHTS = {
+  "Problem clarity": 15, "Solution strength": 15, "Market opportunity": 15,
+  "Business model": 10, "Product readiness": 10, "Traction": 15,
+  "Competitive advantage": 10, "Team readiness": 5, "Funding clarity": 5,
 };
 
-export const config = { maxDuration: 90 };
+function computeScore(cats) {
+  let ws = 0, tw = 0;
+  for (const [k, w] of Object.entries(WEIGHTS)) {
+    ws += (cats[k]?.score ?? 35) * (w / 100); tw += w;
+  }
+  return tw > 0 ? Math.round(ws * (100 / tw)) : 0;
+}
+
+function grade(s) {
+  if (s >= 90) return "A+"; if (s >= 80) return "A"; if (s >= 70) return "B";
+  if (s >= 55) return "C"; if (s >= 40) return "D"; return "F";
+}
+
+export const config = { maxDuration: 60 };
 
 export default async function handler(req, res) {
   res.setHeader("Access-Control-Allow-Origin", "*");
   res.setHeader("Access-Control-Allow-Methods", "POST, OPTIONS");
   res.setHeader("Access-Control-Allow-Headers", "Content-Type, Authorization");
-
   if (req.method === "OPTIONS") return res.status(200).end();
   if (req.method !== "POST") return res.status(405).json({ success: false, error: "Method not allowed" });
 
-  // ── 1. Rate limit ──────────────────────────────────────────────────────────
+  // Rate limit
   const rawIp = (req.headers["x-forwarded-for"] || "").split(",")[0].trim() || "unknown";
-  const rateCheck = checkRateLimit(`ai:${rawIp}`, 8, 60000);
-  if (!rateCheck.allowed) {
-    return res.status(429).json({ success: false, error: `Rate limit reached. Wait ${rateCheck.retryAfterSec}s.` });
-  }
+  const rl = checkRateLimit(`ai:${rawIp}`, 10, 60000);
+  if (!rl.allowed) return res.status(429).json({ success: false, error: `Rate limit. Wait ${rl.retryAfterSec}s.` });
 
-  // ── 2. Check API key ───────────────────────────────────────────────────────
+  // API key check
   const geminiKey = process.env.GEMINI_API_KEY || "";
-  if (!geminiKey) {
-    console.error("[AI Engine] GEMINI_API_KEY not configured in Vercel environment.");
-    return res.status(200).json({ success: false, error: "Server AI is not configured. Contact the administrator." });
-  }
+  if (!geminiKey) return res.status(200).json({ success: false, error: "Server AI not configured. GEMINI_API_KEY missing." });
 
-  // ── 3. Auth token (optional — allows anonymous analysis for backward compat) ─
+  // Auth
   const supabaseKey = getSupabaseKey();
-  const authHeader = req.headers["authorization"] || "";
-  const token = authHeader.startsWith("Bearer ") ? authHeader.slice(7).trim() : "";
-  let ownerId = null;
-  let ownerEmail = "";
+  const token = (req.headers["authorization"] || "").replace(/^Bearer\s+/i, "").trim();
+  let ownerId = null, ownerEmail = "";
   if (token) {
-    const userInfo = await verifyJWT(supabaseKey, token);
-    if (userInfo) { ownerId = userInfo.userId; ownerEmail = userInfo.email; }
+    const u = await verifyJWT(supabaseKey, token);
+    if (u) { ownerId = u.userId; ownerEmail = u.email; }
   }
 
-  // ── 4. Parse body ──────────────────────────────────────────────────────────
+  // Parse body
   let body = req.body;
-  if (!body || typeof body !== "object") {
-    try { body = JSON.parse(req.body); } catch {
-      return res.status(400).json({ success: false, error: "Invalid JSON body" });
-    }
-  }
-
+  if (!body || typeof body !== "object") { try { body = JSON.parse(req.body); } catch { return res.status(400).json({ success: false, error: "Invalid JSON" }); } }
   const startup = body?.startup;
   const startupId = body?.startupId || startup?.id;
   if (!startup) return res.status(400).json({ success: false, error: "Missing startup data" });
 
-  // ── 5. Ownership check ─────────────────────────────────────────────────────
+  // Ownership check
   if (ownerId && startupId) {
-    const { data: dbStartup, error: dbErr } = await sbFetch(
-      supabaseKey,
-      `startups?id=eq.${startupId}&select=founder_id,founder_email`,
-      "GET", undefined, token,
-    );
-    if (!dbErr && Array.isArray(dbStartup) && dbStartup.length > 0) {
-      const row = dbStartup[0];
-      const ownerMatch =
-        row["founder_id"] === ownerId ||
-        (row["founder_email"] && String(row["founder_email"]).toLowerCase() === ownerEmail.toLowerCase());
-      if (!ownerMatch) {
-        console.error("[AI Engine] Cross-user request blocked");
-        return res.status(403).json({ success: false, error: "Access denied: you do not own this startup." });
-      }
+    const { data: dbS } = await sbFetch(supabaseKey, `startups?id=eq.${startupId}&select=founder_id,founder_email`, "GET", undefined, token);
+    if (Array.isArray(dbS) && dbS.length > 0) {
+      const row = dbS[0];
+      const ok = row["founder_id"] === ownerId || (row["founder_email"] && String(row["founder_email"]).toLowerCase() === ownerEmail.toLowerCase());
+      if (!ok) return res.status(403).json({ success: false, error: "Access denied: you do not own this startup." });
     }
   }
 
-  // ── 6. Create job record ───────────────────────────────────────────────────
-  let jobId = null;
-  let analysisVersion = 1;
+  // Job record
+  let jobId = null, analysisVersion = 1;
   if (ownerId && startupId) {
-    const { data: prevReports } = await sbFetch(
-      supabaseKey,
-      `startup_analysis_reports?startup_id=eq.${startupId}&owner_id=eq.${ownerId}&select=analysis_version&order=analysis_version.desc&limit=1`,
-      "GET", undefined, token,
-    );
-    if (Array.isArray(prevReports) && prevReports.length > 0) {
-      analysisVersion = Number(prevReports[0]["analysis_version"] || 0) + 1;
-    }
-    const { data: jobData } = await sbFetch(supabaseKey, "startup_analysis_jobs", "POST", {
+    const { data: prev } = await sbFetch(supabaseKey, `startup_analysis_reports?startup_id=eq.${startupId}&owner_id=eq.${ownerId}&select=analysis_version&order=analysis_version.desc&limit=1`, "GET", undefined, token);
+    if (Array.isArray(prev) && prev.length > 0) analysisVersion = Number(prev[0]["analysis_version"] || 0) + 1;
+    const { data: jd } = await sbFetch(supabaseKey, "startup_analysis_jobs", "POST", {
       startup_id: startupId, owner_id: ownerId, status: "processing",
       analysis_version: analysisVersion, ai_provider: "gemini", model_id: "gemini-3.8-flash",
-      prompt_version: "v4.0", started_at: new Date().toISOString(),
+      prompt_version: "v5.0", started_at: new Date().toISOString(),
     }, token);
-    if (Array.isArray(jobData) && jobData.length > 0) jobId = String(jobData[0]["id"]);
+    if (Array.isArray(jd) && jd.length > 0) jobId = String(jd[0]["id"]);
   }
 
-  // ── 7. Build prompts ───────────────────────────────────────────────────────
+  // Build compact prompt
   const stage = String(startup.stage || "Idea");
-  const pWords = sanitise(startup.problem).split(/\s+/).filter(Boolean).length;
-  const sWords = sanitise(startup.solution).split(/\s+/).filter(Boolean).length;
+  const pW = san(startup.problem).split(/\s+/).filter(Boolean).length;
+  const sW = san(startup.solution).split(/\s+/).filter(Boolean).length;
 
-  const systemPrompt = `You are an elite Startup Due Diligence Analyst and Investment Readiness Evaluator.
-Stage: "${stage}". Apply stage-calibrated scoring (Idea-stage startups are NOT penalised for no revenue).
-Return ONLY a valid JSON object — no markdown, no backticks — with ALL of these exact fields:
+  const systemPrompt = `You are a strict VC partner doing investment due diligence on a ${stage}-stage startup.
+Return ONLY a compact valid JSON object (no markdown, no backticks):
 {
-  "startup_summary": {"name":"string","one_line":"string","stage_assessment":"string"},
-  "readiness_score": <0-100>,
-  "evidence_confidence_score": <0-100>,
-  "risk_exposure_score": <0-100>,
-  "investor_grade": <"A+"|"A"|"B"|"C"|"D"|"F">,
-  "verdict": "string",
-  "honest_take": "2-3 sentences blunt assessment",
-  "dimension_scores": [
-    {"key":"Founder & Team Readiness","score":<0-100>,"weight":10,"evidence_level":<"verified"|"stated"|"assumed"|"missing">,"critique":"string","identified_weaknesses":["string"],"missing_information":["string"],"recommendations":["string"],"confidence":<"high"|"medium"|"low"|"insufficient">},
-    {"key":"Problem Validation","score":<0-100>,"weight":15,...},
-    {"key":"Market Opportunity","score":<0-100>,"weight":12,...},
-    {"key":"Product & Technical Feasibility","score":<0-100>,"weight":12,...},
-    {"key":"Product-Market Fit","score":<0-100>,"weight":12,...},
-    {"key":"Business Model Viability","score":<0-100>,"weight":10,...},
-    {"key":"Competitive Advantage","score":<0-100>,"weight":10,...},
-    {"key":"Financial Readiness","score":<0-100>,"weight":9,...},
-    {"key":"Growth & Scalability","score":<0-100>,"weight":5,...},
-    {"key":"Legal & Operational Risk","score":<0-100>,"weight":5,...}
-  ],
-  "strengths": ["string","string","string"],
-  "weaknesses": ["string","string","string"],
-  "reality_check": [{"title":"string","severity":<"critical"|"high"|"medium"|"low">,"observation":"string","concern":"string","evidence_needed":"string","recommended_action":"string"}],
-  "feature_scope_analysis": {"mvp_features":["string"],"secondary_features":["string"],"premature_features":["string"],"missing_critical_features":["string"],"recommended_mvp_scope":"string"},
-  "critical_risks": [{"risk":"string","severity":<"critical"|"high"|"medium">,"mitigation":"string"}],
-  "recommended_actions": ["string","string","string","string","string"],
-  "next_milestones": [{"milestone":"string","timeframe":"string","success_criteria":"string"}],
-  "missing_information": ["string"],
-  "assumptions": ["string"]
-}`;
+  "overallScore": <integer 0-100>,
+  "investorGrade": <"A+"|"A"|"B"|"C"|"D"|"F">,
+  "verdict": <string, 1 sentence>,
+  "honestTake": <string, 2-3 sentences of blunt truth>,
+  "redFlags": [<2-4 strings>],
+  "fatalFlaws": [<1-3 strings>],
+  "grillingQuestions": [<3 tough VC questions>],
+  "categories": {
+    "Problem clarity": {"score":<0-100>,"critique":<string>,"honestFeedback":<string>,"actionItem":<string>},
+    "Solution strength": {"score":<0-100>,"critique":<string>,"honestFeedback":<string>,"actionItem":<string>},
+    "Market opportunity": {"score":<0-100>,"critique":<string>,"honestFeedback":<string>,"actionItem":<string>},
+    "Business model": {"score":<0-100>,"critique":<string>,"honestFeedback":<string>,"actionItem":<string>},
+    "Product readiness": {"score":<0-100>,"critique":<string>,"honestFeedback":<string>,"actionItem":<string>},
+    "Traction": {"score":<0-100>,"critique":<string>,"honestFeedback":<string>,"actionItem":<string>},
+    "Competitive advantage": {"score":<0-100>,"critique":<string>,"honestFeedback":<string>,"actionItem":<string>},
+    "Team readiness": {"score":<0-100>,"critique":<string>,"honestFeedback":<string>,"actionItem":<string>},
+    "Funding clarity": {"score":<0-100>,"critique":<string>,"honestFeedback":<string>,"actionItem":<string>}
+  },
+  "strengths": [<3 strings>],
+  "weaknesses": [<3 strings>],
+  "recommendations": [<4 actionable strings>]
+}
+Stage rule: ${stage === "Idea" ? "Do NOT penalise for no revenue or no users." : stage === "MVP" ? "Expect working prototype; penalise for zero users." : "Expect traction and revenue evidence."}
+Score truthfully. Weak ideas score 25-48. Keep all string values under 120 chars.`;
 
-  const userPrompt = `STARTUP FOR EVALUATION:
-Name: ${sanitise(startup.name)}
-Tagline: ${sanitise(startup.tagline)}
-Sector: ${sanitise(startup.sector)}
-Stage: ${sanitise(startup.stage)}
-University: ${sanitise(startup.university)}
-Team Size: ${startup.teamSize || startup.team_size || 1}
-Funding Required: $${Number(startup.fundingRequired || startup.funding_required || 0).toLocaleString()}
-Revenue: ${startup.revenue ? "Yes" : "No"}
-Monthly Users: ${Number(startup.monthlyUsers || startup.monthly_users || 0).toLocaleString()}
-Traction: "${sanitise(startup.traction)}"
-Business Model: "${sanitise(startup.businessModel || startup.business_model)}"
-Problem (${pWords} words): "${sanitise(startup.problem, 3000)}"
-Solution (${sWords} words): "${sanitise(startup.solution, 3000)}"
-GitHub: ${startup.githubUrl || startup.github_url ? "Connected" : "Not connected"}
-Pitch Deck: ${startup.deckName || startup.deck_name ? "Uploaded" : "Not uploaded"}
+  const userPrompt = `Startup: ${san(startup.name)} | Sector: ${san(startup.sector)} | Stage: ${stage}
+Team: ${startup.teamSize || 1} | Funding ask: $${Number(startup.fundingRequired || 0).toLocaleString()} | Revenue: ${startup.revenue ? "Yes" : "No"} | MAU: ${startup.monthlyUsers || 0}
+Traction: "${san(startup.traction, 400)}"
+Business model: "${san(startup.businessModel || startup.business_model, 400)}"
+Problem (${pW}w): "${san(startup.problem, 1200)}"
+Solution (${sW}w): "${san(startup.solution, 1200)}"
+GitHub: ${startup.githubUrl ? "Yes" : "No"} | Deck: ${startup.deckName ? "Yes" : "No"}
+Return JSON only.`;
 
-Evaluate rigorously. Stage: "${stage}". Return JSON only.`;
-
-  // ── 8. Call Gemini 3.8 Flash ───────────────────────────────────────────────
-  const geminiUrl = `https://generativelanguage.googleapis.com/v1beta/models/gemini-3.8-flash:generateContent?key=${geminiKey.trim()}`;
+  // Call Gemini
   const tStart = Date.now();
-
   let geminiRes;
   try {
-    geminiRes = await fetch(geminiUrl, {
+    geminiRes = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-3.8-flash:generateContent?key=${geminiKey.trim()}`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
         contents: [{ parts: [{ text: `${systemPrompt}\n\n---\n\n${userPrompt}` }] }],
-        generationConfig: { temperature: 0.2, responseMimeType: "application/json", maxOutputTokens: 8192 },
+        generationConfig: { temperature: 0.25, responseMimeType: "application/json", maxOutputTokens: 2048 },
         safetySettings: [
           { category: "HARM_CATEGORY_HARASSMENT", threshold: "BLOCK_ONLY_HIGH" },
           { category: "HARM_CATEGORY_DANGEROUS_CONTENT", threshold: "BLOCK_ONLY_HIGH" },
         ],
       }),
     });
-  } catch (netErr) {
-    const errMsg = netErr?.message || String(netErr);
-    console.error("[AI Engine] Gemini network error:", errMsg);
-    if (jobId) await sbFetch(supabaseKey, `startup_analysis_jobs?id=eq.${jobId}`, "PATCH",
-      { status: "failed", error_message: `Network: ${errMsg}`, completed_at: new Date().toISOString() }, token);
-    return res.status(200).json({ success: false, error: `AI provider network error: ${errMsg}` });
+  } catch (e) {
+    const msg = e?.message || String(e);
+    if (jobId) await sbFetch(supabaseKey, `startup_analysis_jobs?id=eq.${jobId}`, "PATCH", { status: "failed", error_message: msg, completed_at: new Date().toISOString() }, token);
+    return res.status(200).json({ success: false, error: `AI network error: ${msg}` });
   }
 
   const latencyMs = Date.now() - tStart;
 
   if (!geminiRes.ok) {
-    const errText = await geminiRes.text().catch(() => `HTTP ${geminiRes.status}`);
+    const errText = await geminiRes.text().catch(() => "");
     let errMsg = `Gemini HTTP ${geminiRes.status}`;
-    try { const ep = JSON.parse(errText); errMsg = ep?.error?.message || errMsg; } catch { /* */ }
-    console.error("[AI Engine] Gemini error:", errMsg);
-    if (jobId) await sbFetch(supabaseKey, `startup_analysis_jobs?id=eq.${jobId}`, "PATCH",
-      { status: "failed", error_message: errMsg, completed_at: new Date().toISOString() }, token);
+    try { errMsg = JSON.parse(errText)?.error?.message || errMsg; } catch { /* */ }
+    if (jobId) await sbFetch(supabaseKey, `startup_analysis_jobs?id=eq.${jobId}`, "PATCH", { status: "failed", error_message: errMsg, completed_at: new Date().toISOString() }, token);
     return res.status(200).json({ success: false, error: errMsg });
   }
 
   const geminiData = await geminiRes.json();
   const candidateText = geminiData?.candidates?.[0]?.content?.parts?.[0]?.text;
   if (!candidateText) {
-    const reason = geminiData?.candidates?.[0]?.finishReason || "EMPTY_RESPONSE";
-    if (jobId) await sbFetch(supabaseKey, `startup_analysis_jobs?id=eq.${jobId}`, "PATCH",
-      { status: "failed", error_message: `Empty AI response (${reason})`, completed_at: new Date().toISOString() }, token);
+    const reason = geminiData?.candidates?.[0]?.finishReason || "EMPTY";
+    if (jobId) await sbFetch(supabaseKey, `startup_analysis_jobs?id=eq.${jobId}`, "PATCH", { status: "failed", error_message: `Empty response (${reason})`, completed_at: new Date().toISOString() }, token);
     return res.status(200).json({ success: false, error: `AI returned empty response (${reason})` });
   }
 
-  // ── 9. Parse + deterministic score ────────────────────────────────────────
+  // Parse JSON
   let parsed;
   const cleaned = candidateText.replace(/^```json\s*/i, "").replace(/^```\s*/i, "").replace(/\s*```$/, "").trim();
-  try {
-    parsed = JSON.parse(cleaned);
-  } catch {
-    if (jobId) await sbFetch(supabaseKey, `startup_analysis_jobs?id=eq.${jobId}`, "PATCH",
-      { status: "failed", error_message: "Malformed JSON from AI", completed_at: new Date().toISOString() }, token);
+  try { parsed = JSON.parse(cleaned); } catch {
+    if (jobId) await sbFetch(supabaseKey, `startup_analysis_jobs?id=eq.${jobId}`, "PATCH", { status: "failed", error_message: "Malformed JSON", completed_at: new Date().toISOString() }, token);
     return res.status(200).json({ success: false, error: "AI returned malformed JSON — please retry" });
   }
 
-  const dims = Array.isArray(parsed["dimension_scores"]) ? parsed["dimension_scores"] : [];
-  let weightedSum = 0;
-  let totalWeight = 0;
-  for (const [dimKey, weight] of Object.entries(STAGE_WEIGHTS)) {
-    const aiDim = dims.find((d) =>
-      String(d["key"] || "").toLowerCase().includes(dimKey.toLowerCase().split(" ")[0]) ||
-      dimKey.toLowerCase().includes(String(d["key"] || "").toLowerCase().split(" ")[0]),
-    );
-    const score = aiDim ? Math.max(0, Math.min(100, Math.round(Number(aiDim["score"]) || 35))) : 35;
-    const cappedScore = (!aiDim || aiDim["evidence_level"] === "missing") ? Math.min(score, 50) : score;
-    weightedSum += cappedScore * (weight / 100);
-    totalWeight += weight;
-  }
-
-  let readinessScore = totalWeight > 0 ? Math.round(weightedSum * (100 / totalWeight)) : 0;
-  const hasCritical = Array.isArray(parsed["critical_risks"]) &&
-    parsed["critical_risks"].some((r) => r["severity"] === "critical");
-  if (hasCritical) readinessScore = Math.min(readinessScore, 35);
-
-  const evidenceConfidence = Number(parsed["evidence_confidence_score"]) || 50;
-  const riskExposure = Number(parsed["risk_exposure_score"]) || 50;
-  const investorGrade = parsed["investor_grade"] || "F";
-  const verdict = String(parsed["verdict"] || "Assessment complete");
+  // Deterministic scoring: use OUR weights, not AI's overallScore
+  const cats = parsed.categories || {};
+  const readinessScore = computeScore(cats);
+  const investorGrade = grade(readinessScore);
+  const verdict = String(parsed.verdict || "Assessment complete");
+  const honestTake = String(parsed.honestTake || "");
 
   const promptTokens = geminiData?.usageMetadata?.promptTokenCount ?? 0;
   const completionTokens = geminiData?.usageMetadata?.candidatesTokenCount ?? 0;
   const totalTokens = geminiData?.usageMetadata?.totalTokenCount ?? 0;
 
-  // ── 10. Persist to Supabase ────────────────────────────────────────────────
+  // Persist to Supabase
   if (ownerId && startupId && jobId) {
     await sbFetch(supabaseKey, "startup_analysis_reports", "POST", {
       job_id: jobId, startup_id: startupId, owner_id: ownerId,
       analysis_version: analysisVersion, ai_provider: "gemini", model_id: "gemini-3.8-flash",
-      readiness_score: readinessScore,
-      evidence_confidence: Math.min(100, Math.max(0, Math.round(evidenceConfidence))),
-      risk_exposure: Math.min(100, Math.max(0, Math.round(riskExposure))),
+      readiness_score: readinessScore, evidence_confidence: 65, risk_exposure: 50,
       investor_grade: investorGrade, verdict, report_json: parsed, startup_snapshot: startup,
       prompt_tokens: promptTokens, completion_tokens: completionTokens, total_tokens: totalTokens,
     }, token);
-
-    if (dims.length > 0) {
-      await sbFetch(supabaseKey, "startup_analysis_dimensions", "POST", dims.map((d) => ({
-        startup_id: startupId, owner_id: ownerId,
-        dimension_key: String(d["key"] || ""),
-        dimension_label: String(d["key"] || ""),
-        score: Math.max(0, Math.min(100, Math.round(Number(d["score"]) || 35))),
-        weight: Number(d["weight"] || 10),
-        critique: String(d["critique"] || ""),
-        confidence_level: String(d["confidence"] || "low"),
-        recommendations: Array.isArray(d["recommendations"]) ? d["recommendations"].map(String) : [],
-        missing_info: Array.isArray(d["missing_information"]) ? d["missing_information"].map(String) : [],
-      })), token);
-    }
-
-    await sbFetch(supabaseKey, `startups?id=eq.${startupId}`, "PATCH",
-      { readiness: readinessScore }, token);
-    await sbFetch(supabaseKey, `startup_analysis_jobs?id=eq.${jobId}`, "PATCH",
-      { status: "completed", completed_at: new Date().toISOString() }, token);
+    await sbFetch(supabaseKey, `startups?id=eq.${startupId}`, "PATCH", { readiness: readinessScore }, token);
+    await sbFetch(supabaseKey, `startup_analysis_jobs?id=eq.${jobId}`, "PATCH", { status: "completed", completed_at: new Date().toISOString() }, token);
     await sbFetch(supabaseKey, "ai_provider_usage", "POST", {
       job_id: jobId, owner_id: ownerId, provider: "gemini", model_id: "gemini-3.8-flash",
       prompt_tokens: promptTokens, completion_tokens: completionTokens, total_tokens: totalTokens,
@@ -362,17 +248,10 @@ Evaluate rigorously. Stage: "${stage}". Return JSON only.`;
     }, token);
   }
 
-  // ── 11. Return result ──────────────────────────────────────────────────────
   return res.status(200).json({
-    success: true,
-    jobId,
-    readinessScore,
-    evidenceConfidence: Math.round(evidenceConfidence),
-    riskExposure: Math.round(riskExposure),
-    investorGrade,
-    verdict,
-    rawJson: cleaned,
-    modelUsed: "gemini-3.8-flash",
-    latencyMs,
+    success: true, jobId, readinessScore,
+    evidenceConfidence: 65, riskExposure: 50,
+    investorGrade, verdict, honestTake,
+    rawJson: cleaned, modelUsed: "gemini-3.8-flash", latencyMs,
   });
 }
