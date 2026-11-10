@@ -9,7 +9,7 @@ import type { AIProvider, AIMessage, AIRequestOptions, AIResponse } from "./type
 import { AIProviderError } from "./types";
 
 const BASE_URL = "https://generativelanguage.googleapis.com/v1beta/models";
-const DEFAULT_MODEL = "gemini-2.0-flash";
+const DEFAULT_MODEL = "gemini-2.5-flash-lite";
 const DEFAULT_TIMEOUT_MS = 55_000; // 55 s — stay under Vercel 60 s limit
 const DEFAULT_TEMPERATURE = 0.2;
 const DEFAULT_MAX_TOKENS = 8192;

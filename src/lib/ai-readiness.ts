@@ -916,27 +916,32 @@ export async function runAIReadinessAnalysis(
           throw new Error(reason);
         }
 
-        if (payload.success && payload.rawJson) {
+        if (payload.success && (payload.rawJson || payload.categoryScores)) {
           // Parse the full AI JSON from server
           let parsed: Record<string, unknown> = {};
           try {
-            parsed = JSON.parse(
-              payload.rawJson
-                .replace(/^```json\s*/i, "")
-                .replace(/^```\s*/i, "")
-                .replace(/\s*```$/, "")
-                .trim(),
-            ) as Record<string, unknown>;
+            if (payload.rawJson) {
+              parsed = JSON.parse(
+                payload.rawJson
+                  .replace(/^```json\s*/i, "")
+                  .replace(/^```\s*/i, "")
+                  .replace(/\s*```$/, "")
+                  .trim(),
+              ) as Record<string, unknown>;
+            }
           } catch {
             console.warn("[CampusVenture AI] rawJson parse failed, using server scores directly");
           }
 
-          // ── Map new dimension_scores[] → legacy categoryScores ──────────────
+          // ── Build categoryScores from server response ────────────────────────
+          // v6 server returns categoryScores directly at top level as { [key]: { score } }
+          // v5/v3 server returns either dimension_scores[] or categories{}
+          const serverCatScores = payload.categoryScores as Record<string, { score: number }> | undefined;
+
           const dimensionScores = Array.isArray(parsed["dimension_scores"])
             ? (parsed["dimension_scores"] as Array<Record<string, unknown>>)
             : [];
 
-          // Build a lookup by dimension key (new format)
           const dimByKey: Record<string, Record<string, unknown>> = {};
           for (const dim of dimensionScores) {
             const k = String(dim["key"] || "");
@@ -945,33 +950,43 @@ export async function runAIReadinessAnalysis(
 
           const categoryScores: Record<string, CategoryEvaluation> = {};
           for (const { key, weight } of READINESS_WEIGHTS) {
-            // Find the new dimension that maps to this legacy key
-            const newKey = Object.entries(DIMENSION_TO_LEGACY).find(([, v]) => v === key)?.[0] || "";
-            const dim = dimByKey[newKey] || null;
-
-            // Also try direct match (in case server uses old format)
+            // 1. Try v6 format: top-level categoryScores from server
+            const serverCat = serverCatScores?.[key];
+            // 2. Try direct match from parsed.categories
             const legacyDim = parsed.categories && typeof parsed.categories === "object"
               ? (parsed.categories as Record<string, unknown>)[key]
               : null;
+            // 3. Try new dimension_scores[] → legacy mapping
+            const newKey = Object.entries(DIMENSION_TO_LEGACY).find(([, v]) => v === key)?.[0] || "";
+            const dim = dimByKey[newKey] || null;
 
             let score = 40;
             let critique = `Assessment conducted for ${key}.`;
             let honestFeedback = `Feedback noted for ${key}.`;
             let actionItem = `Refine ${key} with validated customer proof.`;
 
-            if (dim) {
-              score = Math.max(0, Math.min(100, Math.round(Number(dim["score"]) || 40)));
-              critique = String(dim["critique"] || critique);
-              const recs = Array.isArray(dim["recommendations"]) ? (dim["recommendations"] as string[]) : [];
-              actionItem = recs[0] || actionItem;
-              const weaknesses = Array.isArray(dim["identified_weaknesses"]) ? (dim["identified_weaknesses"] as string[]) : [];
-              honestFeedback = weaknesses[0] || String(dim["critique"] || honestFeedback);
+            if (serverCat) {
+              // v6: server already computed category score
+              score = Math.max(0, Math.min(100, Math.round(Number(serverCat.score) || 40)));
+              const catParsed = legacyDim as Record<string, unknown> | null;
+              if (catParsed) {
+                critique = String(catParsed["critique"] || critique);
+                honestFeedback = String(catParsed["honestFeedback"] || catParsed["critique"] || honestFeedback);
+                actionItem = String(catParsed["actionItem"] || actionItem);
+              }
             } else if (legacyDim && typeof legacyDim === "object") {
               const ld = legacyDim as Record<string, unknown>;
               score = Math.max(0, Math.min(100, Math.round(Number(ld["score"]) || 40)));
               critique = String(ld["critique"] || critique);
-              honestFeedback = String(ld["honestFeedback"] || honestFeedback);
+              honestFeedback = String(ld["honestFeedback"] || critique);
               actionItem = String(ld["actionItem"] || actionItem);
+            } else if (dim) {
+              score = Math.max(0, Math.min(100, Math.round(Number(dim["score"]) || 40)));
+              critique = String(dim["critique"] || critique);
+              const recs = Array.isArray(dim["recommendations"]) ? (dim["recommendations"] as string[]) : [];
+              actionItem = recs[0] || actionItem;
+              const ws = Array.isArray(dim["identified_weaknesses"]) ? (dim["identified_weaknesses"] as string[]) : [];
+              honestFeedback = ws[0] || String(dim["critique"] || honestFeedback);
             }
 
             categoryScores[key] = {
@@ -991,15 +1006,17 @@ export async function runAIReadinessAnalysis(
           const investorGrade = (payload.investorGrade || scoreToGrade(overallScore)) as AIReadinessResult["investorGrade"];
           const verdict = payload.verdict || scoreToVerdict(overallScore);
 
-          // Extract full report fields from AI JSON
-          const redFlags: string[] = Array.isArray(parsed["redFlags"])
-            ? (parsed["redFlags"] as string[]).slice(0, 4)
-            : Array.isArray(parsed["reality_check"])
-              ? (parsed["reality_check"] as Array<Record<string, unknown>>)
-                  .filter((r) => r["severity"] === "critical" || r["severity"] === "high")
-                  .map((r) => String(r["title"] || r["observation"] || ""))
-                  .slice(0, 4)
-              : [];
+          // Extract report fields — v6 server returns these at top level too
+          const redFlags: string[] = Array.isArray((payload as Record<string, unknown>)["redFlags"])
+            ? ((payload as Record<string, unknown>)["redFlags"] as string[]).slice(0, 4)
+            : Array.isArray(parsed["redFlags"])
+              ? (parsed["redFlags"] as string[]).slice(0, 4)
+              : Array.isArray(parsed["reality_check"])
+                ? (parsed["reality_check"] as Array<Record<string, unknown>>)
+                    .filter((r) => r["severity"] === "critical" || r["severity"] === "high")
+                    .map((r) => String(r["title"] || r["observation"] || ""))
+                    .slice(0, 4)
+                : [];
 
           const fatalFlaws: string[] = Array.isArray(parsed["fatalFlaws"])
             ? (parsed["fatalFlaws"] as string[]).slice(0, 3)
@@ -1014,22 +1031,29 @@ export async function runAIReadinessAnalysis(
             ? (parsed["grillingQuestions"] as string[]).slice(0, 3)
             : [];
 
-          const strengths: string[] = Array.isArray(parsed["strengths"])
-            ? (parsed["strengths"] as string[]).slice(0, 3)
-            : [];
-
-          const weaknesses: string[] = Array.isArray(parsed["weaknesses"])
-            ? (parsed["weaknesses"] as string[]).slice(0, 3)
-            : [];
-
-          const recommendations: string[] = Array.isArray(parsed["recommended_actions"])
-            ? (parsed["recommended_actions"] as string[]).slice(0, 4)
-            : Array.isArray(parsed["recommendations"])
-              ? (parsed["recommendations"] as string[]).slice(0, 4)
+          const strengths: string[] = Array.isArray((payload as Record<string, unknown>)["strengths"])
+            ? ((payload as Record<string, unknown>)["strengths"] as string[]).slice(0, 3)
+            : Array.isArray(parsed["strengths"])
+              ? (parsed["strengths"] as string[]).slice(0, 3)
               : [];
 
+          const weaknesses: string[] = Array.isArray((payload as Record<string, unknown>)["weaknesses"])
+            ? ((payload as Record<string, unknown>)["weaknesses"] as string[]).slice(0, 3)
+            : Array.isArray(parsed["weaknesses"])
+              ? (parsed["weaknesses"] as string[]).slice(0, 3)
+              : [];
+
+          const recommendations: string[] = Array.isArray((payload as Record<string, unknown>)["recommendations"])
+            ? ((payload as Record<string, unknown>)["recommendations"] as string[]).slice(0, 4)
+            : Array.isArray(parsed["recommended_actions"])
+              ? (parsed["recommended_actions"] as string[]).slice(0, 4)
+              : Array.isArray(parsed["recommendations"])
+                ? (parsed["recommendations"] as string[]).slice(0, 4)
+                : [];
+
           const honestTake = String(
-            parsed["honest_take"] || parsed["honestTake"] || "Assessment generated via Google Gemini 2.0 Flash.",
+            (payload as Record<string, unknown>)["honestTake"] ||
+            parsed["honest_take"] || parsed["honestTake"] || "Assessment generated by Gemini AI.",
           );
 
           const result: AIReadinessResult = {
