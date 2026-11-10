@@ -174,7 +174,7 @@ export default async function handler(req, res) {
     }
     const { data: jobData } = await sbFetch(supabaseKey, "startup_analysis_jobs", "POST", {
       startup_id: startupId, owner_id: ownerId, status: "processing",
-      analysis_version: analysisVersion, ai_provider: "gemini", model_id: "gemini-2.0-flash",
+      analysis_version: analysisVersion, ai_provider: "gemini", model_id: "gemini-3.8-flash",
       prompt_version: "v4.0", started_at: new Date().toISOString(),
     }, token);
     if (Array.isArray(jobData) && jobData.length > 0) jobId = String(jobData[0]["id"]);
@@ -238,8 +238,8 @@ Pitch Deck: ${startup.deckName || startup.deck_name ? "Uploaded" : "Not uploaded
 
 Evaluate rigorously. Stage: "${stage}". Return JSON only.`;
 
-  // ── 8. Call Gemini 2.0 Flash ───────────────────────────────────────────────
-  const geminiUrl = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=${geminiKey.trim()}`;
+  // ── 8. Call Gemini 3.8 Flash ───────────────────────────────────────────────
+  const geminiUrl = `https://generativelanguage.googleapis.com/v1beta/models/gemini-3.8-flash:generateContent?key=${geminiKey.trim()}`;
   const tStart = Date.now();
 
   let geminiRes;
@@ -328,7 +328,7 @@ Evaluate rigorously. Stage: "${stage}". Return JSON only.`;
   if (ownerId && startupId && jobId) {
     await sbFetch(supabaseKey, "startup_analysis_reports", "POST", {
       job_id: jobId, startup_id: startupId, owner_id: ownerId,
-      analysis_version: analysisVersion, ai_provider: "gemini", model_id: "gemini-2.0-flash",
+      analysis_version: analysisVersion, ai_provider: "gemini", model_id: "gemini-3.8-flash",
       readiness_score: readinessScore,
       evidence_confidence: Math.min(100, Math.max(0, Math.round(evidenceConfidence))),
       risk_exposure: Math.min(100, Math.max(0, Math.round(riskExposure))),
@@ -355,7 +355,7 @@ Evaluate rigorously. Stage: "${stage}". Return JSON only.`;
     await sbFetch(supabaseKey, `startup_analysis_jobs?id=eq.${jobId}`, "PATCH",
       { status: "completed", completed_at: new Date().toISOString() }, token);
     await sbFetch(supabaseKey, "ai_provider_usage", "POST", {
-      job_id: jobId, owner_id: ownerId, provider: "gemini", model_id: "gemini-2.0-flash",
+      job_id: jobId, owner_id: ownerId, provider: "gemini", model_id: "gemini-3.8-flash",
       prompt_tokens: promptTokens, completion_tokens: completionTokens, total_tokens: totalTokens,
       estimated_cost_usd: (promptTokens / 1_000_000) * 0.075 + (completionTokens / 1_000_000) * 0.30,
       request_ok: true, latency_ms: latencyMs,
@@ -372,7 +372,7 @@ Evaluate rigorously. Stage: "${stage}". Return JSON only.`;
     investorGrade,
     verdict,
     rawJson: cleaned,
-    modelUsed: "gemini-2.0-flash",
+    modelUsed: "gemini-3.8-flash",
     latencyMs,
   });
 }

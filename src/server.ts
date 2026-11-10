@@ -269,7 +269,7 @@ async function handleServerAIAnalyze(request: Request, env: unknown): Promise<Re
       status: "processing",
       analysis_version: analysisVersion,
       ai_provider: "gemini",
-      model_id: "gemini-2.0-flash",
+      model_id: "gemini-3.8-flash",
       prompt_version: "v3.0",
       started_at: new Date().toISOString(),
     };
@@ -343,7 +343,7 @@ Video: ${startup["videoUrl"] || startup["video_url"] ? "Provided" : "Not provide
 Evaluate rigorously. Stage: "${stage}". Return JSON only.`;
 
   // ── 7. Call Gemini ─────────────────────────────────────────────────────────
-  const geminiUrl = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=${geminiKey.trim()}`;
+  const geminiUrl = `https://generativelanguage.googleapis.com/v1beta/models/gemini-3.8-flash:generateContent?key=${geminiKey.trim()}`;
   const tStart = Date.now();
 
   let geminiRes: Response;
@@ -458,7 +458,7 @@ Evaluate rigorously. Stage: "${stage}". Return JSON only.`;
       owner_id:            ownerId,
       analysis_version:    analysisVersion,
       ai_provider:         "gemini",
-      model_id:            "gemini-2.0-flash",
+      model_id:            "gemini-3.8-flash",
       readiness_score:     readinessScore,
       evidence_confidence: Math.min(100, Math.max(0, Math.round(evidenceConfidence))),
       risk_exposure:       Math.min(100, Math.max(0, Math.round(riskExposure))),
@@ -501,7 +501,7 @@ Evaluate rigorously. Stage: "${stage}". Return JSON only.`;
 
     // Log AI usage
     await sbFetch(supabaseKey, "ai_provider_usage", "POST", {
-      job_id: jobId, owner_id: ownerId, provider: "gemini", model_id: "gemini-2.0-flash",
+      job_id: jobId, owner_id: ownerId, provider: "gemini", model_id: "gemini-3.8-flash",
       prompt_tokens: promptTokens, completion_tokens: completionTokens, total_tokens: totalTokens,
       estimated_cost_usd: (promptTokens / 1_000_000) * 0.075 + (completionTokens / 1_000_000) * 0.30,
       request_ok: true, latency_ms: latencyMs,
@@ -518,7 +518,7 @@ Evaluate rigorously. Stage: "${stage}". Return JSON only.`;
     investorGrade,
     verdict,
     rawJson: cleaned,
-    modelUsed: "gemini-2.0-flash",
+    modelUsed: "gemini-3.8-flash",
     latencyMs,
   });
 }

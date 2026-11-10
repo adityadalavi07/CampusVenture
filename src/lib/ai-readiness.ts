@@ -44,7 +44,7 @@ export const STORAGE_KEY_ASSESSMENT = "campusventure.ai_assessment";
 export const DEFAULT_AI_CONFIG: AIConfig = {
   provider: "gemini",
   apiKey: "",
-  model: "gemini-2.0-flash",
+  model: "gemini-3.8-flash",
   honestyLevel: "brutal",
 };
 
@@ -1046,7 +1046,7 @@ export async function runAIReadinessAnalysis(
             recommendations,
             honestyLevel,
             providerUsed: "gemini",
-            modelUsed: payload.modelUsed || "gemini-2.0-flash (Central Server AI)",
+            modelUsed: payload.modelUsed || "gemini-3.8-flash (Central Server AI)",
             assessedAt: new Date().toISOString(),
           };
 
