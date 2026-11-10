@@ -149,7 +149,7 @@ export function AuthGuard({ requiredRole, children }: AuthGuardProps) {
               <Button
                 onClick={async () => {
                   await signOut();
-                  setTimeout(() => openAuthModal(requiredRole, "signin"), 150);
+                  openAuthModal(requiredRole, "signin");
                 }}
                 className="w-full flex items-center justify-center gap-2"
               >
@@ -160,7 +160,7 @@ export function AuthGuard({ requiredRole, children }: AuthGuardProps) {
                 variant="outline"
                 onClick={async () => {
                   await signOut();
-                  setTimeout(() => openAuthModal(requiredRole, "register"), 150);
+                  openAuthModal(requiredRole, "register");
                 }}
                 className="w-full flex items-center justify-center gap-2"
               >
@@ -229,7 +229,7 @@ export function AuthGuard({ requiredRole, children }: AuthGuardProps) {
               <Button
                 onClick={async () => {
                   await signOut();
-                  setTimeout(() => openAuthModal(requiredRole, "signin"), 150);
+                  openAuthModal(requiredRole, "signin");
                 }}
                 className="w-full flex items-center justify-center gap-2"
               >

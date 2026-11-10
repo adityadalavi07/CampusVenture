@@ -268,6 +268,23 @@ async function validateAndEnforceInstitutionalRole(
       ? verifiedBackendRole
       : (pendingRole || (meta["role"] as Role | undefined) || (isUniversityEmail(userEmail) ? "student" : "investor"));
 
+  // EARLY BLOCK: If the user explicitly chose student or university role (pendingRole),
+  // but their email is not a university email — reject immediately before any profile is created.
+  // This prevents non-university emails from being silently downgraded to investor on the first try.
+  if (
+    !verifiedBackendRole &&
+    (pendingRole === "student" || pendingRole === "university") &&
+    !isUniversityEmail(userEmail)
+  ) {
+    clearOAuthPendingRole();
+    try { await supabase.auth.signOut(); } catch { /* ignore */ }
+    try { window.localStorage.removeItem(AUTH_STORAGE_KEY); } catch { /* ignore */ }
+    const roleLabel = pendingRole === "student" ? "Student Founder" : "University";
+    const errMsg = `Institutional Access Denied: "${userEmail}" is a personal email. ${roleLabel} accounts require an official university email (@sguk.ac.in, .ac.in, .edu). Please use your university email or register as an Investor instead.`;
+    toast.error(errMsg, { id: "institutional-access-denied", duration: 8000 });
+    return { allowed: false, error: errMsg };
+  }
+
   // AUTO-HEAL: If an account has a personal email (like @gmail.com) but was previously marked as student,
   // it CANNOT legally be a student under CampusVenture's institutional verification rules.
   // Personal emails are strictly for Investors. Auto-correct to investor and update database profile.
@@ -698,12 +715,9 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         } catch {
           /* ignore */
         }
-        if (
-          typeof window !== "undefined" &&
-          window.location.pathname.startsWith("/app")
-        ) {
-          window.location.href = "/";
-        }
+        // Do NOT redirect to "/" here — the AuthGuard on the current /app page
+        // will re-render immediately (user is now null) and show the sign-in options
+        // right on the same page. Redirecting here would prevent openAuthModal from working.
       }
     });
 
