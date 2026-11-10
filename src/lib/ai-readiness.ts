@@ -44,7 +44,7 @@ export const STORAGE_KEY_ASSESSMENT = "campusventure.ai_assessment";
 export const DEFAULT_AI_CONFIG: AIConfig = {
   provider: "gemini",
   apiKey: "",
-  model: "gemini-1.5-flash",
+  model: "gemini-2.0-flash",
   honestyLevel: "brutal",
 };
 
@@ -928,7 +928,7 @@ export async function runAIReadinessAnalysis(
             recommendations: Array.isArray(parsed.recommendations) ? parsed.recommendations.slice(0, 4) : [],
             honestyLevel,
             providerUsed: "gemini",
-            modelUsed: "gemini-1.5-flash (Secure Server AI)",
+            modelUsed: "gemini-2.0-flash (Secure Server AI)",
             assessedAt: new Date().toISOString(),
           };
 
@@ -948,7 +948,7 @@ export async function runAIReadinessAnalysis(
       const userPrompt = buildUserPrompt(startup, honestyLevel);
       const rawJsonText = await callGeminiAPI(
         config.apiKey.trim(),
-        "gemini-1.5-flash",
+        "gemini-2.0-flash",
         systemPrompt,
         userPrompt,
       );
