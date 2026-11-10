@@ -834,6 +834,43 @@ export function evaluateStartupLocally(
 // Main Evaluation Dispatcher
 // ---------------------------------------------------------------------------
 
+// ---------------------------------------------------------------------------
+// Map new server dimension_scores[] keys → legacy READINESS_WEIGHTS keys
+// ---------------------------------------------------------------------------
+const DIMENSION_TO_LEGACY: Record<string, string> = {
+  "Founder & Team Readiness": "Team readiness",
+  "Problem Validation": "Problem clarity",
+  "Market Opportunity": "Market opportunity",
+  "Product & Technical Feasibility": "Product readiness",
+  "Product-Market Fit": "Solution strength",
+  "Business Model Viability": "Business model",
+  "Competitive Advantage": "Competitive advantage",
+  "Financial Readiness": "Funding clarity",
+  "Growth & Scalability": "Traction",
+  "Legal & Operational Risk": "Traction", // mapped to traction weight as closest
+};
+
+/** Get the Supabase session token from localStorage (set by Supabase Auth) */
+function getSupabaseToken(): string {
+  if (typeof window === "undefined") return "";
+  try {
+    // Supabase stores session under various keys; try common patterns
+    for (let i = 0; i < localStorage.length; i++) {
+      const k = localStorage.key(i);
+      if (k && (k.includes("supabase") || k.includes("sb-")) && k.includes("auth-token")) {
+        const raw = localStorage.getItem(k);
+        if (raw) {
+          const parsed = JSON.parse(raw) as { access_token?: string; currentSession?: { access_token?: string } };
+          return parsed.access_token || parsed.currentSession?.access_token || "";
+        }
+      }
+    }
+  } catch {
+    /* ignore */
+  }
+  return "";
+}
+
 export async function runAIReadinessAnalysis(
   startup: StartupRecord,
   configOverride?: Partial<AIConfig>,
@@ -842,174 +879,196 @@ export async function runAIReadinessAnalysis(
   const honestyLevel = config.honestyLevel || "brutal";
 
   // 1. Always attempt secure server-side Google Gemini analysis first.
-  //    The server enforces its own word-count / nonsense checks and returns
-  //    a valid scored result either way — do NOT short-circuit here on the client.
+  //    Pass the user's auth token so the server can verify ownership and persist results.
   try {
     if (typeof window !== "undefined") {
-      // Try the dedicated Vercel serverless function first (guaranteed Node.js + process.env)
-      // Falls back to the Nitro route if the Vercel function is not available
-      let resp: Response | null = null;
-      try {
-        resp = await fetch("/api/ai-analyze", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ startup, honestyLevel }),
-        });
-        // If Vercel function returns 404 (not deployed yet), try the Nitro route
-        if (!resp.ok && resp.status === 404) {
-          resp = null;
-        }
-      } catch {
-        resp = null;
-      }
+      const authToken = getSupabaseToken();
+      const requestHeaders: Record<string, string> = { "Content-Type": "application/json" };
+      if (authToken) requestHeaders["Authorization"] = `Bearer ${authToken}`;
 
-      if (!resp) {
-        resp = await fetch("/api/ai/analyze", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ startup, honestyLevel }),
-        });
-      }
+      const resp = await fetch("/api/ai/analyze", {
+        method: "POST",
+        headers: requestHeaders,
+        body: JSON.stringify({ startup, startupId: startup.id, honestyLevel }),
+      });
 
       if (resp.ok) {
         const payload = (await resp.json()) as {
           success?: boolean;
+          readinessScore?: number;
+          evidenceConfidence?: number;
+          riskExposure?: number;
+          investorGrade?: string;
+          verdict?: string;
           rawJson?: string;
           fallback?: boolean;
           error?: string;
           message?: string;
+          modelUsed?: string;
         };
 
-        // Surface server errors clearly so we know exactly why AI failed
-        if (payload.fallback || !payload.success) {
-          const reason = payload.error || payload.message || "Server AI unavailable";
-          console.warn("[CampusVenture AI] Server returned fallback=true:", reason);
-          // Fall through to heuristic — do NOT throw, just continue
-        } else if (payload.success && payload.rawJson) {
-          const parsed = JSON.parse(
-            payload.rawJson
-              .replace(/^```json\s*/i, "")
-              .replace(/^```\s*/i, "")
-              .replace(/\s*```$/, "")
-              .trim(),
-          );
+        // If server returns explicit error, surface it — do NOT silently fall back
+        if (!payload.success) {
+          const reason = payload.error || payload.message || "Server AI analysis failed";
+          console.error("[CampusVenture AI] Server returned error:", reason);
+          throw new Error(reason);
+        }
+
+        if (payload.success && payload.rawJson) {
+          // Parse the full AI JSON from server
+          let parsed: Record<string, unknown> = {};
+          try {
+            parsed = JSON.parse(
+              payload.rawJson
+                .replace(/^```json\s*/i, "")
+                .replace(/^```\s*/i, "")
+                .replace(/\s*```$/, "")
+                .trim(),
+            ) as Record<string, unknown>;
+          } catch {
+            console.warn("[CampusVenture AI] rawJson parse failed, using server scores directly");
+          }
+
+          // ── Map new dimension_scores[] → legacy categoryScores ──────────────
+          const dimensionScores = Array.isArray(parsed["dimension_scores"])
+            ? (parsed["dimension_scores"] as Array<Record<string, unknown>>)
+            : [];
+
+          // Build a lookup by dimension key (new format)
+          const dimByKey: Record<string, Record<string, unknown>> = {};
+          for (const dim of dimensionScores) {
+            const k = String(dim["key"] || "");
+            dimByKey[k] = dim;
+          }
 
           const categoryScores: Record<string, CategoryEvaluation> = {};
           for (const { key, weight } of READINESS_WEIGHTS) {
-            const incoming = parsed.categories?.[key];
-            const score = Math.max(0, Math.min(100, Math.round(Number(incoming?.score) || 40)));
+            // Find the new dimension that maps to this legacy key
+            const newKey = Object.entries(DIMENSION_TO_LEGACY).find(([, v]) => v === key)?.[0] || "";
+            const dim = dimByKey[newKey] || null;
+
+            // Also try direct match (in case server uses old format)
+            const legacyDim = parsed.categories && typeof parsed.categories === "object"
+              ? (parsed.categories as Record<string, unknown>)[key]
+              : null;
+
+            let score = 40;
+            let critique = `Assessment conducted for ${key}.`;
+            let honestFeedback = `Feedback noted for ${key}.`;
+            let actionItem = `Refine ${key} with validated customer proof.`;
+
+            if (dim) {
+              score = Math.max(0, Math.min(100, Math.round(Number(dim["score"]) || 40)));
+              critique = String(dim["critique"] || critique);
+              const recs = Array.isArray(dim["recommendations"]) ? (dim["recommendations"] as string[]) : [];
+              actionItem = recs[0] || actionItem;
+              const weaknesses = Array.isArray(dim["identified_weaknesses"]) ? (dim["identified_weaknesses"] as string[]) : [];
+              honestFeedback = weaknesses[0] || String(dim["critique"] || honestFeedback);
+            } else if (legacyDim && typeof legacyDim === "object") {
+              const ld = legacyDim as Record<string, unknown>;
+              score = Math.max(0, Math.min(100, Math.round(Number(ld["score"]) || 40)));
+              critique = String(ld["critique"] || critique);
+              honestFeedback = String(ld["honestFeedback"] || honestFeedback);
+              actionItem = String(ld["actionItem"] || actionItem);
+            }
+
             categoryScores[key] = {
               score,
               weight,
               status: deriveCategoryStatus(score),
-              critique: incoming?.critique || `Assessment conducted for ${key}.`,
-              honestFeedback: incoming?.honestFeedback || `Feedback noted for ${key}.`,
-              actionItem: incoming?.actionItem || `Refine ${key} with validated customer proof.`,
+              critique,
+              honestFeedback,
+              actionItem,
             };
           }
 
-          const overallScore = computeWeightedScore(categoryScores);
-          const investorGrade = scoreToGrade(overallScore);
-          const verdict = scoreToVerdict(overallScore);
+          // Use the SERVER's deterministic readiness score (not recomputed client-side)
+          const overallScore = typeof payload.readinessScore === "number"
+            ? payload.readinessScore
+            : computeWeightedScore(categoryScores);
+          const investorGrade = (payload.investorGrade || scoreToGrade(overallScore)) as AIReadinessResult["investorGrade"];
+          const verdict = payload.verdict || scoreToVerdict(overallScore);
+
+          // Extract full report fields from AI JSON
+          const redFlags: string[] = Array.isArray(parsed["redFlags"])
+            ? (parsed["redFlags"] as string[]).slice(0, 4)
+            : Array.isArray(parsed["reality_check"])
+              ? (parsed["reality_check"] as Array<Record<string, unknown>>)
+                  .filter((r) => r["severity"] === "critical" || r["severity"] === "high")
+                  .map((r) => String(r["title"] || r["observation"] || ""))
+                  .slice(0, 4)
+              : [];
+
+          const fatalFlaws: string[] = Array.isArray(parsed["fatalFlaws"])
+            ? (parsed["fatalFlaws"] as string[]).slice(0, 3)
+            : Array.isArray(parsed["critical_risks"])
+              ? (parsed["critical_risks"] as Array<Record<string, unknown>>)
+                  .filter((r) => r["severity"] === "critical")
+                  .map((r) => String(r["risk"] || ""))
+                  .slice(0, 3)
+              : [];
+
+          const grillingQuestions: string[] = Array.isArray(parsed["grillingQuestions"])
+            ? (parsed["grillingQuestions"] as string[]).slice(0, 3)
+            : [];
+
+          const strengths: string[] = Array.isArray(parsed["strengths"])
+            ? (parsed["strengths"] as string[]).slice(0, 3)
+            : [];
+
+          const weaknesses: string[] = Array.isArray(parsed["weaknesses"])
+            ? (parsed["weaknesses"] as string[]).slice(0, 3)
+            : [];
+
+          const recommendations: string[] = Array.isArray(parsed["recommended_actions"])
+            ? (parsed["recommended_actions"] as string[]).slice(0, 4)
+            : Array.isArray(parsed["recommendations"])
+              ? (parsed["recommendations"] as string[]).slice(0, 4)
+              : [];
+
+          const honestTake = String(
+            parsed["honest_take"] || parsed["honestTake"] || "Assessment generated via Google Gemini 2.0 Flash.",
+          );
 
           const result: AIReadinessResult = {
             overallScore,
             investorGrade,
             verdict,
-            honestTake: parsed.honestTake || "Honest assessment generated via Google Gemini.",
-            redFlags: Array.isArray(parsed.redFlags) ? parsed.redFlags.slice(0, 4) : [],
-            fatalFlaws: Array.isArray(parsed.fatalFlaws) ? parsed.fatalFlaws.slice(0, 3) : [],
-            grillingQuestions: Array.isArray(parsed.grillingQuestions)
-              ? parsed.grillingQuestions.slice(0, 3)
-              : [],
+            honestTake,
+            redFlags,
+            fatalFlaws,
+            grillingQuestions,
             categoryScores,
-            strengths: Array.isArray(parsed.strengths) ? parsed.strengths.slice(0, 3) : [],
-            weaknesses: Array.isArray(parsed.weaknesses) ? parsed.weaknesses.slice(0, 3) : [],
-            recommendations: Array.isArray(parsed.recommendations) ? parsed.recommendations.slice(0, 4) : [],
+            strengths,
+            weaknesses,
+            recommendations,
             honestyLevel,
             providerUsed: "gemini",
-            modelUsed: "gemini-2.0-flash (Secure Server AI)",
+            modelUsed: payload.modelUsed || "gemini-2.0-flash (Central Server AI)",
             assessedAt: new Date().toISOString(),
           };
 
           saveAssessment(result);
           return result;
         }
+      } else {
+        // Non-200 response from server — surface error
+        let errMsg = `Server error: HTTP ${resp.status}`;
+        try {
+          const errPayload = (await resp.json()) as { error?: string };
+          if (errPayload.error) errMsg = errPayload.error;
+        } catch { /* ignore */ }
+        console.error("[CampusVenture AI] Server HTTP error:", errMsg);
+        throw new Error(errMsg);
       }
     }
   } catch (err) {
-    console.info("[CampusVenture AI] Server API endpoint unreachable, falling back to offline engine:", err);
+    // Re-throw real errors (not 404/network) so the UI shows honest failure
+    const msg = err instanceof Error ? err.message : String(err);
+    console.error("[CampusVenture AI] Analysis failed:", msg);
+    throw new Error(msg);
   }
 
-  // 2. Direct client-side Gemini fallback if an explicit key was provided in environment
-  if (config.apiKey.trim()) {
-    try {
-      const systemPrompt = buildSystemPrompt(honestyLevel);
-      const userPrompt = buildUserPrompt(startup, honestyLevel);
-      const rawJsonText = await callGeminiAPI(
-        config.apiKey.trim(),
-        "gemini-2.0-flash",
-        systemPrompt,
-        userPrompt,
-      );
-
-      const cleaned = rawJsonText
-        .replace(/^```json\s*/i, "")
-        .replace(/^```\s*/i, "")
-        .replace(/\s*```$/, "")
-        .trim();
-
-      const parsed = JSON.parse(cleaned);
-      const categoryScores: Record<string, CategoryEvaluation> = {};
-
-      for (const { key, weight } of READINESS_WEIGHTS) {
-        const incoming = parsed.categories?.[key];
-        const score = Math.max(0, Math.min(100, Math.round(Number(incoming?.score) || 40)));
-        categoryScores[key] = {
-          score,
-          weight,
-          status: deriveCategoryStatus(score),
-          critique: incoming?.critique || `Assessment conducted for ${key}.`,
-          honestFeedback: incoming?.honestFeedback || `Feedback noted for ${key}.`,
-          actionItem: incoming?.actionItem || `Refine ${key} with validated customer proof.`,
-        };
-      }
-
-      const overallScore = computeWeightedScore(categoryScores);
-      const investorGrade = scoreToGrade(overallScore);
-      const verdict = scoreToVerdict(overallScore);
-
-      const result: AIReadinessResult = {
-        overallScore,
-        investorGrade,
-        verdict,
-        honestTake: parsed.honestTake || "Honest assessment generated via Google Gemini.",
-        redFlags: Array.isArray(parsed.redFlags) ? parsed.redFlags.slice(0, 4) : [],
-        fatalFlaws: Array.isArray(parsed.fatalFlaws) ? parsed.fatalFlaws.slice(0, 3) : [],
-        grillingQuestions: Array.isArray(parsed.grillingQuestions)
-          ? parsed.grillingQuestions.slice(0, 3)
-          : [],
-        categoryScores,
-        strengths: Array.isArray(parsed.strengths) ? parsed.strengths.slice(0, 3) : [],
-        weaknesses: Array.isArray(parsed.weaknesses) ? parsed.weaknesses.slice(0, 3) : [],
-        recommendations: Array.isArray(parsed.recommendations) ? parsed.recommendations.slice(0, 4) : [],
-        honestyLevel,
-        providerUsed: "gemini",
-        modelUsed: "gemini-2.0-flash (Secure Server AI)",
-        assessedAt: new Date().toISOString(),
-      };
-
-      saveAssessment(result);
-      return result;
-    } catch (apiError: unknown) {
-      console.warn("Direct Gemini call failed, falling back to local engine:", apiError);
-    }
-  }
-
-  // 3. Built-in Offline Due Diligence Engine (100% Free, Zero Cost, Always Available)
-  const localResult = evaluateStartupLocally(startup, honestyLevel);
-  saveAssessment(localResult);
-  return localResult;
 }
 
 /** Test API connection */

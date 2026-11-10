@@ -203,12 +203,13 @@ function MyStartup() {
     const pWords = currentProblem.split(/\s+/).filter(Boolean).length;
     const sWords = currentSolution.split(/\s+/).filter(Boolean).length;
 
-    if (pWords < 50 || sWords < 50) {
-      toast.error(
-        `Need at least 50 words each. Problem: ${pWords}/50 words · Solution: ${sWords}/50 words. ` +
-        `Go to the Problem and Solution tabs to add more detail.`
+    // Soft warning only — server does its own validation, don't block here
+    if (pWords < 20 || sWords < 20) {
+      toast.warning(
+        `Your Problem (${pWords} words) and Solution (${sWords} words) are very short. ` +
+        `Add more detail for a better AI analysis — continuing anyway.`,
+        { duration: 5000 }
       );
-      return;
     }
 
     // Build the full current snapshot from live form state
@@ -239,15 +240,19 @@ function MyStartup() {
     });
 
     setAnalyzing(true);
+    toast.loading("Sending startup data to AI engine...", { id: "ai-analyze", duration: 90000 });
     try {
       const result = await runAIReadinessAnalysis(currentStartup);
       updateStartup(startup.id, { readiness: result.overallScore });
+      toast.dismiss("ai-analyze");
       toast.success(
-        `AI Analysis Complete: ${result.overallScore}/100 · Grade ${result.investorGrade} — ${result.verdict}`,
-        { duration: 7000 }
+        `✅ AI Analysis Complete: ${result.overallScore}/100 · Grade ${result.investorGrade} — ${result.verdict}`,
+        { duration: 10000 }
       );
-    } catch {
-      toast.error("AI analysis failed — please try again in a moment.");
+    } catch (err: unknown) {
+      toast.dismiss("ai-analyze");
+      const msg = err instanceof Error ? err.message : "AI analysis failed";
+      toast.error(`❌ ${msg}`, { duration: 8000 });
     } finally {
       setAnalyzing(false);
     }
