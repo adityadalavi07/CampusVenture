@@ -10,10 +10,12 @@ import {
   Lightbulb,
   Rocket,
   Send,
+  Sparkles,
   Star,
   Target,
   Video,
 } from "lucide-react";
+import { runAIReadinessAnalysis } from "@/lib/ai-readiness";
 import { toast } from "sonner";
 import { AppShell } from "@/components/app-shell";
 import { Badge } from "@/components/ui/badge";
@@ -193,6 +195,64 @@ function MyStartup() {
     });
   }
 
+  const [analyzing, setAnalyzing] = useState(false);
+
+  async function handleSaveAndAnalyze() {
+    const currentProblem = problem.trim();
+    const currentSolution = solution.trim();
+    const pWords = currentProblem.split(/\s+/).filter(Boolean).length;
+    const sWords = currentSolution.split(/\s+/).filter(Boolean).length;
+
+    if (pWords < 50 || sWords < 50) {
+      toast.error(
+        `Need at least 50 words each. Problem: ${pWords}/50 words · Solution: ${sWords}/50 words. ` +
+        `Go to the Problem and Solution tabs to add more detail.`
+      );
+      return;
+    }
+
+    // Build the full current snapshot from live form state
+    const currentStartup: StartupRecord = {
+      ...startup,
+      name: stName.trim() || startup.name || "Untitled Campus Startup",
+      tagline: stTagline.trim() || startup.tagline,
+      location: stLocation.trim() || startup.location,
+      problem: currentProblem,
+      solution: currentSolution,
+      businessModel: model.trim() || startup.businessModel,
+      traction: traction.trim() || startup.traction,
+      videoUrl: videoUrl.trim() || startup.videoUrl,
+      updatedAt: new Date().toISOString(),
+    };
+
+    // Save all fields first so they persist even if analysis fails
+    saveOrUpdate({
+      name: currentStartup.name,
+      tagline: currentStartup.tagline,
+      location: currentStartup.location,
+      problem: currentStartup.problem,
+      solution: currentStartup.solution,
+      businessModel: currentStartup.businessModel,
+      traction: currentStartup.traction,
+      videoUrl: currentStartup.videoUrl,
+      updatedAt: currentStartup.updatedAt,
+    });
+
+    setAnalyzing(true);
+    try {
+      const result = await runAIReadinessAnalysis(currentStartup);
+      updateStartup(startup.id, { readiness: result.overallScore });
+      toast.success(
+        `AI Analysis Complete: ${result.overallScore}/100 · Grade ${result.investorGrade} — ${result.verdict}`,
+        { duration: 7000 }
+      );
+    } catch {
+      toast.error("AI analysis failed — please try again in a moment.");
+    } finally {
+      setAnalyzing(false);
+    }
+  }
+
   function saveDraft() {
     const currentName = stName.trim() || "Untitled Campus Startup";
     saveOrUpdate({
@@ -291,6 +351,16 @@ function MyStartup() {
             </Badge>
             <Button variant="outline" size="sm" onClick={saveDraft}>
               Save Draft
+            </Button>
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={handleSaveAndAnalyze}
+              disabled={analyzing}
+              className="gap-1.5 border-violet-500/50 text-violet-600 hover:bg-violet-50 dark:text-violet-400 dark:hover:bg-violet-950/40"
+            >
+              <Sparkles className="size-3.5" aria-hidden="true" />
+              {analyzing ? "Analyzing…" : "Save & Analyze AI"}
             </Button>
             <Button onClick={submitForReview} disabled={startup.status === "pending"}>
               <Send className="size-4" aria-hidden="true" />

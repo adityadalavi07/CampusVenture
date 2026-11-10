@@ -591,6 +591,20 @@ function StudentDashboard() {
       toast.error("Please create your startup profile before running an AI audit.");
       return;
     }
+
+    // Pre-flight word count check — give actionable error instead of silent heuristic
+    const pWords = STARTUP.problem.trim().split(/\s+/).filter(Boolean).length;
+    const sWords = STARTUP.solution.trim().split(/\s+/).filter(Boolean).length;
+    if (pWords < 50 || sWords < 50) {
+      toast.error(
+        `AI analysis needs 50+ words in both Problem and Solution. ` +
+        `Current: Problem ${pWords}/50 words · Solution ${sWords}/50 words. ` +
+        `Go to My Startup → Problem / Solution tabs and use the "Save & Analyze AI" button there.`,
+        { duration: 8000 }
+      );
+      return;
+    }
+
     setAnalyzing(true);
     setAnalysisStep("Connecting to AI Due Diligence Engine...");
 
