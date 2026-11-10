@@ -886,7 +886,9 @@ export async function runAIReadinessAnalysis(
       const requestHeaders: Record<string, string> = { "Content-Type": "application/json" };
       if (authToken) requestHeaders["Authorization"] = `Bearer ${authToken}`;
 
-      const resp = await fetch("/api/ai/analyze", {
+      // Use /api/ai-analyze — the guaranteed Vercel serverless function
+      // (Nitro's /api/ai/analyze route is also handled server-side as fallback)
+      const resp = await fetch("/api/ai-analyze", {
         method: "POST",
         headers: requestHeaders,
         body: JSON.stringify({ startup, startupId: startup.id, honestyLevel }),
