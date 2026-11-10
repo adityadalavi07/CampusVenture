@@ -841,27 +841,51 @@ export async function runAIReadinessAnalysis(
   const config = { ...getAIConfig(), ...configOverride };
   const honestyLevel = config.honestyLevel || "brutal";
 
-  // Pre-flight check: If problem or solution contains nonsense or is under 50 words, immediately evaluate with penalty
-  const pCheck = isGibberishOrNonsense(startup.problem, 50);
-  const sCheck = isGibberishOrNonsense(startup.solution, 50);
-  if (pCheck.isNonsense || sCheck.isNonsense) {
-    const localResult = evaluateStartupLocally(startup, honestyLevel);
-    saveAssessment(localResult);
-    return localResult;
-  }
-
-  // 1. First attempt secure server-side Google Gemini analysis (API key hidden from hackers)
+  // 1. Always attempt secure server-side Google Gemini analysis first.
+  //    The server enforces its own word-count / nonsense checks and returns
+  //    a valid scored result either way — do NOT short-circuit here on the client.
   try {
     if (typeof window !== "undefined") {
-      const resp = await fetch("/api/ai/analyze", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ startup, honestyLevel }),
-      });
+      // Try the dedicated Vercel serverless function first (guaranteed Node.js + process.env)
+      // Falls back to the Nitro route if the Vercel function is not available
+      let resp: Response | null = null;
+      try {
+        resp = await fetch("/api/ai-analyze", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ startup, honestyLevel }),
+        });
+        // If Vercel function returns 404 (not deployed yet), try the Nitro route
+        if (!resp.ok && resp.status === 404) {
+          resp = null;
+        }
+      } catch {
+        resp = null;
+      }
+
+      if (!resp) {
+        resp = await fetch("/api/ai/analyze", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ startup, honestyLevel }),
+        });
+      }
 
       if (resp.ok) {
-        const payload = (await resp.json()) as { success?: boolean; rawJson?: string; fallback?: boolean };
-        if (payload.success && payload.rawJson) {
+        const payload = (await resp.json()) as {
+          success?: boolean;
+          rawJson?: string;
+          fallback?: boolean;
+          error?: string;
+          message?: string;
+        };
+
+        // Surface server errors clearly so we know exactly why AI failed
+        if (payload.fallback || !payload.success) {
+          const reason = payload.error || payload.message || "Server AI unavailable";
+          console.warn("[CampusVenture AI] Server returned fallback=true:", reason);
+          // Fall through to heuristic — do NOT throw, just continue
+        } else if (payload.success && payload.rawJson) {
           const parsed = JSON.parse(
             payload.rawJson
               .replace(/^```json\s*/i, "")
