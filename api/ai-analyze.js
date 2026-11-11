@@ -194,7 +194,7 @@ async function callGrok(apiKey, systemPrompt, userPrompt) {
   };
 }
 
-// ── Gemini streaming fallback ─────────────────────────────────────────────
+// ── Gemini non-streaming (Edge runtime = 30s, no need for SSE) ────────────
 async function callGemini(apiKey, systemPrompt, userPrompt) {
   const MODELS = [
     "gemini-2.5-flash",
@@ -205,7 +205,7 @@ async function callGemini(apiKey, systemPrompt, userPrompt) {
 
   for (const modelId of MODELS) {
     try {
-      const url = `https://generativelanguage.googleapis.com/v1beta/models/${modelId}:streamGenerateContent?alt=sse&key=${apiKey.trim()}`;
+      const url = `https://generativelanguage.googleapis.com/v1beta/models/${modelId}:generateContent?key=${apiKey.trim()}`;
       const r = await fetch(url, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -232,42 +232,16 @@ async function callGemini(apiKey, systemPrompt, userPrompt) {
         continue;
       }
 
-      // Read SSE stream
-      const reader = r.body.getReader();
-      const decoder = new TextDecoder();
-      let buffer = "";
-      let fullText = "";
-      let promptTokens = 0,
-        completionTokens = 0;
-
-      while (true) {
-        const { done, value } = await reader.read();
-        if (done) break;
-        buffer += decoder.decode(value, { stream: true });
-        const lines = buffer.split("\n");
-        buffer = lines.pop() || "";
-        for (const line of lines) {
-          if (!line.startsWith("data: ")) continue;
-          const dataStr = line.slice(6).trim();
-          if (dataStr === "[DONE]") continue;
-          try {
-            const chunk = JSON.parse(dataStr);
-            fullText +=
-              chunk?.candidates?.[0]?.content?.parts?.[0]?.text || "";
-            if (chunk?.usageMetadata) {
-              promptTokens =
-                chunk.usageMetadata.promptTokenCount || promptTokens;
-              completionTokens =
-                chunk.usageMetadata.candidatesTokenCount || completionTokens;
-            }
-          } catch {}
-        }
-      }
+      const data = await r.json();
+      const fullText = data?.candidates?.[0]?.content?.parts?.[0]?.text || "";
+      const promptTokens = data?.usageMetadata?.promptTokenCount || 0;
+      const completionTokens = data?.usageMetadata?.candidatesTokenCount || 0;
 
       if (fullText) {
+        console.log(`[AI] Gemini ${modelId} returned ${fullText.length} chars`);
         return { text: fullText, promptTokens, completionTokens, model: modelId };
       }
-      lastError = "Empty streamed response";
+      lastError = "Empty response";
     } catch (e) {
       lastError = e?.message || String(e);
       console.warn(`[AI] Gemini ${modelId} error: ${lastError}`);
