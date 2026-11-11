@@ -223,9 +223,11 @@ BUSINESS MODEL: "${san(startup.businessModel || startup.business_model, 300)}"
 Evaluate rigorously. Return JSON only.`;
 
   // ── Call Gemini — try models fastest-first, all support JSON mode ─────────
-  // gemini-2.0-flash: stable, ~3-5s, supports responseMimeType=application/json
-  // gemini-1.5-flash: fallback, well-tested
-  const MODELS = ["gemini-2.0-flash", "gemini-1.5-flash"];
+  // Models confirmed available for this API key (from /api/ai-models):
+  // gemini-3.8-flash → fast, full JSON mode support
+  // gemini-2.5-flash → stable fallback
+  // gemini-3.1-flash-lite → lightweight emergency fallback
+  const MODELS = ["gemini-3.8-flash", "gemini-2.5-flash", "gemini-3.1-flash-lite"];
 
   const tStart = Date.now();
   let geminiData = null;
