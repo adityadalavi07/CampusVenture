@@ -214,7 +214,7 @@ async function callGemini(apiKey, systemPrompt, userPrompt) {
           contents: [{ role: "user", parts: [{ text: userPrompt }] }],
           generationConfig: {
             temperature: 0.2,
-            maxOutputTokens: 1500,
+            maxOutputTokens: 4096,
             responseMimeType: "application/json",
           },
         }),
