@@ -1,26 +1,15 @@
 /**
- * Vercel Serverless Function — /api/ai-analyze   (v9 — OpenAI + Gemini fallback)
- * 
- * Primary:  OpenAI gpt-4o-mini  (~2-3 seconds, reliable JSON mode)
- * Fallback: Gemini 2.5-flash    (if OpenAI key not set)
- * 
+ * Vercel EDGE Function — /api/ai-analyze   (v10 — Edge runtime, 30s timeout)
+ *
+ * Edge runtime gives 30s on Hobby plan (vs 10s for serverless Node.js).
+ * Primary:  Grok grok-2-latest  (~2-5s, fast non-reasoning model)
+ * Fallback: Gemini streaming     (SSE keeps data flowing)
+ *
  * Deterministic scoring engine — AI scores 9 categories, we compute final.
  * Hard rule: NO silent fallback. AI fails → return success:false.
  */
 
-const rateLimits = new Map();
-function checkRateLimit(key, limit, windowMs) {
-  const now = Date.now();
-  const rec = rateLimits.get(key);
-  if (!rec || now > rec.resetAt) {
-    rateLimits.set(key, { count: 1, resetAt: now + windowMs });
-    return { allowed: true };
-  }
-  if (rec.count >= limit)
-    return { allowed: false, retryAfterSec: Math.max(1, Math.ceil((rec.resetAt - now) / 1000)) };
-  rec.count++;
-  return { allowed: true };
-}
+export const config = { runtime: "edge" };
 
 const SUPABASE_URL = "https://lirfkzpehmxtynjsjzib.supabase.co";
 
@@ -48,7 +37,9 @@ async function sbFetch(key, path, method = "GET", body, token) {
     const text = await res.text();
     let data = null;
     try { data = JSON.parse(text); } catch { data = text; }
-    return res.ok ? { data, error: null } : { data: null, error: data?.message || text.slice(0, 200) };
+    return res.ok
+      ? { data, error: null }
+      : { data: null, error: data?.message || text.slice(0, 200) };
   } catch (e) {
     return { data: null, error: e?.message || String(e) };
   }
@@ -71,7 +62,7 @@ function san(text, max = 600) {
   if (!text) return "Not provided";
   return String(text)
     .replace(/[\x00-\x08\x0B\x0C\x0E-\x1F\x7F]/g, "")
-    .replace(/---/g, "—")
+    .replace(/---/g, "\u2014")
     .replace(/```/g, "'''")
     .trim()
     .slice(0, max);
@@ -84,7 +75,7 @@ const WEIGHTS = {
   "Market opportunity": 15,
   "Business model": 10,
   "Product readiness": 10,
-  "Traction": 15,
+  Traction: 15,
   "Competitive advantage": 10,
   "Team readiness": 5,
   "Funding clarity": 5,
@@ -112,10 +103,10 @@ function grade(s) {
 function buildSystemPrompt(stage) {
   const stageCtx =
     stage === "Idea"
-      ? "Idea stage — do NOT penalise for no revenue or no users."
+      ? "Idea stage \u2014 do NOT penalise for no revenue or no users."
       : stage === "MVP"
-      ? "MVP stage — expect working prototype; no revenue is acceptable."
-      : "Growth stage — expect real traction and revenue evidence.";
+        ? "MVP stage \u2014 expect working prototype; no revenue is acceptable."
+        : "Growth stage \u2014 expect real traction and revenue evidence.";
 
   return `You are a strict VC partner doing investment due diligence. ${stageCtx}
 Return ONLY a valid JSON object with this exact schema:
@@ -155,7 +146,7 @@ BUSINESS MODEL: "${san(startup.businessModel || startup.business_model, 300)}"
 Evaluate rigorously. Return JSON only.`;
 }
 
-// ── Grok (xAI) call — OpenAI-compatible API ──────────────────────────────
+// ── Grok (xAI) — OpenAI-compatible, fast non-reasoning model ─────────────
 async function callGrok(apiKey, systemPrompt, userPrompt) {
   const res = await fetch("https://api.x.ai/v1/chat/completions", {
     method: "POST",
@@ -164,14 +155,13 @@ async function callGrok(apiKey, systemPrompt, userPrompt) {
       Authorization: `Bearer ${apiKey}`,
     },
     body: JSON.stringify({
-      model: "grok-3-mini-fast",
+      model: "grok-2-latest",
       messages: [
         { role: "system", content: systemPrompt },
         { role: "user", content: userPrompt },
       ],
       temperature: 0.2,
       max_tokens: 4000,
-      reasoning_effort: "low",
       response_format: { type: "json_object" },
     }),
   });
@@ -179,36 +169,42 @@ async function callGrok(apiKey, systemPrompt, userPrompt) {
   if (!res.ok) {
     const errText = await res.text().catch(() => "");
     let errMsg = `Grok HTTP ${res.status}`;
-    try { errMsg = JSON.parse(errText)?.error?.message || errMsg; } catch {}
+    try {
+      errMsg = JSON.parse(errText)?.error?.message || errMsg;
+    } catch {}
     throw new Error(errMsg);
   }
 
   const data = await res.json();
   const text = data?.choices?.[0]?.message?.content;
   const finishReason = data?.choices?.[0]?.finish_reason || "unknown";
-  console.log(`[AI] Grok finish_reason: ${finishReason}, text length: ${(text || "").length}, usage:`, JSON.stringify(data?.usage || {}));
-  if (!text) throw new Error(`Grok returned empty response (finish_reason: ${finishReason})`);
-  if (finishReason === "length") {
-    console.warn("[AI] Grok response was truncated (finish_reason=length)");
-  }
+  console.log(
+    `[AI] Grok finish_reason: ${finishReason}, len: ${(text || "").length}`,
+  );
+  if (!text)
+    throw new Error(
+      `Grok returned empty response (finish_reason: ${finishReason})`,
+    );
 
   return {
     text,
     promptTokens: data?.usage?.prompt_tokens || 0,
     completionTokens: data?.usage?.completion_tokens || 0,
-    model: data?.model || "grok-3-mini-fast",
+    model: data?.model || "grok-2-latest",
   };
 }
 
-// ── Gemini call (fallback) ────────────────────────────────────────────────
+// ── Gemini streaming fallback ─────────────────────────────────────────────
 async function callGemini(apiKey, systemPrompt, userPrompt) {
-  // Try these models in order — confirmed available via /api/ai-models
-  const MODELS = ["gemini-2.5-flash", "gemini-3.8-flash", "gemini-3.1-flash-lite"];
+  const MODELS = [
+    "gemini-2.5-flash",
+    "gemini-3.8-flash",
+    "gemini-3.1-flash-lite",
+  ];
   let lastError = "";
 
   for (const modelId of MODELS) {
     try {
-      // Use streaming to avoid Vercel 10s idle timeout
       const url = `https://generativelanguage.googleapis.com/v1beta/models/${modelId}:streamGenerateContent?alt=sse&key=${apiKey.trim()}`;
       const r = await fetch(url, {
         method: "POST",
@@ -227,7 +223,9 @@ async function callGemini(apiKey, systemPrompt, userPrompt) {
       if (!r.ok) {
         const errText = await r.text().catch(() => "");
         let errMsg = `HTTP ${r.status}`;
-        try { errMsg = JSON.parse(errText)?.error?.message || errMsg; } catch {}
+        try {
+          errMsg = JSON.parse(errText)?.error?.message || errMsg;
+        } catch {}
         console.warn(`[AI] Gemini ${modelId} failed: ${errMsg}`);
         lastError = errMsg;
         if (r.status === 429 || r.status >= 500) break;
@@ -239,7 +237,8 @@ async function callGemini(apiKey, systemPrompt, userPrompt) {
       const decoder = new TextDecoder();
       let buffer = "";
       let fullText = "";
-      let promptTokens = 0, completionTokens = 0;
+      let promptTokens = 0,
+        completionTokens = 0;
 
       while (true) {
         const { done, value } = await reader.read();
@@ -253,10 +252,13 @@ async function callGemini(apiKey, systemPrompt, userPrompt) {
           if (dataStr === "[DONE]") continue;
           try {
             const chunk = JSON.parse(dataStr);
-            fullText += chunk?.candidates?.[0]?.content?.parts?.[0]?.text || "";
+            fullText +=
+              chunk?.candidates?.[0]?.content?.parts?.[0]?.text || "";
             if (chunk?.usageMetadata) {
-              promptTokens = chunk.usageMetadata.promptTokenCount || promptTokens;
-              completionTokens = chunk.usageMetadata.candidatesTokenCount || completionTokens;
+              promptTokens =
+                chunk.usageMetadata.promptTokenCount || promptTokens;
+              completionTokens =
+                chunk.usageMetadata.candidatesTokenCount || completionTokens;
             }
           } catch {}
         }
@@ -275,59 +277,89 @@ async function callGemini(apiKey, systemPrompt, userPrompt) {
   throw new Error(`Gemini unavailable: ${lastError}`);
 }
 
-// ── Main handler ──────────────────────────────────────────────────────────
-export const config = { maxDuration: 60 };
+// ── JSON Response helper ──────────────────────────────────────────────────
+const CORS = {
+  "Access-Control-Allow-Origin": "*",
+  "Access-Control-Allow-Methods": "POST, OPTIONS",
+  "Access-Control-Allow-Headers": "Content-Type, Authorization",
+};
 
-export default async function handler(req, res) {
-  res.setHeader("Access-Control-Allow-Origin", "*");
-  res.setHeader("Access-Control-Allow-Methods", "POST, OPTIONS");
-  res.setHeader("Access-Control-Allow-Headers", "Content-Type, Authorization");
-  if (req.method === "OPTIONS") return res.status(200).end();
-  if (req.method !== "POST")
-    return res.status(405).json({ success: false, error: "Method not allowed" });
+function json(data, status = 200) {
+  return new Response(JSON.stringify(data), {
+    status,
+    headers: { "Content-Type": "application/json", ...CORS },
+  });
+}
 
-  // Rate limit
-  const rawIp = (req.headers["x-forwarded-for"] || "").split(",")[0].trim() || "unknown";
-  const rl = checkRateLimit(`ai:${rawIp}`, 10, 60000);
-  if (!rl.allowed)
-    return res.status(429).json({ success: false, error: `Rate limit. Retry in ${rl.retryAfterSec}s.` });
+// ── Main Edge handler ─────────────────────────────────────────────────────
+export default async function handler(request) {
+  // CORS preflight
+  if (request.method === "OPTIONS") {
+    return new Response(null, { status: 200, headers: CORS });
+  }
+  if (request.method !== "POST") {
+    return json({ success: false, error: "Method not allowed" }, 405);
+  }
 
+  // Check API keys
   const grokKey = process.env.GROK_API_KEY || process.env.XAI_API_KEY || "";
   const geminiKey = process.env.GEMINI_API_KEY || "";
   if (!grokKey && !geminiKey) {
-    return res.status(200).json({ success: false, error: "No AI provider configured. Set GROK_API_KEY or GEMINI_API_KEY." });
+    return json({
+      success: false,
+      error: "No AI provider configured. Set GROK_API_KEY or GEMINI_API_KEY.",
+    });
   }
 
   // Auth
   const supabaseKey = getSupabaseKey();
-  const rawAuth = req.headers["authorization"] || "";
+  const rawAuth = request.headers.get("authorization") || "";
   const token = rawAuth.replace(/^Bearer\s+/i, "").trim();
-  let ownerId = null, ownerEmail = "";
+  let ownerId = null,
+    ownerEmail = "";
   if (token) {
     const u = await verifyJWT(supabaseKey, token);
-    if (u) { ownerId = u.userId; ownerEmail = u.email; }
+    if (u) {
+      ownerId = u.userId;
+      ownerEmail = u.email;
+    }
   }
 
   // Parse body
-  let body = req.body;
-  if (!body || typeof body !== "object") {
-    try { body = JSON.parse(req.body); } catch {
-      return res.status(400).json({ success: false, error: "Invalid JSON body" });
-    }
+  let body;
+  try {
+    body = await request.json();
+  } catch {
+    return json({ success: false, error: "Invalid JSON body" }, 400);
   }
+
   const startup = body?.startup;
   const startupId = body?.startupId || startup?.id;
   if (!startup || typeof startup !== "object") {
-    return res.status(400).json({ success: false, error: "Missing startup data" });
+    return json({ success: false, error: "Missing startup data" }, 400);
   }
 
   // Ownership check
   if (ownerId && startupId) {
-    const { data: dbS } = await sbFetch(supabaseKey, `startups?id=eq.${startupId}&select=founder_id,founder_email`, "GET", undefined, token);
+    const { data: dbS } = await sbFetch(
+      supabaseKey,
+      `startups?id=eq.${startupId}&select=founder_id,founder_email`,
+      "GET",
+      undefined,
+      token,
+    );
     if (Array.isArray(dbS) && dbS.length > 0) {
       const row = dbS[0];
-      const ok = row["founder_id"] === ownerId || (row["founder_email"] && String(row["founder_email"]).toLowerCase() === ownerEmail.toLowerCase());
-      if (!ok) return res.status(403).json({ success: false, error: "Access denied: not your startup." });
+      const ok =
+        row["founder_id"] === ownerId ||
+        (row["founder_email"] &&
+          String(row["founder_email"]).toLowerCase() ===
+            ownerEmail.toLowerCase());
+      if (!ok)
+        return json(
+          { success: false, error: "Access denied: not your startup." },
+          403,
+        );
     }
   }
 
@@ -336,32 +368,33 @@ export default async function handler(req, res) {
   const systemPrompt = buildSystemPrompt(stage);
   const userPrompt = buildUserPrompt(startup);
 
-  // Call AI — Grok first (fast, ~1-3s), Gemini streaming fallback
+  // ── Call AI ── Grok first (fast ~2-5s), Gemini streaming fallback ──
   const tStart = Date.now();
   let aiResult;
   let provider = "";
 
-  // Try Grok (xAI) first — very fast, OpenAI-compatible
   if (grokKey) {
     try {
       aiResult = await callGrok(grokKey, systemPrompt, userPrompt);
       provider = "grok";
-      console.log(`[AI] Grok ${aiResult.model} responded in ${Date.now() - tStart}ms`);
+      console.log(
+        `[AI] Grok ${aiResult.model} responded in ${Date.now() - tStart}ms`,
+      );
     } catch (e) {
       console.warn(`[AI] Grok failed: ${e.message}`);
-      // Fall through to Gemini
     }
   }
 
-  // Fallback to Gemini
   if (!aiResult && geminiKey) {
     try {
       aiResult = await callGemini(geminiKey, systemPrompt, userPrompt);
       provider = "gemini";
-      console.log(`[AI] Gemini ${aiResult.model} responded in ${Date.now() - tStart}ms`);
+      console.log(
+        `[AI] Gemini ${aiResult.model} responded in ${Date.now() - tStart}ms`,
+      );
     } catch (e) {
       console.error(`[AI] Gemini also failed: ${e.message}`);
-      return res.status(200).json({
+      return json({
         success: false,
         error: `All AI providers failed. ${e.message}. Please retry.`,
       });
@@ -369,12 +402,15 @@ export default async function handler(req, res) {
   }
 
   if (!aiResult) {
-    return res.status(200).json({ success: false, error: "No AI provider available. Please retry." });
+    return json({
+      success: false,
+      error: "No AI provider available. Please retry.",
+    });
   }
 
   const latencyMs = Date.now() - tStart;
 
-  // Parse JSON
+  // Parse JSON from AI
   let parsed;
   const cleaned = aiResult.text
     .replace(/^```json\s*/i, "")
@@ -385,14 +421,20 @@ export default async function handler(req, res) {
   try {
     parsed = JSON.parse(cleaned);
   } catch (parseErr1) {
-    // Try extracting JSON object from surrounding text
     const match = cleaned.match(/\{[\s\S]*\}/);
     if (match) {
-      try { parsed = JSON.parse(match[0]); } catch {}
+      try {
+        parsed = JSON.parse(match[0]);
+      } catch {}
     }
     if (!parsed) {
-      console.error("[AI] JSON parse failed. Error:", parseErr1.message, "Raw length:", cleaned.length, "First 800 chars:", cleaned.slice(0, 800));
-      return res.status(200).json({
+      console.error(
+        "[AI] JSON parse failed. Raw length:",
+        cleaned.length,
+        "First 500:",
+        cleaned.slice(0, 500),
+      );
+      return json({
         success: false,
         error: "AI response could not be parsed. Please retry.",
         debugRaw: cleaned.slice(0, 800),
@@ -409,22 +451,41 @@ export default async function handler(req, res) {
   const honestTake = String(parsed.honestTake || "");
   const modelUsed = `${aiResult.model} (${provider})`;
 
-  // Persist to Supabase (non-blocking)
+  // Persist to Supabase (fire-and-forget — don't block the response)
   if (ownerId && startupId) {
-    Promise.all([
-      sbFetch(supabaseKey, "startup_analysis_reports", "POST", {
-        startup_id: startupId, owner_id: ownerId,
-        ai_provider: provider, model_id: aiResult.model,
-        readiness_score: readinessScore, evidence_confidence: 65, risk_exposure: 50,
-        investor_grade: investorGrade, verdict, report_json: parsed, startup_snapshot: startup,
-        prompt_tokens: aiResult.promptTokens, completion_tokens: aiResult.completionTokens,
-        latency_ms: latencyMs, created_at: new Date().toISOString(),
-      }, token),
-      sbFetch(supabaseKey, `startups?id=eq.${startupId}`, "PATCH", { readiness: readinessScore }, token),
-    ]).catch(e => console.warn("[AI] Supabase error:", e?.message));
+    sbFetch(
+      supabaseKey,
+      "startup_analysis_reports",
+      "POST",
+      {
+        startup_id: startupId,
+        owner_id: ownerId,
+        ai_provider: provider,
+        model_id: aiResult.model,
+        readiness_score: readinessScore,
+        evidence_confidence: 65,
+        risk_exposure: 50,
+        investor_grade: investorGrade,
+        verdict,
+        report_json: parsed,
+        startup_snapshot: startup,
+        prompt_tokens: aiResult.promptTokens,
+        completion_tokens: aiResult.completionTokens,
+        latency_ms: latencyMs,
+        created_at: new Date().toISOString(),
+      },
+      token,
+    ).catch(() => {});
+    sbFetch(
+      supabaseKey,
+      `startups?id=eq.${startupId}`,
+      "PATCH",
+      { readiness: readinessScore },
+      token,
+    ).catch(() => {});
   }
 
-  return res.status(200).json({
+  return json({
     success: true,
     readinessScore,
     evidenceConfidence: 65,
@@ -432,10 +493,18 @@ export default async function handler(req, res) {
     investorGrade,
     verdict,
     honestTake,
-    redFlags:        Array.isArray(parsed.redFlags) ? parsed.redFlags.slice(0, 4) : [],
-    strengths:       Array.isArray(parsed.strengths) ? parsed.strengths.slice(0, 3) : [],
-    weaknesses:      Array.isArray(parsed.weaknesses) ? parsed.weaknesses.slice(0, 3) : [],
-    recommendations: Array.isArray(parsed.recommendations) ? parsed.recommendations.slice(0, 4) : [],
+    redFlags: Array.isArray(parsed.redFlags)
+      ? parsed.redFlags.slice(0, 4)
+      : [],
+    strengths: Array.isArray(parsed.strengths)
+      ? parsed.strengths.slice(0, 3)
+      : [],
+    weaknesses: Array.isArray(parsed.weaknesses)
+      ? parsed.weaknesses.slice(0, 3)
+      : [],
+    recommendations: Array.isArray(parsed.recommendations)
+      ? parsed.recommendations.slice(0, 4)
+      : [],
     categoryScores: cats,
     rawJson: cleaned,
     modelUsed,

@@ -9,11 +9,6 @@
   "env": {
     "DANGEROUSLY_DEPLOY_VULNERABLE_TANSTACK_START_XSS": "1"
   },
-  "functions": {
-    "api/ai-analyze.js": {
-      "maxDuration": 90
-    }
-  },
   "headers": [
     {
       "source": "/(.*)",
