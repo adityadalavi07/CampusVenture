@@ -171,6 +171,7 @@ async function callGrok(apiKey, systemPrompt, userPrompt) {
       ],
       temperature: 0.2,
       max_tokens: 4000,
+      reasoning_effort: "low",
       response_format: { type: "json_object" },
     }),
   });
@@ -184,7 +185,12 @@ async function callGrok(apiKey, systemPrompt, userPrompt) {
 
   const data = await res.json();
   const text = data?.choices?.[0]?.message?.content;
-  if (!text) throw new Error("Grok returned empty response");
+  const finishReason = data?.choices?.[0]?.finish_reason || "unknown";
+  console.log(`[AI] Grok finish_reason: ${finishReason}, text length: ${(text || "").length}, usage:`, JSON.stringify(data?.usage || {}));
+  if (!text) throw new Error(`Grok returned empty response (finish_reason: ${finishReason})`);
+  if (finishReason === "length") {
+    console.warn("[AI] Grok response was truncated (finish_reason=length)");
+  }
 
   return {
     text,
