@@ -378,17 +378,19 @@ export default async function handler(req, res) {
 
   try {
     parsed = JSON.parse(cleaned);
-  } catch {
+  } catch (parseErr1) {
+    // Try extracting JSON object from surrounding text
     const match = cleaned.match(/\{[\s\S]*\}/);
     if (match) {
       try { parsed = JSON.parse(match[0]); } catch {}
     }
     if (!parsed) {
-      console.error("[AI] JSON parse failed. Raw:", cleaned.slice(0, 400));
+      console.error("[AI] JSON parse failed. Error:", parseErr1.message, "Raw length:", cleaned.length, "First 800 chars:", cleaned.slice(0, 800));
       return res.status(200).json({
         success: false,
         error: "AI response could not be parsed. Please retry.",
-        debugRaw: cleaned.slice(0, 300),
+        debugRaw: cleaned.slice(0, 800),
+        rawLength: cleaned.length,
       });
     }
   }
