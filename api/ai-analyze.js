@@ -170,7 +170,7 @@ async function callGrok(apiKey, systemPrompt, userPrompt) {
         { role: "user", content: userPrompt },
       ],
       temperature: 0.2,
-      max_tokens: 1500,
+      max_tokens: 4000,
       response_format: { type: "json_object" },
     }),
   });
