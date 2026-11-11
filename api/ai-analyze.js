@@ -155,16 +155,16 @@ BUSINESS MODEL: "${san(startup.businessModel || startup.business_model, 300)}"
 Evaluate rigorously. Return JSON only.`;
 }
 
-// ── OpenAI call ───────────────────────────────────────────────────────────
-async function callOpenAI(apiKey, systemPrompt, userPrompt) {
-  const res = await fetch("https://api.openai.com/v1/chat/completions", {
+// ── Grok (xAI) call — OpenAI-compatible API ──────────────────────────────
+async function callGrok(apiKey, systemPrompt, userPrompt) {
+  const res = await fetch("https://api.x.ai/v1/chat/completions", {
     method: "POST",
     headers: {
       "Content-Type": "application/json",
       Authorization: `Bearer ${apiKey}`,
     },
     body: JSON.stringify({
-      model: "gpt-4o-mini",
+      model: "grok-3-mini-fast",
       messages: [
         { role: "system", content: systemPrompt },
         { role: "user", content: userPrompt },
@@ -177,20 +177,20 @@ async function callOpenAI(apiKey, systemPrompt, userPrompt) {
 
   if (!res.ok) {
     const errText = await res.text().catch(() => "");
-    let errMsg = `OpenAI HTTP ${res.status}`;
+    let errMsg = `Grok HTTP ${res.status}`;
     try { errMsg = JSON.parse(errText)?.error?.message || errMsg; } catch {}
     throw new Error(errMsg);
   }
 
   const data = await res.json();
   const text = data?.choices?.[0]?.message?.content;
-  if (!text) throw new Error("OpenAI returned empty response");
+  if (!text) throw new Error("Grok returned empty response");
 
   return {
     text,
     promptTokens: data?.usage?.prompt_tokens || 0,
     completionTokens: data?.usage?.completion_tokens || 0,
-    model: data?.model || "gpt-4o-mini",
+    model: data?.model || "grok-3-mini-fast",
   };
 }
 
@@ -286,10 +286,10 @@ export default async function handler(req, res) {
   if (!rl.allowed)
     return res.status(429).json({ success: false, error: `Rate limit. Retry in ${rl.retryAfterSec}s.` });
 
-  const openaiKey = process.env.OPENAI_API_KEY || "";
+  const grokKey = process.env.GROK_API_KEY || process.env.XAI_API_KEY || "";
   const geminiKey = process.env.GEMINI_API_KEY || "";
-  if (!openaiKey && !geminiKey) {
-    return res.status(200).json({ success: false, error: "No AI provider configured. Set OPENAI_API_KEY or GEMINI_API_KEY." });
+  if (!grokKey && !geminiKey) {
+    return res.status(200).json({ success: false, error: "No AI provider configured. Set GROK_API_KEY or GEMINI_API_KEY." });
   }
 
   // Auth
@@ -330,19 +330,19 @@ export default async function handler(req, res) {
   const systemPrompt = buildSystemPrompt(stage);
   const userPrompt = buildUserPrompt(startup);
 
-  // Call AI — OpenAI first (fast, ~2-3s), Gemini fallback
+  // Call AI — Grok first (fast, ~1-3s), Gemini streaming fallback
   const tStart = Date.now();
   let aiResult;
   let provider = "";
 
-  // Try OpenAI first
-  if (openaiKey) {
+  // Try Grok (xAI) first — very fast, OpenAI-compatible
+  if (grokKey) {
     try {
-      aiResult = await callOpenAI(openaiKey, systemPrompt, userPrompt);
-      provider = "openai";
-      console.log(`[AI] OpenAI ${aiResult.model} responded in ${Date.now() - tStart}ms`);
+      aiResult = await callGrok(grokKey, systemPrompt, userPrompt);
+      provider = "grok";
+      console.log(`[AI] Grok ${aiResult.model} responded in ${Date.now() - tStart}ms`);
     } catch (e) {
-      console.warn(`[AI] OpenAI failed: ${e.message}`);
+      console.warn(`[AI] Grok failed: ${e.message}`);
       // Fall through to Gemini
     }
   }
