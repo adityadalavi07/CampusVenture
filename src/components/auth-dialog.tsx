@@ -1164,7 +1164,7 @@ export function AuthDialog() {
                           className={errors["org"] ? "bad" : ""}
                         />
 
-                        {showUnivDropdown && univSuggestions.length > 0 && (
+                        {showUnivDropdown && fOrg.trim().length > 0 && (
                           <div className="univ-dropdown" role="listbox">
                             {univSuggestions.map((u) => (
                               <button
@@ -1183,6 +1183,22 @@ export function AuthDialog() {
                                 <span className="univ-badge">✓ UGC Approved</span>
                               </button>
                             ))}
+                            {!isUGCApproved(fOrg) && fOrg.trim().length >= 2 && (
+                              <button
+                                type="button"
+                                className="univ-item"
+                                role="option"
+                                style={{ borderTop: univSuggestions.length > 0 ? "1px solid rgba(255,255,255,0.1)" : "none" }}
+                                onClick={() => { setShowUnivDropdown(false); }}
+                              >
+                                <div style={{ overflow: "hidden", textOverflow: "ellipsis", marginRight: 6 }}>
+                                  <div className="univ-name">✏️ Use "{fOrg.trim()}"</div>
+                                  <div className="univ-meta">
+                                    Custom college / institute name (not in UGC list)
+                                  </div>
+                                </div>
+                              </button>
+                            )}
                           </div>
                         )}
                       </div>
