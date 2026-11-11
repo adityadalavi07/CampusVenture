@@ -368,24 +368,13 @@ export default async function handler(request) {
   const systemPrompt = buildSystemPrompt(stage);
   const userPrompt = buildUserPrompt(startup);
 
-  // ── Call AI ── Grok first (fast ~2-5s), Gemini streaming fallback ──
+  // ── Call AI ── Gemini streaming first (reliable JSON), Grok fallback ──
   const tStart = Date.now();
   let aiResult;
   let provider = "";
 
-  if (grokKey) {
-    try {
-      aiResult = await callGrok(grokKey, systemPrompt, userPrompt);
-      provider = "grok";
-      console.log(
-        `[AI] Grok ${aiResult.model} responded in ${Date.now() - tStart}ms`,
-      );
-    } catch (e) {
-      console.warn(`[AI] Grok failed: ${e.message}`);
-    }
-  }
-
-  if (!aiResult && geminiKey) {
+  // Gemini streaming primary — guaranteed JSON via responseMimeType
+  if (geminiKey) {
     try {
       aiResult = await callGemini(geminiKey, systemPrompt, userPrompt);
       provider = "gemini";
@@ -393,7 +382,20 @@ export default async function handler(request) {
         `[AI] Gemini ${aiResult.model} responded in ${Date.now() - tStart}ms`,
       );
     } catch (e) {
-      console.error(`[AI] Gemini also failed: ${e.message}`);
+      console.warn(`[AI] Gemini failed: ${e.message}`);
+    }
+  }
+
+  // Grok fallback
+  if (!aiResult && grokKey) {
+    try {
+      aiResult = await callGrok(grokKey, systemPrompt, userPrompt);
+      provider = "grok";
+      console.log(
+        `[AI] Grok ${aiResult.model} responded in ${Date.now() - tStart}ms`,
+      );
+    } catch (e) {
+      console.error(`[AI] Grok also failed: ${e.message}`);
       return json({
         success: false,
         error: `All AI providers failed. ${e.message}. Please retry.`,
