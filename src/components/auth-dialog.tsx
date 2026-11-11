@@ -215,10 +215,10 @@ export function AuthDialog() {
     setFOrg(val);
     clearFieldError("org");
     if (role === "student" || role === "university") {
-      if (val.trim().length > 0) {
-        const matches = searchUniversities(val, 8);
+      if (val.trim().length > 1) {
+        const matches = searchUniversities(val, 6);
         setUnivSuggestions(matches);
-        setShowUnivDropdown(true);
+        setShowUnivDropdown(matches.length > 0);
       } else {
         setUnivSuggestions([]);
         setShowUnivDropdown(false);
@@ -1150,21 +1150,23 @@ export function AuthDialog() {
                       <div className="univ-wrap" ref={univWrapRef} style={{ marginTop: 4 }}>
                         <input
                           id="auth-reg-org"
-                          placeholder="Type university (e.g. Sanjay Ghodawat, Shivaji, IIT...)"
+                          placeholder="Enter your college / university name"
                           value={fOrg}
                           onChange={(e) => handleOrgChange(e.target.value)}
                           onFocus={() => {
-                            if (fOrg.trim().length > 0) {
-                              const matches = searchUniversities(fOrg, 8);
-                              setUnivSuggestions(matches);
-                              setShowUnivDropdown(true);
+                            if (fOrg.trim().length > 1) {
+                              const matches = searchUniversities(fOrg, 6);
+                              if (matches.length > 0) {
+                                setUnivSuggestions(matches);
+                                setShowUnivDropdown(true);
+                              }
                             }
                           }}
                           autoComplete="off"
                           className={errors["org"] ? "bad" : ""}
                         />
 
-                        {showUnivDropdown && fOrg.trim().length > 0 && (
+                        {showUnivDropdown && univSuggestions.length > 0 && (
                           <div className="univ-dropdown" role="listbox">
                             {univSuggestions.map((u) => (
                               <button
@@ -1180,25 +1182,9 @@ export function AuthDialog() {
                                     {u.city}, {u.state} • {u.type}
                                   </div>
                                 </div>
-                                <span className="univ-badge">✓ UGC Approved</span>
+                                <span className="univ-badge">✓ UGC</span>
                               </button>
                             ))}
-                            {!isUGCApproved(fOrg) && fOrg.trim().length >= 2 && (
-                              <button
-                                type="button"
-                                className="univ-item"
-                                role="option"
-                                style={{ borderTop: univSuggestions.length > 0 ? "1px solid rgba(255,255,255,0.1)" : "none" }}
-                                onClick={() => { setShowUnivDropdown(false); }}
-                              >
-                                <div style={{ overflow: "hidden", textOverflow: "ellipsis", marginRight: 6 }}>
-                                  <div className="univ-name">✏️ Use "{fOrg.trim()}"</div>
-                                  <div className="univ-meta">
-                                    Custom college / institute name (not in UGC list)
-                                  </div>
-                                </div>
-                              </button>
-                            )}
                           </div>
                         )}
                       </div>
