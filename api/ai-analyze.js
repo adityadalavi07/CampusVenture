@@ -1,9 +1,11 @@
 /**
- * Vercel Serverless Function — /api/ai-analyze   (v7 — PRODUCTION)
- * Node.js runtime. GEMINI_API_KEY read from process.env.
- * Uses gemini-2.0-flash (stable, fast ~3-5s, supports JSON mode).
- * Deterministic scoring engine — AI scores categories, we compute final.
- * Hard rule: NO silent fallback. If AI fails → return success:false.
+ * Vercel Serverless Function — /api/ai-analyze   (v9 — OpenAI + Gemini fallback)
+ * 
+ * Primary:  OpenAI gpt-4o-mini  (~2-3 seconds, reliable JSON mode)
+ * Fallback: Gemini 2.5-flash    (if OpenAI key not set)
+ * 
+ * Deterministic scoring engine — AI scores 9 categories, we compute final.
+ * Hard rule: NO silent fallback. AI fails → return success:false.
  */
 
 const rateLimits = new Map();
@@ -14,7 +16,8 @@ function checkRateLimit(key, limit, windowMs) {
     rateLimits.set(key, { count: 1, resetAt: now + windowMs });
     return { allowed: true };
   }
-  if (rec.count >= limit) return { allowed: false, retryAfterSec: Math.max(1, Math.ceil((rec.resetAt - now) / 1000)) };
+  if (rec.count >= limit)
+    return { allowed: false, retryAfterSec: Math.max(1, Math.ceil((rec.resetAt - now) / 1000)) };
   rec.count++;
   return { allowed: true };
 }
@@ -59,7 +62,9 @@ async function verifyJWT(key, token) {
     if (!res.ok) return null;
     const d = await res.json();
     return d?.id ? { userId: d.id, email: d.email || "" } : null;
-  } catch { return null; }
+  } catch {
+    return null;
+  }
 }
 
 function san(text, max = 600) {
@@ -72,7 +77,7 @@ function san(text, max = 600) {
     .slice(0, max);
 }
 
-// Weights for 9 categories (must sum to 100)
+// ── Deterministic scoring engine ──────────────────────────────────────────
 const WEIGHTS = {
   "Problem clarity": 15,
   "Solution strength": 15,
@@ -103,6 +108,168 @@ function grade(s) {
   return "F";
 }
 
+// ── Prompt builders ───────────────────────────────────────────────────────
+function buildSystemPrompt(stage) {
+  const stageCtx =
+    stage === "Idea"
+      ? "Idea stage — do NOT penalise for no revenue or no users."
+      : stage === "MVP"
+      ? "MVP stage — expect working prototype; no revenue is acceptable."
+      : "Growth stage — expect real traction and revenue evidence.";
+
+  return `You are a strict VC partner doing investment due diligence. ${stageCtx}
+Return ONLY a valid JSON object with this exact schema:
+{
+  "categories": {
+    "Problem clarity":       {"score": <integer 0-100>, "critique": "<max 120 chars>"},
+    "Solution strength":     {"score": <integer 0-100>, "critique": "<max 120 chars>"},
+    "Market opportunity":    {"score": <integer 0-100>, "critique": "<max 120 chars>"},
+    "Business model":        {"score": <integer 0-100>, "critique": "<max 120 chars>"},
+    "Product readiness":     {"score": <integer 0-100>, "critique": "<max 120 chars>"},
+    "Traction":              {"score": <integer 0-100>, "critique": "<max 120 chars>"},
+    "Competitive advantage": {"score": <integer 0-100>, "critique": "<max 120 chars>"},
+    "Team readiness":        {"score": <integer 0-100>, "critique": "<max 120 chars>"},
+    "Funding clarity":       {"score": <integer 0-100>, "critique": "<max 120 chars>"}
+  },
+  "verdict": "<1 sentence investment verdict>",
+  "honestTake": "<2-3 sentences of blunt, unfiltered VC truth>",
+  "redFlags": ["<flag1>", "<flag2>", "<flag3>"],
+  "strengths": ["<strength1>", "<strength2>"],
+  "weaknesses": ["<weakness1>", "<weakness2>"],
+  "recommendations": ["<action1>", "<action2>", "<action3>"]
+}
+Scoring: weak ideas 20-45, decent with gaps 45-65, strong with evidence 65-85. Be honest and critical.`;
+}
+
+function buildUserPrompt(startup) {
+  return `Startup: ${san(startup.name, 60)}
+Sector: ${san(startup.sector, 40)} | Stage: ${san(startup.stage, 20)} | Team: ${startup.teamSize || 1}
+Revenue: ${startup.revenue ? "Yes" : "No"} | MAU: ${startup.monthlyUsers || 0} | Funding ask: $${Number(startup.fundingRequired || 0).toLocaleString()}
+GitHub: ${startup.githubUrl ? "Yes" : "No"} | Pitch deck: ${startup.deckName ? "Yes" : "No"}
+
+PROBLEM: "${san(startup.problem, 600)}"
+SOLUTION: "${san(startup.solution, 600)}"
+TRACTION: "${san(startup.traction, 300)}"
+BUSINESS MODEL: "${san(startup.businessModel || startup.business_model, 300)}"
+
+Evaluate rigorously. Return JSON only.`;
+}
+
+// ── OpenAI call ───────────────────────────────────────────────────────────
+async function callOpenAI(apiKey, systemPrompt, userPrompt) {
+  const res = await fetch("https://api.openai.com/v1/chat/completions", {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      Authorization: `Bearer ${apiKey}`,
+    },
+    body: JSON.stringify({
+      model: "gpt-4o-mini",
+      messages: [
+        { role: "system", content: systemPrompt },
+        { role: "user", content: userPrompt },
+      ],
+      temperature: 0.2,
+      max_tokens: 1500,
+      response_format: { type: "json_object" },
+    }),
+  });
+
+  if (!res.ok) {
+    const errText = await res.text().catch(() => "");
+    let errMsg = `OpenAI HTTP ${res.status}`;
+    try { errMsg = JSON.parse(errText)?.error?.message || errMsg; } catch {}
+    throw new Error(errMsg);
+  }
+
+  const data = await res.json();
+  const text = data?.choices?.[0]?.message?.content;
+  if (!text) throw new Error("OpenAI returned empty response");
+
+  return {
+    text,
+    promptTokens: data?.usage?.prompt_tokens || 0,
+    completionTokens: data?.usage?.completion_tokens || 0,
+    model: data?.model || "gpt-4o-mini",
+  };
+}
+
+// ── Gemini call (fallback) ────────────────────────────────────────────────
+async function callGemini(apiKey, systemPrompt, userPrompt) {
+  // Try these models in order — confirmed available via /api/ai-models
+  const MODELS = ["gemini-2.5-flash", "gemini-3.8-flash", "gemini-3.1-flash-lite"];
+  let lastError = "";
+
+  for (const modelId of MODELS) {
+    try {
+      // Use streaming to avoid Vercel 10s idle timeout
+      const url = `https://generativelanguage.googleapis.com/v1beta/models/${modelId}:streamGenerateContent?alt=sse&key=${apiKey.trim()}`;
+      const r = await fetch(url, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          systemInstruction: { parts: [{ text: systemPrompt }] },
+          contents: [{ role: "user", parts: [{ text: userPrompt }] }],
+          generationConfig: {
+            temperature: 0.2,
+            maxOutputTokens: 1500,
+            responseMimeType: "application/json",
+          },
+        }),
+      });
+
+      if (!r.ok) {
+        const errText = await r.text().catch(() => "");
+        let errMsg = `HTTP ${r.status}`;
+        try { errMsg = JSON.parse(errText)?.error?.message || errMsg; } catch {}
+        console.warn(`[AI] Gemini ${modelId} failed: ${errMsg}`);
+        lastError = errMsg;
+        if (r.status === 429 || r.status >= 500) break;
+        continue;
+      }
+
+      // Read SSE stream
+      const reader = r.body.getReader();
+      const decoder = new TextDecoder();
+      let buffer = "";
+      let fullText = "";
+      let promptTokens = 0, completionTokens = 0;
+
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        buffer += decoder.decode(value, { stream: true });
+        const lines = buffer.split("\n");
+        buffer = lines.pop() || "";
+        for (const line of lines) {
+          if (!line.startsWith("data: ")) continue;
+          const dataStr = line.slice(6).trim();
+          if (dataStr === "[DONE]") continue;
+          try {
+            const chunk = JSON.parse(dataStr);
+            fullText += chunk?.candidates?.[0]?.content?.parts?.[0]?.text || "";
+            if (chunk?.usageMetadata) {
+              promptTokens = chunk.usageMetadata.promptTokenCount || promptTokens;
+              completionTokens = chunk.usageMetadata.candidatesTokenCount || completionTokens;
+            }
+          } catch {}
+        }
+      }
+
+      if (fullText) {
+        return { text: fullText, promptTokens, completionTokens, model: modelId };
+      }
+      lastError = "Empty streamed response";
+    } catch (e) {
+      lastError = e?.message || String(e);
+      console.warn(`[AI] Gemini ${modelId} error: ${lastError}`);
+    }
+  }
+
+  throw new Error(`Gemini unavailable: ${lastError}`);
+}
+
+// ── Main handler ──────────────────────────────────────────────────────────
 export const config = { maxDuration: 60 };
 
 export default async function handler(req, res) {
@@ -110,20 +277,22 @@ export default async function handler(req, res) {
   res.setHeader("Access-Control-Allow-Methods", "POST, OPTIONS");
   res.setHeader("Access-Control-Allow-Headers", "Content-Type, Authorization");
   if (req.method === "OPTIONS") return res.status(200).end();
-  if (req.method !== "POST") return res.status(405).json({ success: false, error: "Method not allowed" });
+  if (req.method !== "POST")
+    return res.status(405).json({ success: false, error: "Method not allowed" });
 
   // Rate limit
   const rawIp = (req.headers["x-forwarded-for"] || "").split(",")[0].trim() || "unknown";
   const rl = checkRateLimit(`ai:${rawIp}`, 10, 60000);
-  if (!rl.allowed) return res.status(429).json({ success: false, error: `Rate limit. Retry in ${rl.retryAfterSec}s.` });
+  if (!rl.allowed)
+    return res.status(429).json({ success: false, error: `Rate limit. Retry in ${rl.retryAfterSec}s.` });
 
-  // API key check
+  const openaiKey = process.env.OPENAI_API_KEY || "";
   const geminiKey = process.env.GEMINI_API_KEY || "";
-  if (!geminiKey) {
-    return res.status(200).json({ success: false, error: "Server AI not configured — GEMINI_API_KEY missing." });
+  if (!openaiKey && !geminiKey) {
+    return res.status(200).json({ success: false, error: "No AI provider configured. Set OPENAI_API_KEY or GEMINI_API_KEY." });
   }
 
-  // Auth (optional — allows anonymous for now)
+  // Auth
   const supabaseKey = getSupabaseKey();
   const rawAuth = req.headers["authorization"] || "";
   const token = rawAuth.replace(/^Bearer\s+/i, "").trim();
@@ -140,7 +309,6 @@ export default async function handler(req, res) {
       return res.status(400).json({ success: false, error: "Invalid JSON body" });
     }
   }
-
   const startup = body?.startup;
   const startupId = body?.startupId || startup?.id;
   if (!startup || typeof startup !== "object") {
@@ -149,153 +317,60 @@ export default async function handler(req, res) {
 
   // Ownership check
   if (ownerId && startupId) {
-    const { data: dbS } = await sbFetch(
-      supabaseKey,
-      `startups?id=eq.${startupId}&select=founder_id,founder_email`,
-      "GET", undefined, token
-    );
+    const { data: dbS } = await sbFetch(supabaseKey, `startups?id=eq.${startupId}&select=founder_id,founder_email`, "GET", undefined, token);
     if (Array.isArray(dbS) && dbS.length > 0) {
       const row = dbS[0];
-      const ok =
-        row["founder_id"] === ownerId ||
-        (row["founder_email"] &&
-          String(row["founder_email"]).toLowerCase() === ownerEmail.toLowerCase());
+      const ok = row["founder_id"] === ownerId || (row["founder_email"] && String(row["founder_email"]).toLowerCase() === ownerEmail.toLowerCase());
       if (!ok) return res.status(403).json({ success: false, error: "Access denied: not your startup." });
     }
   }
 
-  // ── Build prompt ──────────────────────────────────────────────────────────
+  // Build prompts
   const stage = san(startup.stage || "Idea", 20);
-  const name  = san(startup.name, 60);
-  const sector = san(startup.sector, 40);
+  const systemPrompt = buildSystemPrompt(stage);
+  const userPrompt = buildUserPrompt(startup);
 
-  const stageCtx = stage === "Idea"
-    ? "Idea stage — do NOT penalise for no revenue or no users."
-    : stage === "MVP"
-    ? "MVP stage — expect working prototype; no revenue is acceptable."
-    : "Growth stage — expect real traction and revenue evidence.";
-
-  // System: tell model exactly what JSON schema to return
-  const systemPrompt = `You are a strict VC partner doing investment due diligence.
-${stageCtx}
-You MUST return ONLY a valid JSON object — no explanation, no markdown, no backticks.
-Exact schema required:
-{
-  "categories": {
-    "Problem clarity":      {"score": <integer 0-100>, "critique": "<max 100 chars>"},
-    "Solution strength":    {"score": <integer 0-100>, "critique": "<max 100 chars>"},
-    "Market opportunity":   {"score": <integer 0-100>, "critique": "<max 100 chars>"},
-    "Business model":       {"score": <integer 0-100>, "critique": "<max 100 chars>"},
-    "Product readiness":    {"score": <integer 0-100>, "critique": "<max 100 chars>"},
-    "Traction":             {"score": <integer 0-100>, "critique": "<max 100 chars>"},
-    "Competitive advantage":{"score": <integer 0-100>, "critique": "<max 100 chars>"},
-    "Team readiness":       {"score": <integer 0-100>, "critique": "<max 100 chars>"},
-    "Funding clarity":      {"score": <integer 0-100>, "critique": "<max 100 chars>"}
-  },
-  "verdict": "<1 sentence investment verdict>",
-  "honestTake": "<2 sentences of blunt, unfiltered VC truth>",
-  "redFlags": ["<flag 1>", "<flag 2>", "<flag 3>"],
-  "strengths": ["<strength 1>", "<strength 2>"],
-  "weaknesses": ["<weakness 1>", "<weakness 2>"],
-  "recommendations": ["<action 1>", "<action 2>", "<action 3>"]
-}
-Scoring rules:
-- Weak/early idea: scores 20-45
-- Decent concept with gaps: 45-65
-- Strong with evidence: 65-85
-- Do NOT give inflated scores. Be honest and critical.`;
-
-  const userPrompt = `Startup: ${name}
-Sector: ${sector} | Stage: ${stage} | Team size: ${startup.teamSize || 1}
-Revenue: ${startup.revenue ? "Yes" : "No"} | MAU: ${startup.monthlyUsers || 0}
-Funding ask: $${Number(startup.fundingRequired || 0).toLocaleString()}
-GitHub: ${startup.githubUrl ? "Yes" : "No"} | Pitch deck: ${startup.deckName ? "Yes" : "No"}
-
-PROBLEM (${san(startup.problem, 600).split(/\s+/).length} words):
-"${san(startup.problem, 600)}"
-
-SOLUTION (${san(startup.solution, 600).split(/\s+/).length} words):
-"${san(startup.solution, 600)}"
-
-TRACTION: "${san(startup.traction, 300)}"
-BUSINESS MODEL: "${san(startup.businessModel || startup.business_model, 300)}"
-
-Evaluate rigorously. Return JSON only.`;
-
-  // ── Call Gemini — try models fastest-first, all support JSON mode ─────────
-  // Models confirmed available for this API key (from /api/ai-models):
-  // gemini-3.8-flash → fast, full JSON mode support
-  // gemini-2.5-flash → stable fallback
-  // gemini-3.1-flash-lite → lightweight emergency fallback
-  const MODELS = ["gemini-3.8-flash", "gemini-2.5-flash", "gemini-3.1-flash-lite"];
-
+  // Call AI — OpenAI first (fast, ~2-3s), Gemini fallback
   const tStart = Date.now();
-  let geminiData = null;
-  let modelUsed = "";
-  let lastError = "";
+  let aiResult;
+  let provider = "";
 
-  for (const modelId of MODELS) {
-    const url = `https://generativelanguage.googleapis.com/v1beta/models/${modelId}:generateContent?key=${geminiKey.trim()}`;
+  // Try OpenAI first
+  if (openaiKey) {
     try {
-      const r = await fetch(url, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          systemInstruction: { parts: [{ text: systemPrompt }] },
-          contents: [{ role: "user", parts: [{ text: userPrompt }] }],
-          generationConfig: {
-            temperature: 0.2,
-            maxOutputTokens: 1500,
-            responseMimeType: "application/json",
-          },
-        }),
-      });
-
-      if (r.ok) {
-        geminiData = await r.json();
-        modelUsed = modelId;
-        console.log(`[AI] ${modelId} responded in ${Date.now() - tStart}ms`);
-        break;
-      } else {
-        const errText = await r.text().catch(() => "");
-        let errMsg = `HTTP ${r.status}`;
-        try { errMsg = JSON.parse(errText)?.error?.message || errMsg; } catch {}
-        console.warn(`[AI] ${modelId} failed: ${errMsg}`);
-        lastError = errMsg;
-        // Don't retry on rate-limit or server errors
-        if (r.status === 429 || r.status >= 500) break;
-        // 404 = model not found, try next
-      }
-    } catch (netErr) {
-      lastError = netErr?.message || String(netErr);
-      console.warn(`[AI] ${modelId} network error: ${lastError}`);
+      aiResult = await callOpenAI(openaiKey, systemPrompt, userPrompt);
+      provider = "openai";
+      console.log(`[AI] OpenAI ${aiResult.model} responded in ${Date.now() - tStart}ms`);
+    } catch (e) {
+      console.warn(`[AI] OpenAI failed: ${e.message}`);
+      // Fall through to Gemini
     }
+  }
+
+  // Fallback to Gemini
+  if (!aiResult && geminiKey) {
+    try {
+      aiResult = await callGemini(geminiKey, systemPrompt, userPrompt);
+      provider = "gemini";
+      console.log(`[AI] Gemini ${aiResult.model} responded in ${Date.now() - tStart}ms`);
+    } catch (e) {
+      console.error(`[AI] Gemini also failed: ${e.message}`);
+      return res.status(200).json({
+        success: false,
+        error: `All AI providers failed. ${e.message}. Please retry.`,
+      });
+    }
+  }
+
+  if (!aiResult) {
+    return res.status(200).json({ success: false, error: "No AI provider available. Please retry." });
   }
 
   const latencyMs = Date.now() - tStart;
 
-  if (!geminiData) {
-    return res.status(200).json({
-      success: false,
-      error: `AI unavailable: ${lastError || "all models failed"}. Please retry.`,
-    });
-  }
-
-  // ── Extract text from response ────────────────────────────────────────────
-  const candidateText = geminiData?.candidates?.[0]?.content?.parts?.[0]?.text;
-  if (!candidateText) {
-    const reason = geminiData?.candidates?.[0]?.finishReason || "EMPTY";
-    console.error("[AI] Empty candidate. FinishReason:", reason, "Full response:", JSON.stringify(geminiData).slice(0, 500));
-    return res.status(200).json({
-      success: false,
-      error: `AI returned empty response (reason: ${reason}). Please retry.`,
-    });
-  }
-
-  // ── Parse JSON ────────────────────────────────────────────────────────────
+  // Parse JSON
   let parsed;
-  // Strip any accidental markdown fences (shouldn't happen with JSON mode but be safe)
-  const cleaned = candidateText
+  const cleaned = aiResult.text
     .replace(/^```json\s*/i, "")
     .replace(/^```\s*/i, "")
     .replace(/\s*```$/i, "")
@@ -303,74 +378,58 @@ Evaluate rigorously. Return JSON only.`;
 
   try {
     parsed = JSON.parse(cleaned);
-  } catch (e1) {
-    // Last resort: extract first {...} block
+  } catch {
     const match = cleaned.match(/\{[\s\S]*\}/);
     if (match) {
       try { parsed = JSON.parse(match[0]); } catch {}
     }
     if (!parsed) {
-      console.error("[AI] JSON parse failed. Raw response:", cleaned.slice(0, 500));
+      console.error("[AI] JSON parse failed. Raw:", cleaned.slice(0, 400));
       return res.status(200).json({
         success: false,
         error: "AI response could not be parsed. Please retry.",
-        debugRaw: cleaned.slice(0, 300), // safe preview for debugging
+        debugRaw: cleaned.slice(0, 300),
       });
     }
   }
 
-  // ── Deterministic scoring engine — WE compute the final score ─────────────
-  // AI provides per-category scores 0-100; we apply documented weights
+  // Deterministic scoring — OUR weights applied to AI's category scores
   const cats = parsed.categories || {};
   const readinessScore = computeScore(cats);
-  const investorGrade  = grade(readinessScore);
-  const verdict        = String(parsed.verdict || "Assessment complete.");
-  const honestTake     = String(parsed.honestTake || "");
+  const investorGrade = grade(readinessScore);
+  const verdict = String(parsed.verdict || "Assessment complete.");
+  const honestTake = String(parsed.honestTake || "");
+  const modelUsed = `${aiResult.model} (${provider})`;
 
-  const promptTokens     = geminiData?.usageMetadata?.promptTokenCount ?? 0;
-  const completionTokens = geminiData?.usageMetadata?.candidatesTokenCount ?? 0;
-  const totalTokens      = geminiData?.usageMetadata?.totalTokenCount ?? 0;
-
-  // ── Persist to Supabase (non-blocking — don't fail if tables missing) ─────
+  // Persist to Supabase (non-blocking)
   if (ownerId && startupId) {
     Promise.all([
       sbFetch(supabaseKey, "startup_analysis_reports", "POST", {
-        startup_id: startupId,
-        owner_id: ownerId,
-        ai_provider: "gemini",
-        model_id: modelUsed,
-        readiness_score: readinessScore,
-        evidence_confidence: 65,
-        risk_exposure: 50,
-        investor_grade: investorGrade,
-        verdict,
-        report_json: parsed,
-        startup_snapshot: startup,
-        prompt_tokens: promptTokens,
-        completion_tokens: completionTokens,
-        total_tokens: totalTokens,
-        latency_ms: latencyMs,
-        created_at: new Date().toISOString(),
+        startup_id: startupId, owner_id: ownerId,
+        ai_provider: provider, model_id: aiResult.model,
+        readiness_score: readinessScore, evidence_confidence: 65, risk_exposure: 50,
+        investor_grade: investorGrade, verdict, report_json: parsed, startup_snapshot: startup,
+        prompt_tokens: aiResult.promptTokens, completion_tokens: aiResult.completionTokens,
+        latency_ms: latencyMs, created_at: new Date().toISOString(),
       }, token),
       sbFetch(supabaseKey, `startups?id=eq.${startupId}`, "PATCH", { readiness: readinessScore }, token),
-    ]).catch((e) => console.warn("[AI] Supabase persist error:", e?.message));
+    ]).catch(e => console.warn("[AI] Supabase error:", e?.message));
   }
 
-  // ── Return structured result ───────────────────────────────────────────────
   return res.status(200).json({
     success: true,
-    readinessScore,         // our deterministic score (0-100)
+    readinessScore,
     evidenceConfidence: 65,
     riskExposure: 50,
-    investorGrade,          // our grade (A+/A/B/C/D/F)
-    verdict,                // AI's 1-sentence verdict
-    honestTake,             // AI's blunt 2-sentence take
-    redFlags: Array.isArray(parsed.redFlags) ? parsed.redFlags.slice(0, 4) : [],
-    strengths:  Array.isArray(parsed.strengths) ? parsed.strengths.slice(0, 3) : [],
-    weaknesses: Array.isArray(parsed.weaknesses) ? parsed.weaknesses.slice(0, 3) : [],
+    investorGrade,
+    verdict,
+    honestTake,
+    redFlags:        Array.isArray(parsed.redFlags) ? parsed.redFlags.slice(0, 4) : [],
+    strengths:       Array.isArray(parsed.strengths) ? parsed.strengths.slice(0, 3) : [],
+    weaknesses:      Array.isArray(parsed.weaknesses) ? parsed.weaknesses.slice(0, 3) : [],
     recommendations: Array.isArray(parsed.recommendations) ? parsed.recommendations.slice(0, 4) : [],
-    categoryScores: cats,   // raw per-category scores from AI
-    rawJson: cleaned,       // full AI JSON for client to parse
+    categoryScores: cats,
+    rawJson: cleaned,
     modelUsed,
     latencyMs,
   });
