@@ -46,15 +46,50 @@ export function isInstitutionalDomain(domain?: string): boolean {
 }
 
 /**
+ * Extracts the "institution base" from an email domain by stripping
+ * known academic suffixes (.ac.in, .edu.in, .edu, .res.in, .ac.uk, etc.)
+ * and common prefixes (mail., webmail., students., etc.).
+ * e.g. "sguk.ac.in" → "sguk", "ritindia.edu" → "ritindia", "cs.mit.edu" → "mit"
+ */
+export function getInstitutionBase(domain?: string): string {
+  if (!domain) return "";
+  let d = domain.toLowerCase().trim();
+  // Strip academic suffixes
+  const suffixes = [".ac.in", ".edu.in", ".res.in", ".ernet.in", ".ac.uk", ".ac.nz", ".edu.au", ".edu"];
+  for (const suf of suffixes) {
+    if (d.endsWith(suf)) {
+      d = d.slice(0, -suf.length);
+      break;
+    }
+  }
+  // Strip common subdomains
+  const prefixes = ["mail.", "webmail.", "students.", "student.", "stu.", "cs.", "ee.", "mech.", "it.", "admin."];
+  for (const pre of prefixes) {
+    if (d.startsWith(pre)) {
+      d = d.slice(pre.length);
+      break;
+    }
+  }
+  return d;
+}
+
+/**
  * Checks whether two domains belong to the exact same institution,
- * including department/campus subdomains (e.g. cs.stanford.edu and stanford.edu).
+ * including department/campus subdomains (e.g. cs.stanford.edu and stanford.edu)
+ * and cross-suffix matches (e.g. ritindia.ac.in and ritindia.edu).
  */
 export function areMatchingDomains(domainA?: string, domainB?: string): boolean {
   if (!domainA || !domainB) return false;
   const a = domainA.toLowerCase().trim();
   const b = domainB.toLowerCase().trim();
   if (!isInstitutionalDomain(a) || !isInstitutionalDomain(b)) return false;
-  return a === b || a.endsWith(`.${b}`) || b.endsWith(`.${a}`);
+  // Exact or subdomain match
+  if (a === b || a.endsWith(`.${b}`) || b.endsWith(`.${a}`)) return true;
+  // Base institution match (strips .ac.in, .edu, etc.)
+  const baseA = getInstitutionBase(a);
+  const baseB = getInstitutionBase(b);
+  if (baseA && baseB && baseA.length >= 3 && baseA === baseB) return true;
+  return false;
 }
 
 /**

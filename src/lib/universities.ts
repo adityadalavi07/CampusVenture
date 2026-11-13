@@ -20,6 +20,15 @@ export const UGC_UNIVERSITIES: University[] = [
     aliases: ["Sanjay Ghodawat", "Ghodawat", "SGU Kolhapur", "Atigre", "Kolhapur University"],
   },
   {
+    name: "Rajarambapu Institute of Technology (RIT), Rajaramnagar",
+    shortName: "RIT",
+    city: "Islampur",
+    state: "Maharashtra",
+    type: "Autonomous",
+    ugcApproved: true,
+    aliases: ["RIT India", "RIT Islampur", "RIT Rajaramnagar", "Rajarambapu Institute", "ritindia"],
+  },
+  {
     name: "Shivaji University, Kolhapur",
     shortName: "SUK",
     city: "Kolhapur",
