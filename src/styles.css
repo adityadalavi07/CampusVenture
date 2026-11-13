@@ -930,4 +930,57 @@
   border: 1px solid rgba(66, 133, 244, 0.3);
 }
 
+/* ═══ Mobile Responsive Fixes ═══ */
+
+@media (max-width: 480px) {
+  .auth-flow .modal {
+    max-height: calc(100dvh - 16px);
+    padding: 14px 12px;
+    border-radius: 12px;
+  }
+  .auth-flow h1 { font-size: 17px; }
+  .auth-flow .sub { font-size: 12px; margin-bottom: 8px; }
+  .auth-flow .field { margin-bottom: 8px; }
+  .auth-flow input { height: 36px; font-size: 13px; }
+  .auth-flow .btn { height: 38px; font-size: 13px; }
+  .auth-flow .vrow { flex-direction: column; }
+  .auth-flow .vbtn { height: 36px; font-size: 12px; justify-content: center; }
+  .auth-flow .card { height: 40px; font-size: 11.5px; }
+  .auth-flow .google-auth-btn { height: 38px; font-size: 12.5px; margin-bottom: 8px; }
+  .auth-flow .auth-divider { margin: 8px 0 10px; font-size: 10.5px; }
+  .auth-flow label, .auth-flow .lbl { font-size: 11.5px; }
+  .auth-flow .sel { height: 36px; font-size: 13px; }
+  .auth-flow .sheet { padding: 16px; border-radius: 12px; }
+  .auth-flow .otp input { width: 38px; height: 44px; font-size: 18px; }
+  .auth-flow .otp { gap: 6px; margin: 12px 0 6px; }
+  .auth-flow .scrim { padding: 8px; }
+  .auth-flow .badge { font-size: 12px; padding: 4px 10px; margin: 4px 0 12px; }
+  .auth-flow .x { top: 6px; right: 6px; width: 28px; height: 28px; }
+  .auth-flow .between { margin: -4px 0 10px; }
+  .auth-flow .pw .eye { width: 32px; height: 32px; top: 2px; right: 2px; }
+  .auth-flow .pw input { padding-right: 38px; }
+}
+
+@media (max-width: 380px) {
+  .auth-flow .modal { padding: 12px 10px; border-radius: 10px; }
+  .auth-flow .cards { gap: 5px; }
+  .auth-flow .card { height: 38px; font-size: 11px; gap: 2px; }
+  .auth-flow .card svg { width: 16px; height: 16px; }
+  .auth-flow h1 { font-size: 16px; }
+  .auth-flow .google-auth-btn { font-size: 11.5px; height: 36px; gap: 6px; }
+}
+
+.auth-flow .modal::-webkit-scrollbar { width: 4px; }
+.auth-flow .modal::-webkit-scrollbar-track { background: transparent; }
+.auth-flow .modal::-webkit-scrollbar-thumb { background: var(--line2); border-radius: 4px; }
+
+/* Landing: prevent orphan feature card centering on 2-col */
+@media (min-width: 640px) and (max-width: 1023px) {
+  .features-grid > *:last-child:nth-child(odd) {
+    grid-column: 1 / -1;
+    max-width: 50%;
+    justify-self: center;
+  }
+}
+
 

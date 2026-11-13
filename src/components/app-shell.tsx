@@ -133,7 +133,7 @@ export function AppShell({ role, children }: { role: Role; children: ReactNode }
               )}
             >
               <item.icon className="size-4.5 sm:size-5 shrink-0" aria-hidden="true" />
-              <span className="truncate max-w-[64px] text-center">{item.label.split(" ")[0]}</span>
+              <span className="truncate max-w-[56px] sm:max-w-[64px] text-center leading-tight">{item.label.split(" ")[0]}</span>
             </Link>
           ))}
         </nav>

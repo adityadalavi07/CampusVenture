@@ -873,14 +873,14 @@ export function AuthDialog() {
 
   return (
     <Dialog open={isAuthModalOpen} onOpenChange={(open) => !open && closeAuthModal()}>
-      <DialogContent className="max-w-[560px] p-0 border-0 bg-transparent shadow-none overflow-visible [&>button]:hidden">
+      <DialogContent className="max-w-[560px] p-0 border-0 bg-transparent shadow-none overflow-visible [&>button]:hidden max-h-[100dvh] sm:max-h-[calc(100vh-2rem)]">
         {/* Hidden accessible title/desc for Radix Dialog accessibility requirements */}
         <DialogTitle className="sr-only">CampusVenture Authentication</DialogTitle>
         <DialogDescription className="sr-only">
           Sign in or register for your role-based CampusVenture account.
         </DialogDescription>
 
-        <div className="auth-flow flex items-center justify-center p-2 sm:p-4">
+        <div className="auth-flow flex items-center justify-center p-1 sm:p-4">
           <main className="modal" id="modal" aria-live="polite">
             {/* Modal Close Button */}
             <button
