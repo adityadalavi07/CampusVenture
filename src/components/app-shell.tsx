@@ -120,7 +120,7 @@ export function AppShell({ role, children }: { role: Role; children: ReactNode }
         </main>
 
         <nav
-          className="sticky bottom-0 z-20 flex items-center justify-around border-t bg-background/95 py-2 backdrop-blur-sm transition-colors duration-300 lg:hidden px-1 safe-area-bottom"
+          className="fixed bottom-0 left-0 right-0 z-30 flex items-center justify-around border-t bg-background/95 py-2 backdrop-blur-sm transition-colors duration-300 lg:hidden px-1 safe-area-bottom"
           aria-label="Sections"
         >
           {[...items.slice(0, 4), items[items.length - 1]!].map((item) => (

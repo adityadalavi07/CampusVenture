@@ -983,4 +983,39 @@
   }
 }
 
+/* Global button overflow protection */
+.auth-flow .btn,
+.auth-flow .google-auth-btn,
+.auth-flow .vbtn,
+.auth-flow .sel {
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  box-sizing: border-box;
+}
+
+/* Prevent any element from breaking out of viewport */
+@media (max-width: 640px) {
+  .auth-flow .modal {
+    max-width: calc(100vw - 12px);
+  }
+
+  .auth-flow .vrow {
+    flex-direction: column;
+  }
+
+  .auth-flow .google-auth-btn {
+    font-size: 12px;
+    padding: 0 10px;
+  }
+
+  .auth-flow .btn.primary,
+  .auth-flow .btn.ghost,
+  .auth-flow .btn.secondary {
+    font-size: 13px;
+    padding: 0 12px;
+  }
+}
+
 
