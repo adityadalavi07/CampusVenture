@@ -533,7 +533,7 @@ function InvestorDashboard() {
                           </CardDescription>
                         </div>
                       </div>
-                      <Badge>{score}% match</Badge>
+                      {/* Match score badge removed — no fake percentages */}
                     </div>
                   </CardHeader>
                   <CardContent className="flex flex-1 flex-col gap-3">
@@ -545,14 +545,6 @@ function InvestorDashboard() {
                       <span>{startup.university}</span>
                     </div>
                     <p className="text-xs text-muted-foreground">Traction: {startup.traction}</p>
-                    <details className="text-xs text-muted-foreground">
-                      <summary className="cursor-pointer">Why this is a match</summary>
-                      <ul className="mt-1 space-y-0.5">
-                        {reasons.map((r) => (
-                          <li key={r}>· {r}</li>
-                        ))}
-                      </ul>
-                    </details>
                     <div className="mt-auto flex flex-wrap gap-2 pt-2">
                       <Button size="sm" asChild>
                         <Link to="/app/investor/startup/$id" params={{ id: startup.id }}>
